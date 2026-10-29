@@ -12,8 +12,9 @@
             两段 zlib 流拼接 = BGRA8888 原始像素
 
 用法:
-  python _ypf_extract.py <x.ypf> <outdir> [--ycg-png] [--no-ycg]
+  python _ypf_extract.py <x.ypf> <outdir> [--ycg-png] [--no-ycg] [--manifest PATH]
   --ycg-png: YCG 直接转 PNG（默认开）; --no-ycg 保留 .ycg 原始文件
+  --manifest 不给就不写；给了则按 software-plan §2 契约落一份 manifest.json。
 """
 from __future__ import annotations
 
@@ -113,9 +114,43 @@ def ycg_to_png(data: bytes):
     return im
 
 
+def write_manifest(out_root: Path, arc_path: Path, version: int, key: int,
+                   entry_count: int, n_zlib: int, n_ycg: int, n_plain: int,
+                   fails: list[str], path: Path) -> dict:
+    """按 software-plan §2 契约写 manifest（raw/final/converted 三段式）。
+
+    转换是**内联**的：`--ycg-png`（默认）时 `.ycg` 落盘就是 `.png`，磁盘上不存在中间格式，
+    所以走 `manifest.counts_flat()`（raw == final，converted 为空）；
+    YCG→PNG 的明细写进 postprocess。
+
+    地面真相 = YPF 表里的条目数（`entry_count`），这是格式自己声明的，不是猜的。
+    `--no-ycg` 时 `.ycg` 原样落盘，仍然一 entry 一文件，对账口径不变。
+    """
+    import manifest as mf
+    counts_block = mf.counts_flat(out_root)
+    man = mf.build(
+        tool="_ypf_extract.py",
+        engine="Yu-Ris",
+        source={"archive": str(arc_path), "out_root": str(out_root),
+                "ypf_version": version, "name_xor_key": key, "entries": entry_count},
+        counts_block=counts_block,
+        reconcile_block=mf.reconcile(entry_count, counts_block["raw"]["total"]),
+        verify={"verified": False,
+                "note": "本工具只做解压/解码，不做内容级验收；"
+                        "请用 orchestrator.py 或 _verify_media.py"},
+        postprocess=[{"tool": "内联 YCG→PNG（两段 zlib 拼 BGRA）",
+                      "detail": {"zlib_inflate": n_zlib, "ycg_to_png": n_ycg,
+                                 "plain_copy": n_plain}}],
+        extra={"fail_count": len(fails), "fails": fails[:50]},
+    )
+    mf.write(path, man)
+    return man
+
+
 def main() -> int:
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     ycg_png = "--no-ycg" not in sys.argv
+    man_path = Path(sys.argv[sys.argv.index("--manifest") + 1]) if "--manifest" in sys.argv else None
     arc_path, out_root = Path(args[0]), Path(args[1])
     data_all = arc_path.read_bytes()
 
@@ -179,6 +214,14 @@ def main() -> int:
     print(f"  zlib 解压 {n_zlib}，YCG→PNG {n_ycg}，原样落盘 {n_plain}，失败 {len(fails)}")
     for f in fails[:20]:
         print("   FAIL", f)
+
+    if man_path is not None:
+        try:
+            write_manifest(out_root, arc_path, version, key, len(entries),
+                           n_zlib, n_ycg, n_plain, fails, man_path)
+            print(f"  manifest -> {man_path}")
+        except Exception as exc:  # manifest 失败不该毁掉已落盘的产物
+            print(f"  [WARN] manifest 写入失败（产物不受影响）：{exc}", file=sys.stderr)
     return 0 if not fails else 1
 
 

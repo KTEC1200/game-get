@@ -99,6 +99,26 @@ def counts(raw_dir: Path, png_dir: Path,
 # ---------------------------------------------------------------- 对账
 
 
+def counts_flat(out_dir: Path) -> dict:
+    """输出目录**就是**成品目录时的 counts（内联转换工具用）。
+
+    有些解包器把格式转换做在落盘之前：`_rpgmv_decrypt.py` 的 `.rpgmvp` 落盘时已经是 `.png`，
+    `_ypf_extract.py` 的 `.ycg` 直接落成 `.png`。磁盘上**根本不存在**中间格式，
+    所以 `raw` 与 `final` 是同一份产物、`converted` 只能是 `{}`
+    —— 硬造一个带 `.ycg`/`.rpgmvp` 的 raw 段就是编数据。
+
+    转换明细（`.rpgmvp`→`.png` 多少个、YCG→PNG 多少个）由 `postprocess` 记录，
+    那才是它该待的地方。
+
+    注意：这里**不套用 `CONVERTIBLE`**。扁平工具的语义是「落盘即成品」，
+    磁盘上不会留下待转格式；若某个工具需要「先落 raw 再后处理」，它就该用
+    `raw/` + `png/` 两目录形态（走 `counts()`），不要用这个函数。
+    """
+    raw = scan_raw(out_dir)
+    final = {"by_ext": dict(raw["by_ext"]), "total": raw["total"], "bytes": raw["bytes"]}
+    return {"raw": raw, "final": final, "converted": {}}
+
+
 def reconcile(expected: int | None, actual: int) -> dict:
     """对账块。
 

@@ -84,14 +84,26 @@ manifest.json 契约（对账与验收的唯一地面真相）:
 ## 3. 分阶段路线（替换蓝图 §6 的占位内容，全部对准现有资产）
 
 ### 阶段 1：契约化 + 编排器（当前 → M1，预计 2-3 个工作日粒度）
-1. **manifest 契约落地**：给 4 个已统一接口的工具补 `--manifest`
-   （`rpa_extract_organized.py`、`krkr_auto_extract.py`、`_rpgmv_decrypt.py`、`_ypf_extract.py`）。
-   - ✅ **`krkr_auto_extract.py` 已接（2026-10-29）**：`--manifest PATH`（默认 `<--out>/manifest.json`），
-     走共用模块 `manifest.py` 的 `write_manifest()`，按 raw/final/converted 三段式落。
+1. ~~**manifest 契约落地**：给 4 个已统一接口的工具补 `--manifest`~~
+   ✅ **全部 4 个已接（2026-10-30）**（`rpa_extract_organized.py`、`krkr_auto_extract.py`、
+   `_rpgmv_decrypt.py`、`_ypf_extract.py`）。一律 `--manifest PATH`，不给就不写（不改变旧行为）。
+   - ✅ **`krkr_auto_extract.py`（2026-10-29）**：走 `manifest.counts()`（raw/png 两目录形态），
      加密 xp3 无地面真相 → `reconcile.expected=None, diff=None, method="no-index-available"`
      （**明说没对账，不许用 diff=0 蒙混**）；`verify.verified=False` + note 指向 orchestrator/_verify_media。
-   - ⏳ 其余 3 个（`rpa_extract_organized.py`、`_rpgmv_decrypt.py`、`_ypf_extract.py`）待接，
-     契约与实现都现成，照着 `write_manifest()` 抄即可。
+   - ✅ **其余 3 个（2026-10-30）**：走新增的 **`manifest.counts_flat()`**（落盘即成品形态）。
+     这三个工具的格式转换都做在**落盘之前**——`_rpgmv_decrypt.py` 的 `.rpgmvp` 落盘就叫 `.png`、
+     `_ypf_extract.py` 的 `.ycg` 直接落 `.png`、RPA 条目本来就是裸存。
+     磁盘上从不存在中间格式，所以 `raw == final`、`converted == {}`；
+     硬造一个带 `.ycg`/`.rpgmvp` 的 raw 段就是**编数据**。转换明细（解密几个、YCG→PNG 几个、
+     分类各多少）写进 `postprocess`，那才是它该待的地方。
+   - 地面真相各自取：RPA = 索引**按名字去重**条目数（多段算一个文件）、YPF = 表内条目数、
+     RPGMV = 工具自己数的 `decrypt + plain-copy`（每个候选文件必落且只落在这两类之一）；
+     `--dry`（不落盘）时 `expected=None`，同样不许假装对过账。
+   - 三份 manifest 都记 `source.out_root`（产物写到哪）——交付清单缺输出目录就没法交付。
+   - 实测（2026-10-30，真实样本）：`gui_resource.rpa` 122/122 diff 0、`data.ypf` 195/195 diff 0、
+     `常識改変学園` 7 个加密媒体 7/7 diff 0 且 `magic_fail_count=0`。
+   - 测试：`tests/test_flat_manifest.py` 14 项（含「扁平工具不许套 CONVERTIBLE 悄悄抹掉 `.tlg`」
+     和「必须记 out_root」两条护栏）。
 2. **`galgame_dispatch.py` 升级**：指纹表外置 `rules/engines.json`；输出增加「建议 extractor + 参数」。
 3. ~~**`orchestrator.py`**~~ ✅ **已完成（2026-10-29）**：`detect → extract → postprocess → verify →
    manifest` 串成一条命令；每步产物与日志落 `--work`；对账不为 0 即停（纪律 2）。
@@ -173,6 +185,12 @@ manifest.json 契约（对账与验收的唯一地面真相）:
    - **`krkr_auto_extract.STAGE_ROOT` 指向已废弃的 zcode 路径** → 改为脚本同目录 `_krkr_stage`。
    测试 176 passed / 3 skipped（新增 `tests/test_manifest.py` 19 项、`tests/test_krkr_manifest.py` 7 项、
    toolbridge 幂等护栏 2 项、reuse 对账护栏 3 项）。
-4. `rules/engines.json` 抽取（**重构项，放最后**；先补 `tests/` 的 golden 覆盖再动，
+4. ~~**其余 3 个工具补 `--manifest`**~~ ✅ **已完成（2026-10-30）**：
+   `rpa_extract_organized.py` / `_rpgmv_decrypt.py` / `_ypf_extract.py` 全部接上，
+   新增 `manifest.counts_flat()`（「落盘即成品」形态：raw == final、converted 为空）。
+   三个真实样本实测 diff 0：`gui_resource.rpa` 122/122、`data.ypf` 195/195、
+   `常識改変学園` 7 个加密媒体 7/7。测试 190 passed / 3 skipped
+   （新增 `tests/test_flat_manifest.py` 14 项）。
+5. `rules/engines.json` 抽取（**重构项，放最后**；先补 `tests/` 的 golden 覆盖再动，
    确保行为不变可验证——现有 `tests/golden_detect.json` 就是为此准备的）。
-5. `galgame_dispatch.py` 输出增加「建议 extractor + 参数」（依赖第 4 项）。
+6. `galgame_dispatch.py` 输出增加「建议 extractor + 参数」（依赖第 5 项）。

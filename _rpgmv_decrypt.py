@@ -9,8 +9,9 @@
   key 为 32 位 hex，来自 www/data/System.json 的 "encryptionKey"。
 
 用法:
-  python _rpgmv_decrypt.py <www_root> <out_root> [--key <32hex>] [--dry]
+  python _rpgmv_decrypt.py <www_root> <out_root> [--key <32hex>] [--dry] [--manifest PATH]
   python _rpgmv_decrypt.py <game_root> <out_root>          # 自动找 www/ 或 www/data/System.json
+  --manifest 不给就不写；给了则按 software-plan §2 契约落一份 manifest.json。
 
 行为:
   *.rpgmvp -> *.png   *.rpgmvo -> *.ogg   *.rpgmvm -> *.m4a
@@ -69,10 +70,48 @@ def magic_ok(ext: str, b: bytes) -> bool:
     return True  # webm/mp4 等交给验收工具
 
 
+def write_manifest(out_root: Path, www: Path, key: bytes, stats: Counter,
+                   magic_fails: list[str], path: Path, dry: bool) -> dict | None:
+    """按 software-plan §2 契约写 manifest（raw/final/converted 三段式）。
+
+    这个工具的转换是**内联**的：`.rpgmvp` 落盘时直接叫 `.png`，磁盘上从不存在中间格式，
+    所以走 `manifest.counts_flat()`（raw == final，converted 为空）。
+    转换明细写进 postprocess —— 那里才是「干了什么」该待的地方。
+
+    地面真相 = 「本该写出的文件数」= decrypt + plain-copy。这两个计数是工具自己数的，
+    不是猜的：每处理一个候选文件必然落在且只落在这两类之一（其余进 skip/*）。
+    """
+    import manifest as mf
+    counts_block = mf.counts_flat(out_root)
+    expected = stats["decrypt"] + stats["plain-copy"]
+    per_ext = {k.split("/", 1)[1]: v for k, v in stats.items()
+               if k.startswith("decrypt/") and "/" in k}
+    post = [{"tool": "内联解密（假头 16B + 前 16B XOR key）",
+             "detail": {"decrypt": stats["decrypt"], "plain_copy": stats["plain-copy"],
+                        "by_target_ext": dict(sorted(per_ext.items()))}}]
+    man = mf.build(
+        tool="_rpgmv_decrypt.py",
+        engine="RPG Maker",
+        source={"www_root": str(www), "out_root": str(out_root),
+                "encryption_key": key.hex(), "dry_run": dry},
+        counts_block=counts_block,
+        reconcile_block=mf.reconcile(None if dry else expected, counts_block["raw"]["total"]),
+        verify={"verified": False,
+                "note": "本工具只查魔数（magic_ok），不做内容级验收；"
+                        "请用 orchestrator.py 或 _verify_media.py"},
+        postprocess=post,
+        extra={"magic_fail": magic_fails[:50], "magic_fail_count": len(magic_fails),
+               "skipped": {k: v for k, v in stats.items() if k.startswith("skip/")}},
+    )
+    mf.write(path, man)
+    return man
+
+
 def main() -> int:
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     dry = "--dry" in sys.argv
     key_hex = sys.argv[sys.argv.index("--key") + 1] if "--key" in sys.argv else None
+    man_path = Path(sys.argv[sys.argv.index("--manifest") + 1]) if "--manifest" in sys.argv else None
     if len(args) < 2:
         raise SystemExit(__doc__)
     www = find_www(Path(args[0]))
@@ -139,6 +178,13 @@ def main() -> int:
         print(f"\n魔数异常 {len(magic_fails)} 个:")
         for m in magic_fails[:20]:
             print("  " + m)
+
+    if man_path is not None:
+        try:
+            write_manifest(out_root, www, key, stats, magic_fails, man_path, dry)
+            print(f"\nmanifest -> {man_path}")
+        except Exception as exc:  # manifest 失败不该毁掉已落盘的产物
+            print(f"\n[WARN] manifest 写入失败（产物不受影响）：{exc}", file=sys.stderr)
     return 0
 
 

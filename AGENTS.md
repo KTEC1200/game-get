@@ -51,13 +51,18 @@
   工具路径按 override → `TOOLBRIDGE_<KEY>` 环境变量 → `toolbridge.json` → 内置候选 → PATH 解析，
   **不再硬编码**。成败一律看产物数，`returncode` 只进诊断字段。坑 4（AssetStudio 逗号/竖线）已做成参数级护栏。
 - **manifest 契约：`manifest.py`**（2026-10-29，软件化第 4 步）—— **契约的唯一实现**，
-  供 `orchestrator.py` 与 `krkr_auto_extract.py` 共用（两处各写一遍必然漂移，而 manifest 是交付清单）。
+  供 `orchestrator.py`、`krkr_auto_extract.py` 与三个单格式解包器共用（各写一遍必然漂移，
+  而 manifest 是交付清单，漂移就等于工具之间对「交付了多少」说法不一致）。
   counts 分 `raw`/`final`/`converted` 三段：`raw` 含待转格式（.tlg）、`final` 是**交付口径**
   （图片报成品数，如高慢妻 1301 而非 raw 的 436）、`converted` 解释两者差额。
   `reconcile(expected, actual)`：`expected=None` 时返回 `diff=None` + `method="no-index-available"`
   —— **不许把「没验」伪装成「验过了」**。`final` 一律**实际扫盘不做减法**（转换失败/同名覆盖时会算错）。
   标签统一 `as_posix()`（跨机器可比）。`python manifest.py <输出目录>` 打摘要。
-- Ren'Py：**`rpa_tool.py`**（`info`/`list`/`extract`）、**`rpa_extract_organized.py`**（一步分类解包）、`_organize_rpa.py`（先解再分，留档）
+  - `counts(raw_dir, png_dir)` —— **raw/ + png/ 两目录形态**（orchestrator、krkr_auto_extract）。
+  - `counts_flat(out_dir)` —— **落盘即成品形态**（`rpa_extract_organized.py` / `_rpgmv_decrypt.py` /
+    `_ypf_extract.py`：转换做在落盘之前，磁盘上从不存在中间格式，故 raw == final、converted 为空；
+    **不许伪造带 `.ycg`/`.rpgmvp` 的 raw 段，那是编数据**，转换明细进 `postprocess`）。
+- Ren'Py：**`rpa_tool.py`**（`info`/`list`/`extract`）、**`rpa_extract_organized.py`**（一步分类解包，`--manifest PATH` 可选）、`_organize_rpa.py`（先解再分，留档）
 - Unity：**`unity_unpack.ps1`**、`_as_audio_collect2.py`（FSB5 分组累积）、`_as_catalog.py`、`_as_summary.py`、`_scan_unity_video.py`
 - KiriKiri：`_tlg2png_all.ps1`、**`_krkr_tlg_convert.py`**（tlg2png 批量转换 Python 版，避开 CJK 路径坑）
 - **KiriKiri 加密动态提取：`krkr_auto_extract.py`**（ASCII stage 硬链接 → Lite.exe CLI 注入 →
@@ -271,9 +276,12 @@ AdvHD ラブラブ / Yu-Ris あまねぇ / ExHIBIT 夕凪荘 / CatSystem2 甜蜜
 release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）已由用户放入 `D:\K\galgame\krkr\krkrz\`。
 
 **新会话开局**：读本文件 → 「已暂停的未完成任务」四项已全部完成（2026-10-28）；
-软件化进度见 `software-plan.md` §5：`toolbridge.py` ✅（2026-10-29）→ `orchestrator.py` ✅（2026-10-29，
-已接 Ren'Py + KiriKiri 两链，143 项测试全绿）→ 下一步 ① manifest 在 `krkr_auto_extract.py` 试点
-② `rules/engines.json` 外置（重构项，放最后）③ dispatch 输出「建议 extractor + 参数」。
+软件化进度见 `software-plan.md` §5（2026-10-30 状态）：
+`toolbridge.py` ✅ → `orchestrator.py` ✅（Ren'Py + KiriKiri 两链）→ `manifest.py` ✅ 契约唯一实现
+（含 `counts()` 两目录形态与 `counts_flat()` 落盘即成品形态）→ 4 个解包器全部接上 `--manifest` ✅。
+**测试 190 passed / 3 skipped。** 下一步只剩两项，且都是有回归风险的重构/增强，须先补 golden 覆盖：
+① `rules/engines.json` 指纹外置（把 `scan()` 改写成「规则表 + 解释器」，重构项，放最后）
+② `galgame_dispatch.py` 输出「建议 extractor + 参数」（依赖 ①）。
 
 ## 引擎分支要点（实测）
 
