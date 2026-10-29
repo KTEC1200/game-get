@@ -59,7 +59,11 @@ def _fixture_dirs() -> list[Path]:
 # ---------------------------------------------------------------- fixtures
 @pytest.mark.parametrize("fixture", _fixture_dirs(), ids=lambda p: p.name)
 def test_fixture_matches_golden(fixture: Path) -> None:
-    """每个 fixture 的判定必须与黄金基线逐字段一致。"""
+    """每个 fixture 的判定必须与黄金基线逐字段一致。
+
+    比 `evidence` 与 `facts` 是刻意的（2026-10-30 加固）：重构 `scan()` 时最容易犯的错
+    不是「得分算错」，而是「证据串写错」或「fact 丢了」——只比得分的话这两类错误全绿。
+    """
     want = _golden()["fixtures"][fixture.name]
 
     rep = gd.scan(fixture)
@@ -68,7 +72,11 @@ def test_fixture_matches_golden(fixture: Path) -> None:
     assert (best.engine if best else None) == want["engine"]
     assert (best.score if best else 0) == want["score"]
     assert bool(best and best.score >= gd.THRESHOLD) == want["above_threshold"]
-    assert [{"engine": g.engine, "score": g.score} for g in rep.guesses] == want["guesses"]
+    assert [
+        {"engine": g.engine, "score": g.score, "evidence": g.evidence}
+        for g in rep.guesses
+    ] == want["guesses"]
+    assert rep.facts == want["facts"]
     assert any("[警告]" in n for n in rep.notes) == want["has_warning"]
     assert any("[注意]" in n for n in rep.notes) == want["has_attention"]
 
@@ -102,6 +110,35 @@ def test_real_sample_detects_expected_engine(name: str, rel: str, expect: str) -
     assert best.engine == expect, f"{name} 判成 {best.engine}，期望 {expect}"
 
 
+@pytest.mark.parametrize(
+    "name,rel,expect",
+    REAL_SAMPLES,
+    ids=[s[0] for s in REAL_SAMPLES],
+)
+def test_real_sample_matches_golden(name: str, rel: str, expect: str) -> None:
+    """真实样本的完整判定（含证据串与 facts）必须与基线一致。
+
+    比 `test_real_sample_detects_expected_engine` 更严：那个只要求「引擎对」，
+    引擎对但证据少了一条 / fact 丢了照样绿。重构 `scan()` 时必须让这条也绿。
+    """
+    path = HY_ROOT / rel
+    if not path.is_dir():
+        pytest.skip(f"样本不存在：{path}")
+    want = _golden()["real"].get(path.name)
+    if not want or want.get("missing"):
+        pytest.skip("基线里没有这个样本")
+
+    rep = gd.scan(path)
+    best = rep.best
+    assert (best.engine if best else None) == want["engine"]
+    assert (best.score if best else 0) == want["score"]
+    assert [
+        {"engine": g.engine, "score": g.score, "evidence": g.evidence}
+        for g in rep.guesses
+    ] == want["guesses"]
+    assert rep.facts == want["facts"]
+
+
 # ------------------------------------------------------------- 其它契约
 def test_threshold_unchanged() -> None:
     """阈值被改动会让所有历史判定失效，必须显式确认。"""
@@ -130,3 +167,27 @@ def test_detect_covers_all_implemented_engines() -> None:
     assert declared <= detected, (
         f"这些引擎在 ADVICE 里声明支持，但没有任何样本被真正判定出来：{declared - detected}"
     )
+
+
+def test_garbro_probe_entry_count_has_no_off_by_one() -> None:
+    """★口径护栏★ GARbro 列表输出**无表头**，条目数 = 非空行数。
+
+    这条曾经是 bug：`max(0, len(lines) - 1)` 让每包少算 1 条，而条目数是对账的
+    地面真相——差 1 就等于对账永远不过。`toolbridge.garbro_list()` 早就是
+    `len(lines)`，两处口径必须一致，否则同一个包会给出两个「真相」。
+    """
+    import toolbridge as tb
+    from pathlib import Path
+
+    exe = r"D:\K\galgame\GARbro\GARbro.Console.exe"
+    if not Path(exe).is_file():
+        pytest.skip("本机没装 GARbro，无法验真实口径")
+    xp3 = Path(r"D:\HY\pork社\兼职人妻\data.xp3")
+    if not xp3.is_file():
+        pytest.skip("样本已不在盘上")
+
+    verdict, n = gd.garbro_probe(xp3, exe)
+    assert verdict == "GARbro 可识别"
+    ok, n_tb = tb.garbro_list(xp3)[:2]
+    assert ok is True
+    assert n == n_tb == 2562, f"两处口径不一致：dispatch={n} toolbridge={n_tb}"

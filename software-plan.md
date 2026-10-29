@@ -104,7 +104,7 @@ manifest.json 契约（对账与验收的唯一地面真相）:
      `常識改変学園` 7 个加密媒体 7/7 diff 0 且 `magic_fail_count=0`。
    - 测试：`tests/test_flat_manifest.py` 14 项（含「扁平工具不许套 CONVERTIBLE 悄悄抹掉 `.tlg`」
      和「必须记 out_root」两条护栏）。
-2. **`galgame_dispatch.py` 升级**：指纹表外置 `rules/engines.json`；输出增加「建议 extractor + 参数」。
+2. **`galgame_dispatch.py` 升级**：~~指纹表外置 `rules/engines.json`~~ ✅ 已完成（2026-10-30，见 §5 第 5 项）；**剩下「输出增加『建议 extractor + 参数』」待做**。
 3. ~~**`orchestrator.py`**~~ ✅ **已完成（2026-10-29）**：`detect → extract → postprocess → verify →
    manifest` 串成一条命令；每步产物与日志落 `--work`；对账不为 0 即停（纪律 2）。
    - 已接 **Ren'Py 与 KiriKiri 两条链路**（其余引擎判得出 → 退出码 2，明确「没链路」而不是假装成功）。
@@ -191,6 +191,17 @@ manifest.json 契约（对账与验收的唯一地面真相）:
    三个真实样本实测 diff 0：`gui_resource.rpa` 122/122、`data.ypf` 195/195、
    `常識改変学園` 7 个加密媒体 7/7。测试 190 passed / 3 skipped
    （新增 `tests/test_flat_manifest.py` 14 项）。
-5. `rules/engines.json` 抽取（**重构项，放最后**；先补 `tests/` 的 golden 覆盖再动，
-   确保行为不变可验证——现有 `tests/golden_detect.json` 就是为此准备的）。
-6. `galgame_dispatch.py` 输出增加「建议 extractor + 参数」（依赖第 5 项）。
+5. ~~`rules/engines.json` 抽取~~ ✅ **已完成（2026-10-30）**：
+   落地为 `rules/__init__.py`（解释器）+ `rules/engines.json`（9 个引擎的权重/证据文案/魔数/扩展名）。
+   **不是「把表搬出去」，而是「规则表 + 解释器」**——原 `scan()` 的 17 个 `hit()` 调用散在
+   if/elif 分支里，重写成数据后由 `evaluate()` 统一求值。
+   三条不变量（测试锁着）：`gate` 表达嵌套（父信号没触发子信号不计分）、
+   `alternatives` 表达 `elif`（只让第一个成立的计分，否则 MZ+MV 双计分）、
+   `for_each` 逐项计分（多个 `*_Data` 目录各算一次）。
+   有副作用的探测（读二进制/起子进程/stat）**不进 JSON**，改为具名探针注入，
+   规则文件里用 `probes` 声明——`rules.validate()` 静态查「用了没声明 / 声明了没用」。
+   **零漂移验证**：`python tests/make_golden.py --check` → 6 fixture + 11 真实样本全部一致；
+   测试 255 passed / 3 skipped（新增 `tests/test_rules.py` 53 项，含 6 项 `validate()` 变异验证）。
+   顺带修掉 `garbro_probe()` 的**差一错误**（`len(lines)-1` → `len(lines)`；
+   GARbro 列表无表头，实测 2562 条，与 `toolbridge.garbro_list()` 口径统一，加了护栏测试）。
+6. `galgame_dispatch.py` 输出增加「建议 extractor + 参数」（依赖第 5 项，现在可以做了）。

@@ -25,6 +25,8 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import rules  # 引擎指纹规则表 + 解释器（rules/engines.json）
+
 # Windows 控制台默认是 GBK 代码页，直接打印中文以外的字符会抛 UnicodeEncodeError。
 # 统一切到 UTF-8 代码页，并给输出流加 errors="replace" 兜底。
 if sys.platform == "win32":
@@ -206,7 +208,11 @@ def garbro_probe(archive: Path, garbro_exe: str, timeout: int = 600) -> tuple[st
         return "GARbro 无输出", 0
     if "unknown format" in lines[0].lower():
         return "GARbro 无法识别", 0
-    return "GARbro 可识别", max(0, len(lines) - 1)
+    # 2026-10-30 修：GARbro 的列表输出**没有表头**（xp3 和 .arc 都实测过），
+    # 每行就是一条条目。原先写 `len(lines) - 1` 会每包少算 1，
+    # 而「条目数」正是对账的地面真相——差 1 就等于对账永远不过。
+    # 与 toolbridge.garbro_list() 的口径保持一致。
+    return "GARbro 可识别", len(lines)
 
 # KiriKiri 包名 → 内容（用于校验产物完整性）
 KRKR_PACKS = {
@@ -223,14 +229,6 @@ KRKR_PACKS = {
     "patch.xp3": "游戏补丁",
     "adult.xp3": "R18 内容",
 }
-
-
-@dataclass
-class Signal:
-    """一条证据。"""
-    engine: str
-    weight: int
-    detail: str
 
 
 @dataclass
@@ -260,286 +258,181 @@ def read_head(p: Path, n: int = 16) -> bytes:
         return b""
 
 
-def scan(game_dir: Path, max_files: int = 200_000, deep: bool = False,
-         garbro_exe: str | None = None) -> Report:
-    """扫描一个游戏目录，返回判定报告。只读。"""
-    rep = Report(path=game_dir)
-    g: dict[str, Guess] = {}
+def _build_inventory(game_dir: Path, max_files: int, top_dirs: list[str],
+                     rep: Report) -> tuple["rules.Inventory", list[tuple[str, str]]]:
+    """一次遍历，收集文件清单与乱码名。
 
-    def hit(engine: str, weight: int, detail: str) -> None:
-        cur = g.setdefault(engine, Guess(engine))
-        cur.score += weight
-        cur.evidence.append(f"+{weight} {detail}")
-
-    xp3_files: list[Path] = []
-    rpa_files: list[Path] = []
-    asar_files: list[Path] = []
-    bundle_files: list[Path] = []
-    arc_files: list[Path] = []      # AdvHD 封包
-    ypf_files: list[Path] = []      # Yu-Ris 封包
-    gyu_files: list[Path] = []      # ExHIBIT 图片
-    cs2_files: list[Path] = []      # CatSystem2 .int 家族
+    遍历顺序必须保持——`magic_any` 取「前 N 个候选」依赖它。
+    """
+    all_files: list[Path] = []
+    mojibake: list[tuple[str, str]] = []
     seen = 0
+    truncated = False
 
-    # 顶层目录名先判，命中时可提前收敛
+    for p in game_dir.rglob("*"):
+        seen += 1
+        if seen > max_files:
+            rep.notes.append(f"文件数超过 {max_files}，已提前停止扫描")
+            truncated = True
+            break
+        if not p.is_file():
+            continue
+        all_files.append(p)
+        name = p.name
+        if len(mojibake) < 200:
+            fixed = demojibake(name)
+            if fixed:
+                mojibake.append((name, fixed))
+
+    inv = rules.Inventory(
+        game_dir=game_dir,
+        all_files=all_files,
+        top_dirs=top_dirs,
+        truncated=truncated,
+    )
+    return inv, mojibake
+
+
+def _note_collection(game_dir: Path, inv: "rules.Inventory", rep: Report) -> None:
+    """这个目录其实是「游戏集合」而不是单个游戏？
+
+    判据：≥2 个子目录各自「既有封包又有自己的 exe」。
+    封包类型必须覆盖全部已支持引擎，否则新分支（CatSystem2 用 .int、Yu-Ris 用 .ypf）
+    的集合目录会漏判；但只认封包又会把同一游戏内部的资源目录（`res/`、`userdata/`）
+    误当成独立游戏——所以必须同时要求「有自己的 exe」。
+    """
+    pack_exts = (".xp3", ".rpa", ".asar", ".bundle", ".arc", ".ypf", ".gyu") + CS2_INT_EXTS
+    has_pack = any(p.suffix.lower() in pack_exts for p in inv.all_files) or any(
+        d.endswith("_Data") for d in inv.top_dirs
+    )
+    if not has_pack:
+        return
+    sub_games = count_subdir_games(game_dir, inv.top_dirs)
+    if len(sub_games) < 2:
+        return
+    rep.facts["is_collection"] = True
+    shown = "、".join(sub_games[:5]) + ("…" if len(sub_games) > 5 else "")
+    rep.notes.append(
+        f"[注意] 本目录下有 {len(sub_games)} 个子目录各自是独立游戏（{shown}）"
+        f" → 这是**游戏集合目录**，不是单个游戏。上面的封包计数来自不同子目录，"
+        f"请改为对每个子目录分别运行本工具，否则计数会虚高。"
+    )
+
+
+def _note_mojibake(mojibake: list[tuple[str, str]], rep: Report) -> None:
+    if not mojibake:
+        return
+    rep.facts["mojibake_count"] = len(mojibake)
+    sample = "；".join(f"`{a}` → `{b}`" for a, b in mojibake[:5])
+    # 建议要跟着扩展名走：乱码的是音频才提 FFmpeg concat，
+    # 否则（.dat/.exe/.png…）提 concat 是驴唇不对马嘴。
+    audio_exts = (".ogg", ".wav", ".mp3", ".m4a", ".flac", ".opus", ".wma", ".aac")
+    has_audio = any(Path(a).suffix.lower() in audio_exts for a, _ in mojibake)
+    if has_audio:
+        tail = (
+            " → 其中含**音频**文件，这类名字会让 FFmpeg concat 报 `Invalid argument`，"
+            "正是你教程里那条「另存为 UTF-8」的坑；建议先批量改名再处理音频。"
+        )
+    else:
+        tail = (
+            " → 这些名字会让按名引用的脚本/配置找不到文件，"
+            "建议先批量改名（按上面箭头右侧的还原名）再解包。"
+        )
+    rep.notes.append(
+        f"[注意] 发现 {len(mojibake)} 个**乱码文件名**（Shift-JIS 名被按 GBK 解读）：{sample}{tail}"
+    )
+
+
+def _note_pack_warnings(inv: "rules.Inventory", rep: Report) -> None:
+    """封包扩展名与魔数不符时的告警。只告警、不计分（计分全在规则表里）。"""
+    for f in inv.files_with_exts([".xp3"])[:40]:
+        head = read_head(f, len(MAGIC_XP3))
+        if head and head != MAGIC_XP3:
+            rep.notes.append(
+                f"[警告] `{f.name}` 扩展名是 .xp3 但头部不是标准 XP3 魔数"
+                f"（实际 {head[:8].hex(' ')}）→ 可能封包头被修改，"
+                f"对应 KrkrExtract 报 `Unknown chunk in root chunk` 的场景，预案：直接用 KrkrzExtract"
+            )
+            break
+
+    for f in inv.files_with_exts([".rpa"])[:20]:
+        head = read_head(f, 8)
+        if head and not head.startswith(MAGIC_RPA_PREFIX):
+            rep.notes.append(f"[警告] `{f.name}` 头部不是 RPA- 前缀（实际 {head[:8]!r}）")
+            break
+
+
+def _garbro_facts(game_dir: Path, inv: "rules.Inventory", garbro_exe: str,
+                  rep: Report) -> None:
+    """GARbro 实调：不再猜测，直接问工具拿地面真相。
+
+    早先的 --deep「明文/加密」启发式已证伪（两个方向都错），故改为实调。
+    """
+    xp3_files = inv.files_with_exts([".xp3"])
+    if not xp3_files:
+        return
+    cands = sorted(xp3_files, key=lambda f: f.stat().st_size, reverse=True)[:6]
+    probes = []
+    for f in cands:
+        verdict, n = garbro_probe(f, garbro_exe)
+        try:
+            rel = str(f.relative_to(game_dir))
+        except ValueError:
+            rel = f.name
+        probes.append({
+            "path": rel,
+            "mb": round(f.stat().st_size / 1024 / 1024, 1),
+            "verdict": verdict,
+            "entries": n,
+        })
+    rep.facts["garbro_probes"] = probes
+    rep.facts["garbro_ok"] = sum(1 for p in probes if p["entries"] > 0)
+    rep.facts["garbro_total"] = len(probes)
+
+
+def scan(game_dir: Path, max_files: int = 200_000, deep: bool = False,
+         garbro_exe: str | None = None, rules_path: str | None = None) -> Report:
+    """扫描一个游戏目录，返回判定报告。只读。
+
+    引擎指纹全部来自 `rules/engines.json`（权重、证据文案、魔数、扩展名都是数据），
+    本函数只负责：① 建库存 ② 注入有副作用的探针 ③ 补「不计分但必须说」的告警。
+    """
+    rep = Report(path=game_dir)
+
     try:
         top_dirs = [d.name for d in game_dir.iterdir() if d.is_dir()]
     except OSError as exc:
         rep.notes.append(f"无法读取目录：{exc}")
         return rep
 
-    # ---- Unity ----
-    data_dirs = [d for d in top_dirs if d.endswith("_Data")]
-    for d in data_dirs:
-        hit("Unity", 60, f"存在 `{d}/`（Unity 标志性目录）")
-        dd = game_dir / d
-        if (dd / "StreamingAssets" / "aa").is_dir():
-            hit("Unity", 25, f"`{d}/StreamingAssets/aa/` 存在（Addressables 资源包目录）")
-        if (dd / "il2cpp_data").is_dir():
-            hit("Unity", 15, f"`{d}/il2cpp_data/` 存在 → IL2CPP")
-        if (dd / "Managed").is_dir():
-            hit("Unity", 10, f"`{d}/Managed/` 存在")
-        if (dd / "globalgamemanagers").exists():
-            hit("Unity", 10, f"`{d}/globalgamemanagers` 存在")
+    inv, mojibake = _build_inventory(game_dir, max_files, top_dirs, rep)
 
-        # --- 记录决定工具选型的实测事实 ---
-        if "unity_data_dir" not in rep.facts:
-            rep.facts["unity_data_dir"] = str(dd)
-            ver = find_unity_version(dd)
-            if ver:
-                rep.facts["unity_version"] = ver
-            rep.facts["unity_il2cpp"] = (dd / "il2cpp_data").is_dir() or \
-                (game_dir / "GameAssembly.dll").exists()
-            rep.facts["unity_streaming_assets"] = (dd / "StreamingAssets").is_dir()
-            rep.facts["unity_big_files"] = [
-                f"{mb:.1f} MB  {n}" for mb, n in biggest_files(dd, 6) if mb >= 1.0
-            ]
+    _note_collection(game_dir, inv, rep)
+    _note_mojibake(mojibake, rep)
 
-    if (game_dir / "GameAssembly.dll").exists():
-        hit("Unity", 15, "`GameAssembly.dll` 存在（IL2CPP 特征）")
+    rs = rules.load(rules_path) if rules_path else rules.load()
+    probes: dict[str, "rules.Probe"] = {
+        "find_unity_version": lambda d: find_unity_version(Path(d)),
+        "unity_big_files": lambda d: [
+            f"{mb:.1f} MB  {n}" for mb, n in biggest_files(Path(d), 6) if mb >= 1.0
+        ],
+    }
+    res = rules.evaluate(inv, probes=probes, rs=rs)
 
-    # ---- 遍历（有上限，避免扫爆） ----
-    mojibake: list[tuple[str, str]] = []
-    for p in game_dir.rglob("*"):
-        seen += 1
-        if seen > max_files:
-            rep.notes.append(f"文件数超过 {max_files}，已提前停止扫描")
-            break
-        if not p.is_file():
-            continue
-        name = p.name
-        lower = name.lower()
-
-        if len(mojibake) < 200:
-            fixed = demojibake(name)
-            if fixed:
-                mojibake.append((name, fixed))
-
-        if lower.endswith(".xp3"):
-            xp3_files.append(p)
-        elif lower.endswith(".rpa"):
-            rpa_files.append(p)
-        elif lower.endswith(".asar"):
-            asar_files.append(p)
-        elif lower.endswith(".bundle"):
-            bundle_files.append(p)
-        elif lower.endswith(".arc"):
-            arc_files.append(p)
-        elif lower.endswith(".ypf"):
-            ypf_files.append(p)
-        elif lower.endswith(".gyu"):
-            gyu_files.append(p)
-        elif lower.endswith(CS2_INT_EXTS):
-            cs2_files.append(p)
-
-    # ---- 这个目录其实是「游戏集合」而不是单个游戏？ ----
-    # 判据：≥2 个子目录各自带「封包」特征。封包类型要覆盖全部已支持引擎，
-    # 否则新分支（CatSystem2 用 .int、Yu-Ris 用 .ypf）的集合目录会漏判。
-    # 2026-10-29 修：原先只认 xp3/data_dirs，`D:\HY\甜蜜女友`（6 个 CatSystem2
-    # 子游戏 + アマカノ3）被误判成单个游戏。
-    has_pack = bool(
-        xp3_files or data_dirs or rpa_files or asar_files or bundle_files
-        or arc_files or ypf_files or gyu_files or cs2_files
-    )
-    sub_games = count_subdir_games(game_dir, top_dirs)
-    if len(sub_games) >= 2 and has_pack:
-        rep.facts["is_collection"] = True
-        shown = "、".join(sub_games[:5]) + ("…" if len(sub_games) > 5 else "")
-        rep.notes.append(
-            f"[注意] 本目录下有 {len(sub_games)} 个子目录各自是独立游戏（{shown}）"
-            f" → 这是**游戏集合目录**，不是单个游戏。上面的封包计数来自不同子目录，"
-            f"请改为对每个子目录分别运行本工具，否则计数会虚高。"
-        )
-
-    if mojibake:
-        rep.facts["mojibake_count"] = len(mojibake)
-        sample = "；".join(f"`{a}` → `{b}`" for a, b in mojibake[:5])
-        # 建议要跟着扩展名走：乱码的是音频才提 FFmpeg concat，
-        # 否则（.dat/.exe/.png…）提 concat 是驴唇不对马嘴。
-        audio_exts = (".ogg", ".wav", ".mp3", ".m4a", ".flac", ".opus", ".wma", ".aac")
-        has_audio = any(Path(a).suffix.lower() in audio_exts for a, _ in mojibake)
-        if has_audio:
-            tail = (
-                " → 其中含**音频**文件，这类名字会让 FFmpeg concat 报 `Invalid argument`，"
-                "正是你教程里那条「另存为 UTF-8」的坑；建议先批量改名再处理音频。"
-            )
-        else:
-            tail = (
-                " → 这些名字会让按名引用的脚本/配置找不到文件，"
-                "建议先批量改名（按上面箭头右侧的还原名）再解包。"
-            )
-        rep.notes.append(
-            f"[注意] 发现 {len(mojibake)} 个**乱码文件名**（Shift-JIS 名被按 GBK 解读）：{sample}{tail}"
-        )
-
-    # ---- KiriKiri ----
-    if xp3_files:
-        hit("KiriKiri", 70, f"发现 {len(xp3_files)} 个 `.xp3` 文件")
-        known = [f for f in xp3_files if f.name.lower() in KRKR_PACKS]
-        if known:
-            hit("KiriKiri", 20, f"其中 {len(known)} 个是已知包名（data/event/bgimage…）")
-
-        # 魔数校验：扩展名是 .xp3 但头不对 → 高度可疑（封包头被改）
-        for f in xp3_files[:40]:
-            head = read_head(f, len(MAGIC_XP3))
-            if head and head != MAGIC_XP3:
-                rep.notes.append(
-                    f"[警告] `{f.name}` 扩展名是 .xp3 但头部不是标准 XP3 魔数"
-                    f"（实际 {head[:8].hex(' ')}）→ 可能封包头被修改，"
-                    f"对应 KrkrExtract 报 `Unknown chunk in root chunk` 的场景，预案：直接用 KrkrzExtract"
-                )
-                break
-
-        # ---- GARbro 实调：不再猜测，直接问工具拿地面真相 ----
-        # 早先的 --deep「明文/加密」启发式已证伪（两个方向都错），故改为实调。
-        if garbro_exe:
-            cands = sorted(xp3_files, key=lambda f: f.stat().st_size, reverse=True)[:6]
-            probes = []
-            for f in cands:
-                verdict, n = garbro_probe(f, garbro_exe)
-                try:
-                    rel = str(f.relative_to(game_dir))
-                except ValueError:
-                    rel = f.name
-                probes.append({
-                    "path": rel,
-                    "mb": round(f.stat().st_size / 1024 / 1024, 1),
-                    "verdict": verdict,
-                    "entries": n,
-                })
-            rep.facts["garbro_probes"] = probes
-            ok = sum(1 for p in probes if p["entries"] > 0)
-            rep.facts["garbro_ok"] = ok
-            rep.facts["garbro_total"] = len(probes)
-
-    # ---- Ren'Py ----
-    if rpa_files:
-        hit("Ren'Py", 70, f"发现 {len(rpa_files)} 个 `.rpa` 文件")
-        for f in rpa_files[:20]:
-            head = read_head(f, 8)
-            if head and not head.startswith(MAGIC_RPA_PREFIX):
-                rep.notes.append(f"[警告] `{f.name}` 头部不是 RPA- 前缀（实际 {head[:8]!r}）")
-                break
-    if "renpy" in [d.lower() for d in top_dirs]:
-        hit("Ren'Py", 20, "存在 `renpy/` 目录")
-    if any(p.suffix.lower() in (".rpy", ".rpyc") for p in game_dir.rglob("*") if p.is_file()):
-        hit("Ren'Py", 10, "存在 `.rpy` / `.rpyc` 脚本")
-
-    # ---- Tyrano / Electron ----
-    if asar_files:
-        hit("Tyrano/Electron", 60, f"发现 {len(asar_files)} 个 `.asar` 文件")
-        if any(f.name.lower() == "app.asar" for f in asar_files):
-            hit("Tyrano/Electron", 30, "其中含 `app.asar`（Electron 典型结构）")
-    if any(d.lower() == "tyrano" for d in top_dirs):
-        hit("Tyrano/Electron", 25, "存在 `tyrano/` 目录（TyranoScript 特征）")
-
-    # ---- Unity bundle 补充 ----
-    if bundle_files:
-        hit("Unity", 20, f"发现 {len(bundle_files)} 个 `.bundle` 文件")
-        for f in bundle_files[:20]:
-            if read_head(f, 7) == MAGIC_UNITYFS:
-                hit("Unity", 10, "`.bundle` 头部为 `UnityFS`（已确认）")
-                break
-
-    # ---- RPG Maker MV/MZ ----
-    # 判据：NW.js 运行时 + www/（MV 用 js/rpg_core.js，MZ 用 js/rmmz_core.js）
-    nwjs = [f for f in ("nw.dll", "node.dll", "icudtl.dat") if (game_dir / f).exists()]
-    has_www = (game_dir / "www").is_dir()
-    if nwjs and has_www:
-        hit("RPG Maker", 70, f"NW.js 运行时（{'/'.join(nwjs)}）+ `www/` 目录")
-        js_dir = game_dir / "www" / "js"
-        if (js_dir / "rmmz_core.js").exists():
-            hit("RPG Maker", 25, "`www/js/rmmz_core.js` 存在 → **MZ**")
-            rep.facts["rpgmaker_variant"] = "MZ"
-        elif (js_dir / "rpg_core.js").exists():
-            hit("RPG Maker", 25, "`www/js/rpg_core.js` 存在 → **MV**")
-            rep.facts["rpgmaker_variant"] = "MV"
-        sys_json = game_dir / "www" / "data" / "System.json"
-        if sys_json.exists():
-            hit("RPG Maker", 10, "`www/data/System.json` 存在（加密 key 的来源）")
-            rep.facts["rpgmaker_has_encryption_key_file"] = True
-
-    # ---- AdvHD ----
-    # 判据：AdvHD.exe + AdvHDLang.dll，封包是 *.arc（索引含 UTF-16LE 名）
-    if (game_dir / "AdvHD.exe").exists():
-        hit("AdvHD", 70, "`AdvHD.exe` 存在（AdvHD 引擎主程序）")
-        if (game_dir / "AdvHDLang.dll").exists():
-            hit("AdvHD", 20, "`AdvHDLang.dll` 存在")
-        if arc_files:
-            hit("AdvHD", 15, f"发现 {len(arc_files)} 个 `.arc` 封包")
-            rep.facts["advhd_arc_count"] = len(arc_files)
-    elif arc_files and (game_dir / "AdvHDLang.dll").exists():
-        hit("AdvHD", 70, f"`AdvHDLang.dll` + {len(arc_files)} 个 `.arc` 封包")
-
-    # ---- Yu-Ris ----
-    # 判据：yscfg.dat + pac/*.ypf（魔数 YPF\0）+ エンジン設定.exe
-    if (game_dir / "yscfg.dat").exists():
-        hit("Yu-Ris", 70, "`yscfg.dat` 存在（Yu-Ris System 配置，注意不是 Yaneura）")
-        if ypf_files:
-            hit("Yu-Ris", 20, f"发现 {len(ypf_files)} 个 `.ypf` 封包")
-        pac = game_dir / "pac"
-        if pac.is_dir():
-            hit("Yu-Ris", 15, "`pac/` 目录存在")
-        rep.facts["yuris_ypf_count"] = len(ypf_files)
-    elif ypf_files:
-        for f in ypf_files[:5]:
-            if read_head(f, 4) == MAGIC_YPF:
-                hit("Yu-Ris", 70, f"`{f.name}` 头部为 `YPF\\0`（已确认）")
-                rep.facts["yuris_ypf_count"] = len(ypf_files)
-                break
-
-    # ---- ExHIBIT / Retouch ----
-    # 判据：ExHIBIT.JP / RESIDENT.JP + .gyu（魔数 GYU\x1a）
-    if (game_dir / "ExHIBIT.JP").exists() or (game_dir / "RESIDENT.JP").exists():
-        hit("ExHIBIT", 70, "`ExHIBIT.JP` / `RESIDENT.JP` 存在（MOONSTONE 系 Retouch 引擎）")
-        if gyu_files:
-            hit("ExHIBIT", 20, f"发现 {len(gyu_files)} 个 `.gyu` 图片")
-        if (game_dir / "resident.dll").exists():
-            hit("ExHIBIT", 10, "`resident.dll` 存在（主逻辑）")
-        rep.facts["exhibit_gyu_count"] = len(gyu_files)
-    elif gyu_files:
-        for f in gyu_files[:5]:
-            if read_head(f, 4) == MAGIC_GYU:
-                hit("ExHIBIT", 70, f"`{f.name}` 头部为 `GYU\\x1a`（已确认）")
-                rep.facts["exhibit_gyu_count"] = len(gyu_files)
-                break
-
-    # ---- CatSystem2 ----
-    # 判据：cs2.exe / boot.dfn + *.int（魔数 KIF\0）
-    if (game_dir / "cs2.exe").exists() or (game_dir / "boot.dfn").exists():
-        which = "cs2.exe" if (game_dir / "cs2.exe").exists() else "boot.dfn"
-        hit("CatSystem2", 70, f"`{which}` 存在（CatSystem2 引擎主程序）")
-        if cs2_files:
-            hit("CatSystem2", 20, f"发现 {len(cs2_files)} 个 `.int`/`.dfn`/`.hg3` 文件")
-        rep.facts["cs2_int_count"] = len(cs2_files)
-    elif cs2_files:
-        for f in cs2_files[:5]:
-            if read_head(f, 4) == MAGIC_KIF:
-                hit("CatSystem2", 70, f"`{f.name}` 头部为 `KIF\\0`（已确认）")
-                rep.facts["cs2_int_count"] = len(cs2_files)
-                break
-
+    g: dict[str, Guess] = {}
+    for engine, weight, detail in res.hits:
+        cur = g.setdefault(engine, Guess(engine))
+        cur.score += weight
+        cur.evidence.append(f"+{weight} {detail}")
     rep.guesses = sorted(g.values(), key=lambda x: -x.score)
+
+    for key, val in res.facts.items():
+        rep.facts.setdefault(key, val)
+
+    _note_pack_warnings(inv, rep)
+    if garbro_exe:
+        _garbro_facts(game_dir, inv, garbro_exe, rep)
+
     return rep
 
 

@@ -48,13 +48,26 @@ REAL_SAMPLES: list[tuple[str, str]] = [
 
 
 def _snap_one(rep) -> dict[str, object]:
-    """把一份 Report 折成可稳定比对的快照（notes 只记条数/是否含警告，内容易变）。"""
+    """把一份 Report 折成可稳定比对的快照。
+
+    记录 `evidence` 与 `facts` 是**故意**的（2026-10-30 加固）：只比得分的话，
+    把某条规则的说明文字改错、或把某个 fact 悄悄丢掉，基线依然全绿——那样它就不配
+    用来守护「指纹外置」这种纯重构。证据串里的数字（文件数、目录名）和 facts 里的
+    实测值（Unity 版本、封包计数）都是确定性的，适合逐字比对。
+
+    唯一保留宽松处理的是 `notes`：只记条数与是否含 `[警告]`/`[注意]`，
+    因为 notes 里会拼进真实路径与文件体积，跨机器不稳。
+    """
     best = rep.best
     return {
         "engine": best.engine if best else None,
         "score": best.score if best else 0,
         "above_threshold": bool(best and best.score >= gd.THRESHOLD),
-        "guesses": [{"engine": g.engine, "score": g.score} for g in rep.guesses],
+        "guesses": [
+            {"engine": g.engine, "score": g.score, "evidence": g.evidence}
+            for g in rep.guesses
+        ],
+        "facts": rep.facts,
         "note_count": len(rep.notes),
         "has_warning": any("[警告]" in n for n in rep.notes),
         "has_attention": any("[注意]" in n for n in rep.notes),

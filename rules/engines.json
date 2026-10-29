@@ -1,0 +1,600 @@
+{
+  "version": 1,
+  "threshold": 60,
+  "probes": [
+    "find_unity_version",
+    "unity_big_files"
+  ],
+  "_help": {
+    "用途": "引擎指纹规则表。解释器见 rules/__init__.py。改这里就能加引擎/调权重，不用动 Python。",
+    "probes": "本表用到的具名探针。有副作用的探测（读二进制、起子进程、stat 目录）不进 JSON，由调用方注入同名函数；这里声明是为了让 validate() 能静态查出「声明了但没注入」或「注入了但没声明」。",
+    "引擎块": "{engine: 名称, signals: [信号...]}。引擎块的顺序 = 首次命中的插入顺序，影响同分时的排序，别随便重排。",
+    "信号": {
+      "id": "给后续信号当 gate 用。",
+      "gate": "父信号 id。父信号没触发时本条不评估——精确对应原先 `if A: ...` 的嵌套语义。",
+      "when": "谓词，成立才计分。省略 = 恒真。",
+      "weight": "得分权重。",
+      "detail": "证据文案。支持 {占位符}，见下。",
+      "facts": "命中后写入的事实（setdefault，先写者优先）。",
+      "silent": "true 时计分但不产生证据（暂未使用）。",
+      "for_each": "{match: top_dir_suffix|top_dir_name, arg: ..., var: 变量名}，对每个匹配项各评估一次。",
+      "alternatives": "[{when, detail, facts}]，只让第一个成立的计分——精确对应原先的 `elif` 链。"
+    },
+    "谓词": {
+      "all/any/not": "逻辑组合。列表形式等于 all。",
+      "file_exists": "game_dir 下的文件存在。",
+      "dir_exists": "game_dir 下的目录存在。",
+      "top_dir_name": "存在同名顶层目录（大小写不敏感）。",
+      "top_dir_suffix": "存在以该后缀结尾的顶层目录。",
+      "count_ext": "{扩展名: 最少个数}，全部满足才算成立。",
+      "count_any_ext": "[扩展名...]，任一有文件即成立，命中数绑定到 {n}。",
+      "any_file": "[文件名...]，存在的那些绑定到 {files}（渲染时用 / 连接）。",
+      "first_file": "[文件名...]，按序取第一个存在的绑定到 {which}。",
+      "any_name": "{name, ext}，存在同扩展名且名字完全一致的文件。",
+      "known_names": "{ext, names: [...]}，同名命中数绑定到 {known}。",
+      "magic_any": "{ext 或 exts, hex, limit}，前 limit 个候选里头部等于该十六进制串，命中文件绑定到 {magicfile}。"
+    },
+    "占位符": "{d} {which} {n} {known} {files} {magicfile} {game_dir} 来自绑定；{count:.xp3} 取该扩展名计数。",
+    "事实取值": {
+      "字符串": "渲染占位符后原样存入。",
+      "{\"path\": [片段...]}": "用 pathlib 拼成路径字符串（跨平台分隔符正确）。",
+      "{\"count\": \".ext\"}": "该扩展名文件数。",
+      "{\"count_any\": [\"...\"]}": "这些扩展名的文件数之和。",
+      "{\"pred\": 谓词}": "谓词真假值。",
+      "{\"probe\": 名, \"args\": [...]}": "调用注入的具名探针（有副作用的探测不进 JSON）。"
+    }
+  },
+  "engines": [
+    {
+      "engine": "Unity",
+      "signals": [
+        {
+          "id": "unity_data",
+          "for_each": {
+            "match": "top_dir_suffix",
+            "arg": "_Data",
+            "var": "d"
+          },
+          "weight": 60,
+          "detail": "存在 `{d}/`（Unity 标志性目录）",
+          "facts": {
+            "unity_data_dir": {
+              "path": [
+                "{game_dir}",
+                "{d}"
+              ]
+            },
+            "unity_version": {
+              "probe": "find_unity_version",
+              "args": [
+                {
+                  "path": [
+                    "{game_dir}",
+                    "{d}"
+                  ]
+                }
+              ]
+            },
+            "unity_il2cpp": {
+              "pred": {
+                "any": [
+                  {
+                    "dir_exists": "{d}/il2cpp_data"
+                  },
+                  {
+                    "file_exists": "GameAssembly.dll"
+                  }
+                ]
+              }
+            },
+            "unity_streaming_assets": {
+              "pred": {
+                "dir_exists": "{d}/StreamingAssets"
+              }
+            },
+            "unity_big_files": {
+              "probe": "unity_big_files",
+              "args": [
+                {
+                  "path": [
+                    "{game_dir}",
+                    "{d}"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "gate": "unity_data",
+          "weight": 25,
+          "when": {
+            "dir_exists": "{d}/StreamingAssets/aa"
+          },
+          "detail": "`{d}/StreamingAssets/aa/` 存在（Addressables 资源包目录）"
+        },
+        {
+          "gate": "unity_data",
+          "weight": 15,
+          "when": {
+            "dir_exists": "{d}/il2cpp_data"
+          },
+          "detail": "`{d}/il2cpp_data/` 存在 → IL2CPP"
+        },
+        {
+          "gate": "unity_data",
+          "weight": 10,
+          "when": {
+            "dir_exists": "{d}/Managed"
+          },
+          "detail": "`{d}/Managed/` 存在"
+        },
+        {
+          "gate": "unity_data",
+          "weight": 10,
+          "when": {
+            "file_exists": "{d}/globalgamemanagers"
+          },
+          "detail": "`{d}/globalgamemanagers` 存在"
+        },
+        {
+          "weight": 15,
+          "when": {
+            "file_exists": "GameAssembly.dll"
+          },
+          "detail": "`GameAssembly.dll` 存在（IL2CPP 特征）"
+        },
+        {
+          "id": "unity_bundle",
+          "weight": 20,
+          "when": {
+            "count_any_ext": [
+              ".bundle"
+            ]
+          },
+          "detail": "发现 {n} 个 `.bundle` 文件"
+        },
+        {
+          "gate": "unity_bundle",
+          "weight": 10,
+          "when": {
+            "magic_any": {
+              "ext": ".bundle",
+              "hex": "556e6974794653",
+              "limit": 20
+            }
+          },
+          "detail": "`.bundle` 头部为 `UnityFS`（已确认）"
+        }
+      ]
+    },
+    {
+      "engine": "KiriKiri",
+      "signals": [
+        {
+          "id": "xp3",
+          "weight": 70,
+          "when": {
+            "count_any_ext": [
+              ".xp3"
+            ]
+          },
+          "detail": "发现 {n} 个 `.xp3` 文件"
+        },
+        {
+          "gate": "xp3",
+          "weight": 20,
+          "when": {
+            "known_names": {
+              "ext": ".xp3",
+              "names": [
+                "data.xp3",
+                "event.xp3",
+                "evimage.xp3",
+                "fgimage.xp3",
+                "bgimage.xp3",
+                "scenario.xp3",
+                "voice.xp3",
+                "sound.xp3",
+                "bgm.xp3",
+                "system.xp3",
+                "patch.xp3",
+                "adult.xp3"
+              ]
+            }
+          },
+          "detail": "其中 {known} 个是已知包名（data/event/bgimage…）"
+        }
+      ]
+    },
+    {
+      "engine": "Ren'Py",
+      "signals": [
+        {
+          "weight": 70,
+          "when": {
+            "count_any_ext": [
+              ".rpa"
+            ]
+          },
+          "detail": "发现 {n} 个 `.rpa` 文件"
+        },
+        {
+          "weight": 20,
+          "when": {
+            "top_dir_name": "renpy"
+          },
+          "detail": "存在 `renpy/` 目录"
+        },
+        {
+          "weight": 10,
+          "when": {
+            "count_any_ext": [
+              ".rpy",
+              ".rpyc"
+            ]
+          },
+          "detail": "存在 `.rpy` / `.rpyc` 脚本"
+        }
+      ]
+    },
+    {
+      "engine": "Tyrano/Electron",
+      "signals": [
+        {
+          "id": "asar",
+          "weight": 60,
+          "when": {
+            "count_any_ext": [
+              ".asar"
+            ]
+          },
+          "detail": "发现 {n} 个 `.asar` 文件"
+        },
+        {
+          "gate": "asar",
+          "weight": 30,
+          "when": {
+            "any_name": {
+              "name": "app.asar",
+              "ext": ".asar"
+            }
+          },
+          "detail": "其中含 `app.asar`（Electron 典型结构）"
+        },
+        {
+          "weight": 25,
+          "when": {
+            "top_dir_name": "tyrano"
+          },
+          "detail": "存在 `tyrano/` 目录（TyranoScript 特征）"
+        }
+      ]
+    },
+    {
+      "engine": "RPG Maker",
+      "signals": [
+        {
+          "id": "rpgmaker_nwjs",
+          "weight": 70,
+          "when": {
+            "all": [
+              {
+                "any_file": [
+                  "nw.dll",
+                  "node.dll",
+                  "icudtl.dat"
+                ]
+              },
+              {
+                "dir_exists": "www"
+              }
+            ]
+          },
+          "detail": "NW.js 运行时（{files}）+ `www/` 目录"
+        },
+        {
+          "gate": "rpgmaker_nwjs",
+          "weight": 25,
+          "alternatives": [
+            {
+              "when": {
+                "file_exists": "www/js/rmmz_core.js"
+              },
+              "detail": "`www/js/rmmz_core.js` 存在 → **MZ**",
+              "facts": {
+                "rpgmaker_variant": "MZ"
+              }
+            },
+            {
+              "when": {
+                "file_exists": "www/js/rpg_core.js"
+              },
+              "detail": "`www/js/rpg_core.js` 存在 → **MV**",
+              "facts": {
+                "rpgmaker_variant": "MV"
+              }
+            }
+          ]
+        },
+        {
+          "gate": "rpgmaker_nwjs",
+          "weight": 10,
+          "when": {
+            "file_exists": "www/data/System.json"
+          },
+          "detail": "`www/data/System.json` 存在（加密 key 的来源）",
+          "facts": {
+            "rpgmaker_has_encryption_key_file": true
+          }
+        }
+      ]
+    },
+    {
+      "engine": "AdvHD",
+      "signals": [
+        {
+          "id": "advhd_exe",
+          "weight": 70,
+          "when": {
+            "file_exists": "AdvHD.exe"
+          },
+          "detail": "`AdvHD.exe` 存在（AdvHD 引擎主程序）"
+        },
+        {
+          "gate": "advhd_exe",
+          "weight": 20,
+          "when": {
+            "file_exists": "AdvHDLang.dll"
+          },
+          "detail": "`AdvHDLang.dll` 存在"
+        },
+        {
+          "gate": "advhd_exe",
+          "weight": 15,
+          "when": {
+            "count_any_ext": [
+              ".arc"
+            ]
+          },
+          "detail": "发现 {n} 个 `.arc` 封包",
+          "facts": {
+            "advhd_arc_count": {
+              "count": ".arc"
+            }
+          }
+        },
+        {
+          "weight": 70,
+          "when": {
+            "all": [
+              {
+                "not": {
+                  "file_exists": "AdvHD.exe"
+                }
+              },
+              {
+                "file_exists": "AdvHDLang.dll"
+              },
+              {
+                "count_any_ext": [
+                  ".arc"
+                ]
+              }
+            ]
+          },
+          "detail": "`AdvHDLang.dll` + {n} 个 `.arc` 封包"
+        }
+      ]
+    },
+    {
+      "engine": "Yu-Ris",
+      "signals": [
+        {
+          "id": "yuris_cfg",
+          "weight": 70,
+          "when": {
+            "file_exists": "yscfg.dat"
+          },
+          "detail": "`yscfg.dat` 存在（Yu-Ris System 配置，注意不是 Yaneura）",
+          "facts": {
+            "yuris_ypf_count": {
+              "count": ".ypf"
+            }
+          }
+        },
+        {
+          "gate": "yuris_cfg",
+          "weight": 20,
+          "when": {
+            "count_any_ext": [
+              ".ypf"
+            ]
+          },
+          "detail": "发现 {n} 个 `.ypf` 封包"
+        },
+        {
+          "gate": "yuris_cfg",
+          "weight": 15,
+          "when": {
+            "dir_exists": "pac"
+          },
+          "detail": "`pac/` 目录存在"
+        },
+        {
+          "weight": 70,
+          "when": {
+            "all": [
+              {
+                "not": {
+                  "file_exists": "yscfg.dat"
+                }
+              },
+              {
+                "magic_any": {
+                  "ext": ".ypf",
+                  "hex": "59504600",
+                  "limit": 5
+                }
+              }
+            ]
+          },
+          "detail": "`{magicfile}` 头部为 `YPF\\0`（已确认）",
+          "facts": {
+            "yuris_ypf_count": {
+              "count": ".ypf"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "engine": "ExHIBIT",
+      "signals": [
+        {
+          "id": "exhibit_marker",
+          "weight": 70,
+          "when": {
+            "any_file": [
+              "ExHIBIT.JP",
+              "RESIDENT.JP"
+            ]
+          },
+          "detail": "`ExHIBIT.JP` / `RESIDENT.JP` 存在（MOONSTONE 系 Retouch 引擎）",
+          "facts": {
+            "exhibit_gyu_count": {
+              "count": ".gyu"
+            }
+          }
+        },
+        {
+          "gate": "exhibit_marker",
+          "weight": 20,
+          "when": {
+            "count_any_ext": [
+              ".gyu"
+            ]
+          },
+          "detail": "发现 {n} 个 `.gyu` 图片"
+        },
+        {
+          "gate": "exhibit_marker",
+          "weight": 10,
+          "when": {
+            "file_exists": "resident.dll"
+          },
+          "detail": "`resident.dll` 存在（主逻辑）"
+        },
+        {
+          "weight": 70,
+          "when": {
+            "all": [
+              {
+                "not": {
+                  "any_file": [
+                    "ExHIBIT.JP",
+                    "RESIDENT.JP"
+                  ]
+                }
+              },
+              {
+                "magic_any": {
+                  "ext": ".gyu",
+                  "hex": "4759551a",
+                  "limit": 5
+                }
+              }
+            ]
+          },
+          "detail": "`{magicfile}` 头部为 `GYU\\x1a`（已确认）",
+          "facts": {
+            "exhibit_gyu_count": {
+              "count": ".gyu"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "engine": "CatSystem2",
+      "signals": [
+        {
+          "id": "cs2_exe",
+          "weight": 70,
+          "when": {
+            "first_file": [
+              "cs2.exe",
+              "boot.dfn"
+            ]
+          },
+          "detail": "`{which}` 存在（CatSystem2 引擎主程序）",
+          "facts": {
+            "cs2_int_count": {
+              "count_any": [
+                ".int",
+                ".dfn",
+                ".hg3",
+                ".nm3",
+                ".gf3"
+              ]
+            }
+          }
+        },
+        {
+          "gate": "cs2_exe",
+          "weight": 20,
+          "when": {
+            "count_any_ext": [
+              ".int",
+              ".dfn",
+              ".hg3",
+              ".nm3",
+              ".gf3"
+            ]
+          },
+          "detail": "发现 {n} 个 `.int`/`.dfn`/`.hg3` 文件"
+        },
+        {
+          "weight": 70,
+          "when": {
+            "all": [
+              {
+                "not": {
+                  "first_file": [
+                    "cs2.exe",
+                    "boot.dfn"
+                  ]
+                }
+              },
+              {
+                "magic_any": {
+                  "exts": [
+                    ".int",
+                    ".dfn",
+                    ".hg3",
+                    ".nm3",
+                    ".gf3"
+                  ],
+                  "hex": "4b494600",
+                  "limit": 5
+                }
+              }
+            ]
+          },
+          "detail": "`{magicfile}` 头部为 `KIF\\0`（已确认）",
+          "facts": {
+            "cs2_int_count": {
+              "count_any": [
+                ".int",
+                ".dfn",
+                ".hg3",
+                ".nm3",
+                ".gf3"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -3,9 +3,14 @@
     "krkr_game": {
       "above_threshold": true,
       "engine": "KiriKiri",
+      "facts": {},
       "guesses": [
         {
           "engine": "KiriKiri",
+          "evidence": [
+            "+70 发现 3 个 `.xp3` 文件",
+            "+20 其中 3 个是已知包名（data/event/bgimage…）"
+          ],
           "score": 90
         }
       ],
@@ -17,9 +22,14 @@
     "krkr_modified": {
       "above_threshold": true,
       "engine": "KiriKiri",
+      "facts": {},
       "guesses": [
         {
           "engine": "KiriKiri",
+          "evidence": [
+            "+70 发现 1 个 `.xp3` 文件",
+            "+20 其中 1 个是已知包名（data/event/bgimage…）"
+          ],
           "score": 90
         }
       ],
@@ -31,9 +41,15 @@
     "renpy_game": {
       "above_threshold": true,
       "engine": "Ren'Py",
+      "facts": {},
       "guesses": [
         {
           "engine": "Ren'Py",
+          "evidence": [
+            "+70 发现 1 个 `.rpa` 文件",
+            "+20 存在 `renpy/` 目录",
+            "+10 存在 `.rpy` / `.rpyc` 脚本"
+          ],
           "score": 100
         }
       ],
@@ -45,9 +61,15 @@
     "tyrano_game": {
       "above_threshold": true,
       "engine": "Tyrano/Electron",
+      "facts": {},
       "guesses": [
         {
           "engine": "Tyrano/Electron",
+          "evidence": [
+            "+60 发现 1 个 `.asar` 文件",
+            "+30 其中含 `app.asar`（Electron 典型结构）",
+            "+25 存在 `tyrano/` 目录（TyranoScript 特征）"
+          ],
           "score": 115
         }
       ],
@@ -59,9 +81,25 @@
     "unity_game": {
       "above_threshold": true,
       "engine": "Unity",
+      "facts": {
+        "unity_big_files": [],
+        "unity_data_dir": "D:\\K\\deepseek\\_fixtures\\unity_game\\MyGame_Data",
+        "unity_il2cpp": true,
+        "unity_streaming_assets": true
+      },
       "guesses": [
         {
           "engine": "Unity",
+          "evidence": [
+            "+60 存在 `MyGame_Data/`（Unity 标志性目录）",
+            "+25 `MyGame_Data/StreamingAssets/aa/` 存在（Addressables 资源包目录）",
+            "+15 `MyGame_Data/il2cpp_data/` 存在 → IL2CPP",
+            "+10 `MyGame_Data/Managed/` 存在",
+            "+10 `MyGame_Data/globalgamemanagers` 存在",
+            "+15 `GameAssembly.dll` 存在（IL2CPP 特征）",
+            "+20 发现 1 个 `.bundle` 文件",
+            "+10 `.bundle` 头部为 `UnityFS`（已确认）"
+          ],
           "score": 165
         }
       ],
@@ -73,6 +111,7 @@
     "unknown_game": {
       "above_threshold": false,
       "engine": null,
+      "facts": {},
       "guesses": [],
       "has_attention": false,
       "has_warning": false,
@@ -85,9 +124,27 @@
       "above_threshold": true,
       "engine": "Unity",
       "expect": "Unity",
+      "facts": {
+        "unity_big_files": [
+          "1372.1 MB  resources.assets.resS",
+          "146.7 MB  resources.resource",
+          "97.9 MB  resources.assets",
+          "2.7 MB  globalgamemanagers.assets.resS",
+          "2.1 MB  sharedassets0.assets.resS"
+        ],
+        "unity_data_dir": "D:\\HY\\My Wife Wants to Be a Professional Cosplayer\\My Wife Wants to Be a Professional Cosplayer_Data",
+        "unity_il2cpp": false,
+        "unity_streaming_assets": false,
+        "unity_version": "2022.3.62f2"
+      },
       "guesses": [
         {
           "engine": "Unity",
+          "evidence": [
+            "+60 存在 `My Wife Wants to Be a Professional Cosplayer_Data/`（Unity 标志性目录）",
+            "+10 `My Wife Wants to Be a Professional Cosplayer_Data/Managed/` 存在",
+            "+10 `My Wife Wants to Be a Professional Cosplayer_Data/globalgamemanagers` 存在"
+          ],
           "score": 80
         }
       ],
@@ -101,9 +158,14 @@
       "above_threshold": true,
       "engine": "Tyrano/Electron",
       "expect": "Tyrano/Electron",
+      "facts": {},
       "guesses": [
         {
           "engine": "Tyrano/Electron",
+          "evidence": [
+            "+60 发现 1 个 `.asar` 文件",
+            "+30 其中含 `app.asar`（Electron 典型结构）"
+          ],
           "score": 90
         }
       ],
@@ -117,9 +179,15 @@
       "above_threshold": true,
       "engine": "Ren'Py",
       "expect": "Ren'Py",
+      "facts": {},
       "guesses": [
         {
           "engine": "Ren'Py",
+          "evidence": [
+            "+70 发现 4 个 `.rpa` 文件",
+            "+20 存在 `renpy/` 目录",
+            "+10 存在 `.rpy` / `.rpyc` 脚本"
+          ],
           "score": 100
         }
       ],
@@ -133,9 +201,16 @@
       "above_threshold": true,
       "engine": "CatSystem2",
       "expect": "CatSystem2",
+      "facts": {
+        "cs2_int_count": 55
+      },
       "guesses": [
         {
           "engine": "CatSystem2",
+          "evidence": [
+            "+70 `cs2.exe` 存在（CatSystem2 引擎主程序）",
+            "+20 发现 55 个 `.int`/`.dfn`/`.hg3` 文件"
+          ],
           "score": 90
         }
       ],
@@ -149,9 +224,17 @@
       "above_threshold": true,
       "engine": "Yu-Ris",
       "expect": "Yu-Ris",
+      "facts": {
+        "yuris_ypf_count": 3
+      },
       "guesses": [
         {
           "engine": "Yu-Ris",
+          "evidence": [
+            "+70 `yscfg.dat` 存在（Yu-Ris System 配置，注意不是 Yaneura）",
+            "+20 发现 3 个 `.ypf` 封包",
+            "+15 `pac/` 目录存在"
+          ],
           "score": 105
         }
       ],
@@ -165,9 +248,17 @@
       "above_threshold": true,
       "engine": "AdvHD",
       "expect": "AdvHD",
+      "facts": {
+        "advhd_arc_count": 18
+      },
       "guesses": [
         {
           "engine": "AdvHD",
+          "evidence": [
+            "+70 `AdvHD.exe` 存在（AdvHD 引擎主程序）",
+            "+20 `AdvHDLang.dll` 存在",
+            "+15 发现 18 个 `.arc` 封包"
+          ],
           "score": 105
         }
       ],
@@ -181,9 +272,14 @@
       "above_threshold": true,
       "engine": "KiriKiri",
       "expect": "KiriKiri",
+      "facts": {},
       "guesses": [
         {
           "engine": "KiriKiri",
+          "evidence": [
+            "+70 发现 1 个 `.xp3` 文件",
+            "+20 其中 1 个是已知包名（data/event/bgimage…）"
+          ],
           "score": 90
         }
       ],
@@ -197,9 +293,18 @@
       "above_threshold": true,
       "engine": "ExHIBIT",
       "expect": "ExHIBIT",
+      "facts": {
+        "exhibit_gyu_count": 2184,
+        "mojibake_count": 1
+      },
       "guesses": [
         {
           "engine": "ExHIBIT",
+          "evidence": [
+            "+70 `ExHIBIT.JP` / `RESIDENT.JP` 存在（MOONSTONE 系 Retouch 引擎）",
+            "+20 发现 2184 个 `.gyu` 图片",
+            "+10 `resident.dll` 存在（主逻辑）"
+          ],
           "score": 100
         }
       ],
@@ -213,9 +318,18 @@
       "above_threshold": true,
       "engine": "RPG Maker",
       "expect": "RPG Maker",
+      "facts": {
+        "rpgmaker_has_encryption_key_file": true,
+        "rpgmaker_variant": "MV"
+      },
       "guesses": [
         {
           "engine": "RPG Maker",
+          "evidence": [
+            "+70 NW.js 运行时（nw.dll/node.dll/icudtl.dat）+ `www/` 目录",
+            "+25 `www/js/rpg_core.js` 存在 → **MV**",
+            "+10 `www/data/System.json` 存在（加密 key 的来源）"
+          ],
           "score": 105
         }
       ],
@@ -229,9 +343,14 @@
       "above_threshold": true,
       "engine": "KiriKiri",
       "expect": "KiriKiri",
+      "facts": {},
       "guesses": [
         {
           "engine": "KiriKiri",
+          "evidence": [
+            "+70 发现 11 个 `.xp3` 文件",
+            "+20 其中 2 个是已知包名（data/event/bgimage…）"
+          ],
           "score": 90
         }
       ],
@@ -245,9 +364,14 @@
       "above_threshold": true,
       "engine": "KiriKiri",
       "expect": "KiriKiri",
+      "facts": {},
       "guesses": [
         {
           "engine": "KiriKiri",
+          "evidence": [
+            "+70 发现 1 个 `.xp3` 文件",
+            "+20 其中 1 个是已知包名（data/event/bgimage…）"
+          ],
           "score": 90
         }
       ],
