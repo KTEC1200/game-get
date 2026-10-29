@@ -1,0 +1,261 @@
+{
+  "fixtures": {
+    "krkr_game": {
+      "above_threshold": true,
+      "engine": "KiriKiri",
+      "guesses": [
+        {
+          "engine": "KiriKiri",
+          "score": 90
+        }
+      ],
+      "has_attention": false,
+      "has_warning": false,
+      "note_count": 0,
+      "score": 90
+    },
+    "krkr_modified": {
+      "above_threshold": true,
+      "engine": "KiriKiri",
+      "guesses": [
+        {
+          "engine": "KiriKiri",
+          "score": 90
+        }
+      ],
+      "has_attention": false,
+      "has_warning": true,
+      "note_count": 1,
+      "score": 90
+    },
+    "renpy_game": {
+      "above_threshold": true,
+      "engine": "Ren'Py",
+      "guesses": [
+        {
+          "engine": "Ren'Py",
+          "score": 100
+        }
+      ],
+      "has_attention": false,
+      "has_warning": false,
+      "note_count": 0,
+      "score": 100
+    },
+    "tyrano_game": {
+      "above_threshold": true,
+      "engine": "Tyrano/Electron",
+      "guesses": [
+        {
+          "engine": "Tyrano/Electron",
+          "score": 115
+        }
+      ],
+      "has_attention": false,
+      "has_warning": false,
+      "note_count": 0,
+      "score": 115
+    },
+    "unity_game": {
+      "above_threshold": true,
+      "engine": "Unity",
+      "guesses": [
+        {
+          "engine": "Unity",
+          "score": 165
+        }
+      ],
+      "has_attention": false,
+      "has_warning": false,
+      "note_count": 0,
+      "score": 165
+    },
+    "unknown_game": {
+      "above_threshold": false,
+      "engine": null,
+      "guesses": [],
+      "has_attention": false,
+      "has_warning": false,
+      "note_count": 0,
+      "score": 0
+    }
+  },
+  "real": {
+    "My Wife Wants to Be a Professional Cosplayer": {
+      "above_threshold": true,
+      "engine": "Unity",
+      "expect": "Unity",
+      "guesses": [
+        {
+          "engine": "Unity",
+          "score": 80
+        }
+      ],
+      "has_attention": false,
+      "has_warning": false,
+      "note_count": 0,
+      "path": "D:\\HY\\My Wife Wants to Be a Professional Cosplayer",
+      "score": 80
+    },
+    "SPITE": {
+      "above_threshold": true,
+      "engine": "Tyrano/Electron",
+      "expect": "Tyrano/Electron",
+      "guesses": [
+        {
+          "engine": "Tyrano/Electron",
+          "score": 90
+        }
+      ],
+      "has_attention": false,
+      "has_warning": false,
+      "note_count": 0,
+      "path": "D:\\HY\\SPITE",
+      "score": 90
+    },
+    "Swipe Right for Sugar Mama Sensei": {
+      "above_threshold": true,
+      "engine": "Ren'Py",
+      "expect": "Ren'Py",
+      "guesses": [
+        {
+          "engine": "Ren'Py",
+          "score": 100
+        }
+      ],
+      "has_attention": false,
+      "has_warning": false,
+      "note_count": 0,
+      "path": "D:\\HY\\Swipe Right for Sugar Mama Sensei",
+      "score": 100
+    },
+    "【PC电脑】甜蜜女友2+": {
+      "above_threshold": true,
+      "engine": "CatSystem2",
+      "expect": "CatSystem2",
+      "guesses": [
+        {
+          "engine": "CatSystem2",
+          "score": 90
+        }
+      ],
+      "has_attention": false,
+      "has_warning": false,
+      "note_count": 0,
+      "path": "D:\\HY\\甜蜜女友\\【PC电脑】甜蜜女友2+",
+      "score": 90
+    },
+    "あまねぇ -幼馴染お姉ちゃんとのえちえちあまやかされ同棲生活-": {
+      "above_threshold": true,
+      "engine": "Yu-Ris",
+      "expect": "Yu-Ris",
+      "guesses": [
+        {
+          "engine": "Yu-Ris",
+          "score": 105
+        }
+      ],
+      "has_attention": false,
+      "has_warning": false,
+      "note_count": 0,
+      "path": "D:\\HY\\あまねぇ -幼馴染お姉ちゃんとのえちえちあまやかされ同棲生活-",
+      "score": 105
+    },
+    "ラブラブお痴験バイト性活": {
+      "above_threshold": true,
+      "engine": "AdvHD",
+      "expect": "AdvHD",
+      "guesses": [
+        {
+          "engine": "AdvHD",
+          "score": 105
+        }
+      ],
+      "has_attention": false,
+      "has_warning": false,
+      "note_count": 0,
+      "path": "D:\\HY\\tm\\ラブラブお痴験バイト性活",
+      "score": 105
+    },
+    "兼职人妻": {
+      "above_threshold": true,
+      "engine": "KiriKiri",
+      "expect": "KiriKiri",
+      "guesses": [
+        {
+          "engine": "KiriKiri",
+          "score": 90
+        }
+      ],
+      "has_attention": false,
+      "has_warning": false,
+      "note_count": 0,
+      "path": "D:\\HY\\pork社\\兼职人妻",
+      "score": 90
+    },
+    "夕凪荘的S级的女朋友们": {
+      "above_threshold": true,
+      "engine": "ExHIBIT",
+      "expect": "ExHIBIT",
+      "guesses": [
+        {
+          "engine": "ExHIBIT",
+          "score": 100
+        }
+      ],
+      "has_attention": true,
+      "has_warning": false,
+      "note_count": 1,
+      "path": "D:\\HY\\夕凪荘的S级的女朋友们",
+      "score": 100
+    },
+    "常識改変学園-製品版-": {
+      "above_threshold": true,
+      "engine": "RPG Maker",
+      "expect": "RPG Maker",
+      "guesses": [
+        {
+          "engine": "RPG Maker",
+          "score": 105
+        }
+      ],
+      "has_attention": false,
+      "has_warning": false,
+      "note_count": 0,
+      "path": "D:\\HY\\常識改変学園-製品版-",
+      "score": 105
+    },
+    "教师催眠1": {
+      "above_threshold": true,
+      "engine": "KiriKiri",
+      "expect": "KiriKiri",
+      "guesses": [
+        {
+          "engine": "KiriKiri",
+          "score": 90
+        }
+      ],
+      "has_attention": false,
+      "has_warning": false,
+      "note_count": 0,
+      "path": "D:\\HY\\教师催眠1",
+      "score": 90
+    },
+    "高慢妻陥落！！": {
+      "above_threshold": true,
+      "engine": "KiriKiri",
+      "expect": "KiriKiri",
+      "guesses": [
+        {
+          "engine": "KiriKiri",
+          "score": 90
+        }
+      ],
+      "has_attention": false,
+      "has_warning": false,
+      "note_count": 0,
+      "path": "D:\\HY\\pork社\\高慢妻陥落！！",
+      "score": 90
+    }
+  }
+}

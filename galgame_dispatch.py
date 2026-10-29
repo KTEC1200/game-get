@@ -45,6 +45,12 @@ if sys.platform == "win32":
 MAGIC_XP3 = b"XP3\r\n \n\x1a\x8bg\x01"          # KiriKiri xp3
 MAGIC_RPA_PREFIX = b"RPA-"                        # Ren'Py RPA-3.0 / RPA-2.0
 MAGIC_UNITYFS = b"UnityFS"                        # Unity AssetBundle
+MAGIC_KIF = b"KIF\x00"                            # CatSystem2 .int 索引
+MAGIC_YPF = b"YPF\x00"                            # Yu-Ris pac/*.ypf
+MAGIC_GYU = b"GYU\x1a"                            # ExHIBIT .gyu 图片
+
+# CatSystem2 的 .int 家族扩展名（索引/配置/图片都在里面）
+CS2_INT_EXTS = (".int", ".dfn", ".hg3", ".nm3", ".gf3")
 
 # Unity 版本号可从 globalgamemanagers / level0 的串行化文件头里直接读到
 UNITY_VER_RE = re.compile(rb"\d+\.\d+\.\d+[a-z]\d+")
@@ -81,6 +87,11 @@ def demojibake(name: str) -> str | None:
 
     例：`僼傽僀儖攋懝僠僃僢僋僣乕儖.exe` → `ファイル破損チェックツール.exe`
     判据：把名字按 GBK 编码回字节、再按 Shift-JIS 解码；若结果含假名，则认定是乱码。
+
+    ⚠️ 反例（曾误报，2026-10-29 修）：`装備.rpgmvo` 是**合法的日文名**，
+    但 `装備` 的 GBK 字节恰好能按 Shift-JIS 解成 `ﾗｰゆ`（半角片假名）→ 被判成乱码，
+    还会建议把好文件改成乱码名。**真乱码的还原结果一定是全角日文**（Shift-JIS 的
+    片假名区是全角 U+30A0–U+30FF），出现半角片假名（U+FF61–U+FF9F）说明原文件名本来就好。
     """
     stem, dot, ext = name.rpartition(".")
     if not stem:
@@ -93,6 +104,9 @@ def demojibake(name: str) -> str | None:
         return None
     if not any("\u3040" <= c <= "\u30ff" for c in fixed):  # 必须有假名
         return None
+    # 半角片假名（ｦ–ﾟ）= 误报特征：真乱码还原出来的是全角日文
+    if any("\uff61" <= c <= "\uff9f" for c in fixed):
+        return None
     return fixed + (dot + ext if dot else "")
 
 
@@ -100,17 +114,34 @@ def count_subdir_games(game_dir: Path, sub_dirs: list[str]) -> list[str]:
     """找出「本身或其下两层像游戏」的直接子目录——用来识别这个目录其实是游戏集合。
 
     往下一层找是必要的：有些游戏把本体放在 `7/` 之类的子目录里，只看直接子项会漏。
+
+    ⚠️ 封包扩展名必须与 `scan()` 支持的引擎同步（2026-10-29 修）：
+    原先只认 `.xp3/.rpa/.asar` + `_Data`，导致 CatSystem2（`.int`）、Yu-Ris（`.ypf`）、
+    ExHIBIT（`.gyu`）、AdvHD（`.arc`）的集合目录全部漏判——
+    `D:\\HY\\甜蜜女友`（6 个独立 CatSystem2 子游戏）因此被当成单个游戏。
+
+    ⚠️ 但光有封包不够（2026-10-29 再修）：`夕凪荘` 的 `res/`、`userdata/` 是**同一个
+    游戏内部**的资源目录，也含 `.gyu/.grp`，会被误判成「2 个独立子游戏」。
+    **真子游戏一定有自己的可执行文件**（`甜蜜女友` 的 7 个子目录各含 1–5 个 exe，
+    `夕凪荘/res` 与 `userdata` 各含 0 个 exe）→ 要求「有封包 **且** 有 exe」。
     """
+    # 与 scan() 的封包列表保持同一套扩展名
+    pack_exts = (".xp3", ".rpa", ".asar", ".bundle", ".arc", ".ypf", ".gyu") + CS2_INT_EXTS
+
     def has_game_signature(d: Path, depth: int = 2) -> bool:
         try:
             entries = list(d.iterdir())
         except OSError:
             return False
-        for e in entries:
-            if e.is_file() and e.suffix.lower() in (".xp3", ".rpa", ".asar"):
-                return True
-            if e.is_dir() and e.name.endswith("_Data"):
-                return True
+        has_pack = any(
+            e.is_file() and e.suffix.lower() in pack_exts for e in entries
+        ) or any(e.is_dir() and e.name.endswith("_Data") for e in entries)
+        has_exe = any(
+            e.is_file() and e.suffix.lower() == ".exe" for e in entries
+        )
+        # 真子游戏 = 自带可执行文件；单靠封包会把 res/userdata 这类资源目录算进来
+        if has_pack and has_exe:
+            return True
         if depth > 0:
             for e in entries:
                 if e.is_dir() and has_game_signature(e, depth - 1):
@@ -244,6 +275,10 @@ def scan(game_dir: Path, max_files: int = 200_000, deep: bool = False,
     rpa_files: list[Path] = []
     asar_files: list[Path] = []
     bundle_files: list[Path] = []
+    arc_files: list[Path] = []      # AdvHD 封包
+    ypf_files: list[Path] = []      # Yu-Ris 封包
+    gyu_files: list[Path] = []      # ExHIBIT 图片
+    cs2_files: list[Path] = []      # CatSystem2 .int 家族
     seen = 0
 
     # 顶层目录名先判，命中时可提前收敛
@@ -308,25 +343,53 @@ def scan(game_dir: Path, max_files: int = 200_000, deep: bool = False,
             asar_files.append(p)
         elif lower.endswith(".bundle"):
             bundle_files.append(p)
+        elif lower.endswith(".arc"):
+            arc_files.append(p)
+        elif lower.endswith(".ypf"):
+            ypf_files.append(p)
+        elif lower.endswith(".gyu"):
+            gyu_files.append(p)
+        elif lower.endswith(CS2_INT_EXTS):
+            cs2_files.append(p)
 
     # ---- 这个目录其实是「游戏集合」而不是单个游戏？ ----
+    # 判据：≥2 个子目录各自带「封包」特征。封包类型要覆盖全部已支持引擎，
+    # 否则新分支（CatSystem2 用 .int、Yu-Ris 用 .ypf）的集合目录会漏判。
+    # 2026-10-29 修：原先只认 xp3/data_dirs，`D:\HY\甜蜜女友`（6 个 CatSystem2
+    # 子游戏 + アマカノ3）被误判成单个游戏。
+    has_pack = bool(
+        xp3_files or data_dirs or rpa_files or asar_files or bundle_files
+        or arc_files or ypf_files or gyu_files or cs2_files
+    )
     sub_games = count_subdir_games(game_dir, top_dirs)
-    if len(sub_games) >= 2 and (xp3_files or data_dirs):
+    if len(sub_games) >= 2 and has_pack:
         rep.facts["is_collection"] = True
         shown = "、".join(sub_games[:5]) + ("…" if len(sub_games) > 5 else "")
         rep.notes.append(
             f"[注意] 本目录下有 {len(sub_games)} 个子目录各自是独立游戏（{shown}）"
-            f" → 这是**游戏集合目录**，不是单个游戏。上面这些 xp3 来自不同子目录，"
+            f" → 这是**游戏集合目录**，不是单个游戏。上面的封包计数来自不同子目录，"
             f"请改为对每个子目录分别运行本工具，否则计数会虚高。"
         )
 
     if mojibake:
         rep.facts["mojibake_count"] = len(mojibake)
         sample = "；".join(f"`{a}` → `{b}`" for a, b in mojibake[:5])
+        # 建议要跟着扩展名走：乱码的是音频才提 FFmpeg concat，
+        # 否则（.dat/.exe/.png…）提 concat 是驴唇不对马嘴。
+        audio_exts = (".ogg", ".wav", ".mp3", ".m4a", ".flac", ".opus", ".wma", ".aac")
+        has_audio = any(Path(a).suffix.lower() in audio_exts for a, _ in mojibake)
+        if has_audio:
+            tail = (
+                " → 其中含**音频**文件，这类名字会让 FFmpeg concat 报 `Invalid argument`，"
+                "正是你教程里那条「另存为 UTF-8」的坑；建议先批量改名再处理音频。"
+            )
+        else:
+            tail = (
+                " → 这些名字会让按名引用的脚本/配置找不到文件，"
+                "建议先批量改名（按上面箭头右侧的还原名）再解包。"
+            )
         rep.notes.append(
-            f"[注意] 发现 {len(mojibake)} 个**乱码文件名**（Shift-JIS 名被按 GBK 解读）：{sample}"
-            f" → 这类名字会让 FFmpeg concat 报 `Invalid argument`，"
-            f"正是你教程里那条「另存为 UTF-8」的坑；建议先批量改名再处理音频。"
+            f"[注意] 发现 {len(mojibake)} 个**乱码文件名**（Shift-JIS 名被按 GBK 解读）：{sample}{tail}"
         )
 
     # ---- KiriKiri ----
@@ -398,6 +461,84 @@ def scan(game_dir: Path, max_files: int = 200_000, deep: bool = False,
                 hit("Unity", 10, "`.bundle` 头部为 `UnityFS`（已确认）")
                 break
 
+    # ---- RPG Maker MV/MZ ----
+    # 判据：NW.js 运行时 + www/（MV 用 js/rpg_core.js，MZ 用 js/rmmz_core.js）
+    nwjs = [f for f in ("nw.dll", "node.dll", "icudtl.dat") if (game_dir / f).exists()]
+    has_www = (game_dir / "www").is_dir()
+    if nwjs and has_www:
+        hit("RPG Maker", 70, f"NW.js 运行时（{'/'.join(nwjs)}）+ `www/` 目录")
+        js_dir = game_dir / "www" / "js"
+        if (js_dir / "rmmz_core.js").exists():
+            hit("RPG Maker", 25, "`www/js/rmmz_core.js` 存在 → **MZ**")
+            rep.facts["rpgmaker_variant"] = "MZ"
+        elif (js_dir / "rpg_core.js").exists():
+            hit("RPG Maker", 25, "`www/js/rpg_core.js` 存在 → **MV**")
+            rep.facts["rpgmaker_variant"] = "MV"
+        sys_json = game_dir / "www" / "data" / "System.json"
+        if sys_json.exists():
+            hit("RPG Maker", 10, "`www/data/System.json` 存在（加密 key 的来源）")
+            rep.facts["rpgmaker_has_encryption_key_file"] = True
+
+    # ---- AdvHD ----
+    # 判据：AdvHD.exe + AdvHDLang.dll，封包是 *.arc（索引含 UTF-16LE 名）
+    if (game_dir / "AdvHD.exe").exists():
+        hit("AdvHD", 70, "`AdvHD.exe` 存在（AdvHD 引擎主程序）")
+        if (game_dir / "AdvHDLang.dll").exists():
+            hit("AdvHD", 20, "`AdvHDLang.dll` 存在")
+        if arc_files:
+            hit("AdvHD", 15, f"发现 {len(arc_files)} 个 `.arc` 封包")
+            rep.facts["advhd_arc_count"] = len(arc_files)
+    elif arc_files and (game_dir / "AdvHDLang.dll").exists():
+        hit("AdvHD", 70, f"`AdvHDLang.dll` + {len(arc_files)} 个 `.arc` 封包")
+
+    # ---- Yu-Ris ----
+    # 判据：yscfg.dat + pac/*.ypf（魔数 YPF\0）+ エンジン設定.exe
+    if (game_dir / "yscfg.dat").exists():
+        hit("Yu-Ris", 70, "`yscfg.dat` 存在（Yu-Ris System 配置，注意不是 Yaneura）")
+        if ypf_files:
+            hit("Yu-Ris", 20, f"发现 {len(ypf_files)} 个 `.ypf` 封包")
+        pac = game_dir / "pac"
+        if pac.is_dir():
+            hit("Yu-Ris", 15, "`pac/` 目录存在")
+        rep.facts["yuris_ypf_count"] = len(ypf_files)
+    elif ypf_files:
+        for f in ypf_files[:5]:
+            if read_head(f, 4) == MAGIC_YPF:
+                hit("Yu-Ris", 70, f"`{f.name}` 头部为 `YPF\\0`（已确认）")
+                rep.facts["yuris_ypf_count"] = len(ypf_files)
+                break
+
+    # ---- ExHIBIT / Retouch ----
+    # 判据：ExHIBIT.JP / RESIDENT.JP + .gyu（魔数 GYU\x1a）
+    if (game_dir / "ExHIBIT.JP").exists() or (game_dir / "RESIDENT.JP").exists():
+        hit("ExHIBIT", 70, "`ExHIBIT.JP` / `RESIDENT.JP` 存在（MOONSTONE 系 Retouch 引擎）")
+        if gyu_files:
+            hit("ExHIBIT", 20, f"发现 {len(gyu_files)} 个 `.gyu` 图片")
+        if (game_dir / "resident.dll").exists():
+            hit("ExHIBIT", 10, "`resident.dll` 存在（主逻辑）")
+        rep.facts["exhibit_gyu_count"] = len(gyu_files)
+    elif gyu_files:
+        for f in gyu_files[:5]:
+            if read_head(f, 4) == MAGIC_GYU:
+                hit("ExHIBIT", 70, f"`{f.name}` 头部为 `GYU\\x1a`（已确认）")
+                rep.facts["exhibit_gyu_count"] = len(gyu_files)
+                break
+
+    # ---- CatSystem2 ----
+    # 判据：cs2.exe / boot.dfn + *.int（魔数 KIF\0）
+    if (game_dir / "cs2.exe").exists() or (game_dir / "boot.dfn").exists():
+        which = "cs2.exe" if (game_dir / "cs2.exe").exists() else "boot.dfn"
+        hit("CatSystem2", 70, f"`{which}` 存在（CatSystem2 引擎主程序）")
+        if cs2_files:
+            hit("CatSystem2", 20, f"发现 {len(cs2_files)} 个 `.int`/`.dfn`/`.hg3` 文件")
+        rep.facts["cs2_int_count"] = len(cs2_files)
+    elif cs2_files:
+        for f in cs2_files[:5]:
+            if read_head(f, 4) == MAGIC_KIF:
+                hit("CatSystem2", 70, f"`{f.name}` 头部为 `KIF\\0`（已确认）")
+                rep.facts["cs2_int_count"] = len(cs2_files)
+                break
+
     rep.guesses = sorted(g.values(), key=lambda x: -x.score)
     return rep
 
@@ -436,6 +577,53 @@ ADVICE: dict[str, dict[str, object]] = {
         "tool": "AsarKit（安装无依赖）",
         "fallback": ["AsarKit 不行 → 试 WinASAR"],
         "output": "asar 内为完整应用目录，资源通常在 resources/ 或 tyrano/ 下",
+    },
+    "RPG Maker": {
+        "tool": "`_rpgmv_decrypt.py <游戏目录> <输出目录>`（自动找 www、自动读 System.json 的 encryptionKey）",
+        "fallback": [
+            "`System.json` 里 hasEncryptedImages/hasEncryptedAudio 都是 false → 媒体本来就是明文，img/audio/movies 直接用，无需解密",
+            "后缀还原：`.rpgmvp→png`、`.rpgmvo→ogg`、`.rpgmvm→m4a`（MZ 用 `.png_/.ogg_` 风格）",
+            "MV 视频在 `www/movies/*.webm|mp4`（明文无加密）；目录没有就是没有",
+        ],
+        "output": "解密的地面真相在游戏自带 `www/js/rpg_core.js` 的 `Decrypter.decryptArrayBuffer`（只 XOR 前 16 字节）",
+    },
+    "AdvHD": {
+        "tool": "GARbro.Console 原生支持 `.arc`，一个工具通吃（`-x` 逐包提取）",
+        "fallback": [
+            "`.dat`（OP/ED）是 ASF/WMV：头 GUID `30 26 b2 75…`，复制改后缀 `.wmv` 即可",
+            "`.pna` 是 PNAP 多帧容器 → `_pna_carve.py` 按 PNG 签名→IEND 逐帧 carve",
+            "`.mos` 内容就是 PNG，按 PNG 验收",
+            "GARbro 对 .arc 的列表输出**无表头**（每行一条），别套 `len(lines)-1`，否则每包差 1",
+        ],
+        "output": "音频出 ogg、图片自动转 PNG；逐包对账以包头 u32 条目数为地面真相",
+    },
+    "Yu-Ris": {
+        "tool": "`_ypf_extract.py <pac/xxx.ypf> <输出目录>`（自研，格式已完整逆向）",
+        "fallback": [
+            "GARbro **不支持** YPF（真不支持，非假阴性）",
+            "arc_unpacker 0.11 备选：`--out=DIR` 必须等号形式；大包疑似卡死，小包正常",
+            "「YS」= Yu-Ris System，不是 Yaneura——别被 yscfg/YSSD 前缀误导",
+        ],
+        "output": "名字 XOR 单字节 key、名长置换表、可选 zlib、YCG→PNG；图片出 PNG，音频出 OGG",
+    },
+    "ExHIBIT": {
+        "tool": "`_gyu_tool.exe`（图片 .gyu）+ `_grp_extract.py`（音频 .grp）",
+        "fallback": [
+            "`.gyu` 密钥在文件头（Key≠0xFFFFFFFF 时 MT 交换 10 对字节去混淆）；压缩分原样/GyuLZ(0x800)/LZSS 三种",
+            "Gyu-LZ 位流与字节流**共享游标**——移植大坑",
+            "`.grp` 的 TOC 就是同名小的 `AiFS` 魔数文件（res2000.grp），按 TOC 切",
+            "**BGM（res/s/m/*.ogg）加密未解**：只有头两页 3853B 被加密，密钥疑在 cluu/GUID/DPMODE，见 verified-findings §15.3",
+        ],
+        "output": "8bpp 调色板 + 可选 alpha 平面，图自下而上；工具用系统自带 csc 编译，零依赖",
+    },
+    "CatSystem2": {
+        "tool": "`_cs2_int_extract.py`（.int 全链）+ `_hg3_tool.exe`（HG-3 家族图片）",
+        "fallback": [
+            "索引与数据全部 Blowfish-ECB，密钥来自包头 0x4C 种子驱动 MT；main_key 无口令时用「k0 反推+约束爆破」",
+            "图片 HG-3 家族（.hg3/.nm3/.gf3 及**任意扩展名**）——引擎会二次混淆扩展名，必须按魔数扫描",
+            "24bpp 变体：row 必须按 `w * (bpp/8)` 算，硬编码 `w*4` 会越界（§16.5 的坑）",
+        ],
+        "output": "音频 OggS 明文（解密后），视频是 MPEG-PS（`00 00 01 ba`）",
     },
 }
 
