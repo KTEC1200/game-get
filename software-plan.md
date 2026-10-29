@@ -59,6 +59,25 @@ manifest.json 契约（对账与验收的唯一地面真相）:
 }
 ```
 
+**⭐ counts 语义（2026-10-29 定案，修掉原计划的缺陷 #5）**：上面样例没区分「原始提取物」与「成品」，
+实测 `高慢妻陥落！！` 时两者差很远（raw 2838 里含 865 个 .tlg，转完才有 1301 张图），
+对账口径含糊就会两边都算不清。**定案 = counts 分三块，raw 与 final 各自独立对账**：
+
+```jsonc
+{
+  "counts": {
+    "raw":       {"by_ext": {".ogg": 1394, ".tlg": 865, ".png": 436}, "total": 2838},  // 提取器直接落盘的
+    "final":     {"by_ext": {".ogg": 1394, ".png": 1301},              "total": 2695},  // 后处理完成后的交付物
+    "converted": {".tlg": 865}                                                          // 被后处理消费掉的中间格式
+  }
+}
+```
+
+三条硬规矩：
+1. **`raw` 是提取器的唯一自证**——必须等于封包条目数（`source.archives[].entries` 求和），差 1 都不许过。
+2. **`final` 是交付口径**——报「图片多少张」时用 `final`（本例 1301 = png 436 + tlg 865 转出的），不是 raw 的 436。
+3. **`converted` 解释 `raw.total != final.total`**——没有它，差额永远说不清是丢了还是转了。
+
 **判定规则数据驱动**：`galgame_dispatch.py` 的指纹表移进 `rules/engines.json`
 （签名/文件特征/判定次序），dispatch 与软件共用同一份（蓝图「规则要数据驱动」的落实）。
 
@@ -70,9 +89,16 @@ manifest.json 契约（对账与验收的唯一地面真相）:
 2. **`galgame_dispatch.py` 升级**：指纹表外置 `rules/engines.json`；输出增加「建议 extractor + 参数」。
 3. **`orchestrator.py`**：`detect → extract → postprocess → verify → manifest` 串成一条命令；
    每步产物与日志落 `--work` 目录；对账不为 0 即停（纪律 2）。
-4. **外部工具桥** `toolbridge.py`：统一「找工具（注册表化路径）+ 调用 + 数产物 + 退出码不信任」；
-   先覆盖 GARbro / tlg2png / ffprobe / AssetStudio / KrkrExtract 五个。
-5. **验收**：拿 `高慢妻陥落！！`（加密 krkr）与 `My Best Deal`（Ren'Py）双样本回归，manifest 对账 0 差。
+4. ~~**外部工具桥** `toolbridge.py`~~ ✅ **已完成（2026-10-29）**：覆盖 GARbro / tlg2png / ffprobe /
+   AssetStudio / KrkrExtract 五个。`python toolbridge.py check` 自检，`run(key, argv, product_dir=…)`
+   统一调用；**成败一律由产物判定，退出码只作诊断**；路径按
+   override → `TOOLBRIDGE_<KEY>` 环境变量 → `toolbridge.json` → 内置候选 → PATH 解析；
+   子进程环境洗掉 `_MEI*`/`PYTHONHOME`/`PYTHONPATH` 并 `SetDllDirectoryW(None)`。
+   坑 4（AssetStudio 逗号/竖线）已在 `assetstudio_export()` 里做成**参数级护栏**（直接抛 ValueError）。
+   测试 101 项全绿（含「exit=0 但 0 产物必须判失败」的变异验证：故意改回信退出码 → 4 个测试变红）。
+5. **验收**：拿 `高慢妻陥落！！`（加密 krkr）与 `Swipe Right`（Ren'Py）双样本回归，manifest 对账 0 差。
+   > 原定第二样本 `My Best Deal` 已于磁盘消失（缺陷 #3），改用 `Swipe Right for Sugar Mama Sensei`
+   > （四包 2156 条目，已双样本验证过通用性）。
 
 ### 阶段 2：引擎插件收编（M1 → M2）
 1. 把剩余 extractor 逐个改造成契约插件（每个 ≤ 半天）：`_cs2_int_extract`（去 pycryptodome 硬依赖或
@@ -109,7 +135,18 @@ manifest.json 契约（对账与验收的唯一地面真相）:
 
 ## 5. 立即可做的下一步（按序）
 
-1. `rules/engines.json` 抽取（把 `galgame_dispatch.py` 的指纹表原样外置，行为不变的纯重构）。
-2. `toolbridge.py` + GARbro/tlg2png/ffprobe 三工具接入。
-3. `orchestrator.py` 最小闭环（detect→extract→verify），用两个已交付样本做回归。
-4. manifest 契约在 `krkr_auto_extract.py` 试点（数据现成：§17.5 的全部数字）。
+> **2026-10-29 更新**：原第 1 项（`rules/engines.json` 抽取）**不是纯重构**，已后置——
+> 指纹散在 `scan()` 的 17 个 `hit()` 调用里，还依赖 5 个有副作用的探测函数
+> （`find_unity_version()` 解析二进制、`biggest_files()`、`count_subdir_games()`、`demojibake()`、
+> `garbro_probe()` 调 subprocess）。外置 = 把 `scan()` 重写成「规则表 + 解释器」，
+> 属**有回归风险的重构**，不该排在新增工作前面。调整后的顺序：
+
+1. ~~`toolbridge.py` + 五工具接入~~ ✅ **已完成（2026-10-29）**，101 项测试全绿。
+2. **`orchestrator.py` 最小闭环**（detect → extract → postprocess → verify → manifest），
+   先只接 Ren'Py 与 KiriKiri 两条链路（它们已有契约化工具 + toolbridge 就位），
+   用 `Swipe Right`（Ren'Py）与 `高慢妻陥落！！`（加密 krkr）双样本回归。
+3. manifest 契约在 `krkr_auto_extract.py` 试点（数据现成：§17.5 的全部数字；
+   按 §2 新定的 raw/final/converted 三段式落）。
+4. `rules/engines.json` 抽取（**重构项，放最后**；先补 `tests/` 的 golden 覆盖再动，
+   确保行为不变可验证——现有 `tests/golden_detect.json` 就是为此准备的）。
+5. `galgame_dispatch.py` 输出增加「建议 extractor + 参数」（依赖第 4 项）。

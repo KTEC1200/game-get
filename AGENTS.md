@@ -37,6 +37,11 @@
 - `tutorials/` —— 用户的原始教程（**用户提供的资料，勿删**）
 
 **可复用脚本**
+- **外部工具桥：`toolbridge.py`**（2026-10-29，软件化第 2 步）—— 统一「找工具 + 调用 + 数产物 + **退出码不信任**」，
+  已覆盖 GARbro / tlg2png / ffprobe / AssetStudio / KrkrExtract 五个。
+  `python toolbridge.py check` 自检路径；库用法 `tb.run("garbro", ["-x", xp3], cwd=out, product_dir=out)`。
+  工具路径按 override → `TOOLBRIDGE_<KEY>` 环境变量 → `toolbridge.json` → 内置候选 → PATH 解析，
+  **不再硬编码**。成败一律看产物数，`returncode` 只进诊断字段。坑 4（AssetStudio 逗号/竖线）已做成参数级护栏。
 - Ren'Py：**`rpa_tool.py`**（`info`/`list`/`extract`）、**`rpa_extract_organized.py`**（一步分类解包）、`_organize_rpa.py`（先解再分，留档）
 - Unity：**`unity_unpack.ps1`**、`_as_audio_collect2.py`（FSB5 分组累积）、`_as_catalog.py`、`_as_summary.py`、`_scan_unity_video.py`
 - KiriKiri：`_tlg2png_all.ps1`、**`_krkr_tlg_convert.py`**（tlg2png 批量转换 Python 版，避开 CJK 路径坑）
@@ -256,7 +261,7 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
 ## 引擎分支要点（实测）
 
 ### KiriKiri
-`GARbro.Console.exe -x <data.xp3>` 直接解（`兼职人妻` 2561 条 / **8 秒**）。
+`GARbro.Console.exe -x <data.xp3>` 直接解（`兼职人妻` 2562 条 / **8 秒**）。
 后处理按需：`.tlg`→`tlg2png`；`.pimg/.psb`→FreeMote + krkrFgiEditor（**仅在游戏有 E-mote 立绘时**才需要）。
 **加密 xp3（Console/GARbro 读不出）→ 动态提取已全自动**：`krkr_auto_extract.py <游戏目录>`
 （Lite.exe CLI 注入 + Explorer 拖拽法 + 完成判定；两大硬结论：游戏路径必须纯 ASCII、
@@ -295,7 +300,9 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
 ### AdvHD（`ラブラブお痴験バイト性活` 实测，2026-10-26）
 - 判定：`AdvHD.exe` + `AdvHDLang.dll`。封包 `.arc`（索引含 UTF-16LE 名），**GARbro 原生支持**，
   音频出 ogg、图片自动转 PNG；逐包对账以包头 u32 条目数为地面真相。
-- **GARbro 对 .arc 的列表输出无表头（每行一条）**——xp3 有表头，别套 `len(lines)-1`，否则每包差 1。
+- **GARbro 列表输出对 `.arc` 和 `.xp3` 都无表头**（每行一条，首行即第一个条目）——计数一律 `len(非空行)`，
+  别套 `len(lines)-1`，否则每包差 1（2026-10-29 实测纠正：`兼职人妻` 实为 2562 条、`温泉蒸汽人妻` 3425 条，
+  旧文档记的 2561/3424 就是这个口径错误的产物）。用 `toolbridge.garbro_list()` 拿条目数可避坑。。
 - `.dat`（OP/ED）= ASF/WMV（头 GUID `30 26 b2 75…`）→ 复制改 `.wmv` 即可。
 - `.pna` = PNAP 多帧容器 → `_pna_carve.py` carve；`.mos` 内容就是 PNG，按 PNG 验收。
 
