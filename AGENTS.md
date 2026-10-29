@@ -93,9 +93,19 @@ Ren'Py 侧：`_rpa_stage` / `_rpa_patch_stage` / `_rpa_arch.txt` / `_rpa_patch.t
 
 ## 状态
 
-- ✅ **`galgame_dispatch.py`** — dry-run 分派器，纯规则、只读、仅标准库。
-  `python galgame_dispatch.py "<目录>" [--depth N] [--garbro <GARbro.Console.exe>] [--json out.json]`
+- ✅ **`galgame_dispatch.py`** — dry-run 分派器，纯规则、只读、仅标准库。引擎指纹在
+  `rules/engines.json`（规则表 + 解释器），提取计划由 `planner.py` 生成。
+  `python galgame_dispatch.py "<目录>" [--depth N] [--garbro <GARbro.Console.exe>] [--json out.json] [--plan] [--plan-json out.json]`
+  - `--plan` 附「建议 extractor + 可直接复制的命令」；`--plan-json` 给批处理。
+  - planner 只写「怎么跑」不写「跑不跑得通」（`implemented` 只表示 orchestrator 有没有接这条链，
+    能不能解一律实跑定——坑 2）；参数只从 `Report.archives` 的实测归档拼，不猜包名、不猜哪个加密；
+    `argv` 是列表（含空格路径不会被拆碎），`cmdline` 只给人复制、不参与执行。
+  - 产物一律落 `<仓库>/_extracted/<游戏名>/`，**不写进游戏目录**（会污染原包，且加密 KiriKiri 链
+    要 stage 纯 ASCII 副本，混在一起分不清谁产生的）。
 - 引擎判定已实测正确 **9/9**（1 Unity + 8 KiriKiri）；回归样例 `_fixtures/`（用 `make_fixtures.py` 重建）**6/6 通过**（2026-10-14 复跑确认）。
+  2026-10-30 起引擎规则扩到 **9 个**（Unity / KiriKiri / Ren'Py / Tyrano-Electron / RPG Maker /
+  AdvHD / Yu-Ris / ExHIBIT / CatSystem2），12 个真实样本里 11 个在场全部判对（`My Best Deal` 已从磁盘消失）；
+  `tests/golden_detect.json` 逐字锁定 engine/score/evidence/facts 四个维度，**测试 278 passed / 3 skipped**。
 - 用户的 `D:\HY\pork社` 7 个游戏经 **GUI 实测全部可静态提取**。
 - ✅ **三条产出线（视频 / 图片 / 音频）全部有实测验证过的样本** —— 见下表。
 
@@ -276,12 +286,14 @@ AdvHD ラブラブ / Yu-Ris あまねぇ / ExHIBIT 夕凪荘 / CatSystem2 甜蜜
 release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）已由用户放入 `D:\K\galgame\krkr\krkrz\`。
 
 **新会话开局**：读本文件 → 「已暂停的未完成任务」四项已全部完成（2026-10-28）；
-软件化进度见 `software-plan.md` §5（2026-10-30 状态）：
+软件化进度见 `software-plan.md` §5（2026-10-30 状态，**§5 六项全部完成**）：
 `toolbridge.py` ✅ → `orchestrator.py` ✅（Ren'Py + KiriKiri 两链）→ `manifest.py` ✅ 契约唯一实现
-（含 `counts()` 两目录形态与 `counts_flat()` 落盘即成品形态）→ 4 个解包器全部接上 `--manifest` ✅。
-**测试 190 passed / 3 skipped。** 下一步只剩两项，且都是有回归风险的重构/增强，须先补 golden 覆盖：
-① `rules/engines.json` 指纹外置（把 `scan()` 改写成「规则表 + 解释器」，重构项，放最后）
-② `galgame_dispatch.py` 输出「建议 extractor + 参数」（依赖 ①）。
+（含 `counts()` 两目录形态与 `counts_flat()` 落盘即成品形态）→ 4 个解包器全部接上 `--manifest` ✅
+→ `rules/engines.json` 指纹外置 ✅（规则表 + 解释器，`rules/__init__.py`）→ `planner.py` ✅
+（`dispatch --plan` 输出「建议 extractor + 参数」）。
+**测试 278 passed / 3 skipped**；`python tests/make_golden.py --check` 零漂移。
+**软件化的四个阶段（software-plan §3）里，阶段 1 已完成**；下一步是阶段 2（各引擎分支接
+orchestrator，目前只有 Ren'Py / KiriKiri 两条链）。
 
 ## 引擎分支要点（实测）
 

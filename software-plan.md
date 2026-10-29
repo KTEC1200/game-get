@@ -104,7 +104,7 @@ manifest.json 契约（对账与验收的唯一地面真相）:
      `常識改変学園` 7 个加密媒体 7/7 diff 0 且 `magic_fail_count=0`。
    - 测试：`tests/test_flat_manifest.py` 14 项（含「扁平工具不许套 CONVERTIBLE 悄悄抹掉 `.tlg`」
      和「必须记 out_root」两条护栏）。
-2. **`galgame_dispatch.py` 升级**：~~指纹表外置 `rules/engines.json`~~ ✅ 已完成（2026-10-30，见 §5 第 5 项）；**剩下「输出增加『建议 extractor + 参数』」待做**。
+2. **`galgame_dispatch.py` 升级**：~~指纹表外置 `rules/engines.json`~~ ✅ 已完成（2026-10-30，见 §5 第 5 项）；~~输出增加「建议 extractor + 参数」~~ ✅ 已完成（2026-10-30，`planner.py` + `--plan`/`--plan-json`，见 §5 第 6 项）。
 3. ~~**`orchestrator.py`**~~ ✅ **已完成（2026-10-29）**：`detect → extract → postprocess → verify →
    manifest` 串成一条命令；每步产物与日志落 `--work`；对账不为 0 即停（纪律 2）。
    - 已接 **Ren'Py 与 KiriKiri 两条链路**（其余引擎判得出 → 退出码 2，明确「没链路」而不是假装成功）。
@@ -204,4 +204,19 @@ manifest.json 契约（对账与验收的唯一地面真相）:
    测试 255 passed / 3 skipped（新增 `tests/test_rules.py` 53 项，含 6 项 `validate()` 变异验证）。
    顺带修掉 `garbro_probe()` 的**差一错误**（`len(lines)-1` → `len(lines)`；
    GARbro 列表无表头，实测 2562 条，与 `toolbridge.garbro_list()` 口径统一，加了护栏测试）。
-6. `galgame_dispatch.py` 输出增加「建议 extractor + 参数」（依赖第 5 项，现在可以做了）。
+6. ~~`galgame_dispatch.py` 输出增加「建议 extractor + 参数」~~ ✅ **已完成（2026-10-30）**：
+   落地为 **`planner.py`**（判定 → 提取计划），由 `dispatch --plan` / `--plan-json FILE` 驱动。
+   职责分离的理由：dispatch 管**判定**（要稳定到能进 golden 逐字比对），planner 管**分派**
+   （随工具与参数频繁变动）——混在一起，改个参数名就得重刷 golden。
+   三条硬规矩（测试锁着）：① 只写「怎么跑」不写「跑不跑得通」（`implemented` 只表示 orchestrator
+   有没有接这条链，能不能解一律实跑定——坑 2）；② 参数只从实测事实拼（归档取自 `Report.archives`，
+   绝不猜包名、猜哪个加密）；③ **`argv` 是列表不是字符串**（`Swipe Right for Sugar Mama Sensei`
+   这种含空格路径用 shell 字符串拼必然出错），`cmdline` 只给人复制、不参与执行。
+   `Report.archives` **故意不放进 facts**——facts 是判定证据快照（golden 逐字比对），archives 是拼
+   命令行的原料，混在一起每次新增一条计划就冲掉 golden。
+   9 个 builder 全覆盖 `ADVICE` 的 9 个引擎；已接 orchestrator 的引擎（Ren'Py / KiriKiri）给
+   「一条命令走完全链」+ 单工具兜底 `extras`，其余 7 个标「orchestrator 未接，需单独跑」。
+   产物一律落 `<仓库>/_extracted/<游戏名>/`（**不写进游戏目录**：会污染原包，且加密 KiriKiri 链
+   要 stage 纯 ASCII 副本，混在一起分不清谁产生的）。
+   **测试 278 passed / 3 skipped**（新增 `tests/test_planner.py` 23 项，含 3 轮变异验证）；
+   `make_golden.py --check` 零漂移。顺带修掉 `_gyu_tool.exe` 写成裸文件名（靠 PATH 查找，PATH 里没有）。

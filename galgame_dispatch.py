@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import rules  # 引擎指纹规则表 + 解释器（rules/engines.json）
+import planner  # 判定 → 提取计划（该跑哪个工具 + 命令行）
 
 # Windows 控制台默认是 GBK 代码页，直接打印中文以外的字符会抛 UnicodeEncodeError。
 # 统一切到 UTF-8 代码页，并给输出流加 errors="replace" 兜底。
@@ -244,6 +245,11 @@ class Report:
     guesses: list[Guess] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     facts: dict[str, object] = field(default_factory=dict)
+    # 归档清单（按扩展名分组，绝对路径）。**故意不放进 facts**——facts 是
+    # 「判定证据」的快照（golden 基线逐字比对），而这里只是给「提取计划」
+    # 拼命令行用的原料，两者生命周期与稳定性要求不同，混在一起会让
+    # 每次新增一条计划就冲掉 golden。
+    archives: dict[str, list[Path]] = field(default_factory=dict)
 
     @property
     def best(self) -> Guess | None:
@@ -429,11 +435,30 @@ def scan(game_dir: Path, max_files: int = 200_000, deep: bool = False,
     for key, val in res.facts.items():
         rep.facts.setdefault(key, val)
 
+    rep.archives = _collect_archives(inv)
+
     _note_pack_warnings(inv, rep)
     if garbro_exe:
         _garbro_facts(game_dir, inv, garbro_exe, rep)
 
     return rep
+
+
+ARCHIVE_EXTS = (".xp3", ".rpa", ".asar", ".arc", ".ypf", ".gyu", ".int", ".grp")
+
+
+def _collect_archives(inv: "rules.Inventory") -> dict[str, list[Path]]:
+    """按扩展名收归档路径，供「提取计划」拼命令行。
+
+    刻意**不做内容判断**（不猜哪个是加密的、不猜哪包有视频）——那是工具的活，
+    这里只回答「这个目录下有哪些归档文件」，把判据留给实测（坑 2：别静态预测）。
+    """
+    out: dict[str, list[Path]] = {}
+    for ext in ARCHIVE_EXTS:
+        files = inv.files_with_exts([ext])
+        if files:
+            out[ext] = sorted(files)
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -657,6 +682,11 @@ def main(argv: list[str] | None = None) -> int:
                          "故只能把「可识别」当正面证据，「读不出」须用 GUI 复核。")
     ap.add_argument("--deep", action="store_true",
                     help="[已废弃] 旧的全文件猜测式探测；结果不可靠，请改用 --garbro")
+    ap.add_argument("--plan", action="store_true",
+                    help="在判定之后附上「提取计划」：该跑哪个工具 + 可直接复制的命令行。"
+                         "只描述怎么跑，不承诺跑得通（能否解出来一律实跑定，见坑 2）。")
+    ap.add_argument("--plan-json", metavar="FILE",
+                    help="把提取计划以 JSON 写出（给 orchestrator / 批处理用）")
     args = ap.parse_args(argv)
 
     targets: list[Path] = []
@@ -677,9 +707,17 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     payload = []
+    plans: list[dict[str, object]] = []
     for t in targets:
         rep = scan(t, deep=args.deep, garbro_exe=args.garbro)
         print(render(rep, show_advice=not args.no_advice))
+        if args.plan:
+            plan = planner.build(rep)
+            text = planner.render(plan)
+            if text:
+                print(text)
+            plans.append({"path": str(rep.path),
+                          "plan": plan.as_dict() if plan else None})
         payload.append({
             "path": str(rep.path),
             "best": rep.best.engine if rep.best else None,
@@ -694,6 +732,11 @@ def main(argv: list[str] | None = None) -> int:
         Path(args.json).write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"\nJSON 报告已写入：{args.json}")
+
+    if args.plan_json:
+        Path(args.plan_json).write_text(
+            json.dumps(plans, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"提取计划已写入：{args.plan_json}")
 
     return 0
 
