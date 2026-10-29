@@ -150,6 +150,47 @@ def test_no_product_dir_marks_unverified(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# 规矩 1 的推论：幂等重跑 ≠ 失败（tlg2png 专项）
+# ---------------------------------------------------------------------------
+
+
+def test_tlg2png_skips_when_dst_already_valid_png(tmp_path):
+    """★回归护栏★ 目标已是合法 PNG 时，不调工具也判成功。
+
+    这是 `--reuse-raw` 复跑时 507 张图全被判失败的真 bug（2026-10-29）：
+    png/ 里已有上次转好的产物 → `run()` 看到产物增量 0 → ok=False。
+    「本次没新增」不等于「失败」，可能只是**已经干过了**。
+    """
+    src = tmp_path / "a.tlg"
+    src.write_bytes(b"NOT A TLG")          # 源故意是垃圾：证明这次根本没调工具
+    dst = tmp_path / "a.png"
+    dst.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 16)
+
+    r = tb.tlg2png(src, dst)
+
+    assert r.ok is True, f"已存在的合法 PNG 不该判失败：{r.reason}"
+    assert "已存在" in r.reason
+    assert r.exe == "(skipped)"
+
+
+def test_tlg2png_still_fails_when_dst_is_bad(tmp_path):
+    """反向：dst 存在但不是合法 PNG → 不能跳过，必须真跑工具并判失败。"""
+    try:
+        tb.find_tool("tlg2png")
+    except tb.ToolNotFound:
+        pytest.skip("本机未安装 tlg2png，跳过（该断言依赖真工具）")
+    src = tmp_path / "a.tlg"
+    src.write_bytes(b"NOT A TLG")
+    dst = tmp_path / "a.png"
+    dst.write_bytes(b"GARBAGE")             # 有文件但没 PNG 头
+
+    r = tb.tlg2png(src, dst, timeout=30)
+
+    assert r.ok is False
+    assert r.exe != "(skipped)", "dst 不合法时不许走跳过分支"
+
+
+# ---------------------------------------------------------------------------
 # 规矩 2：找工具（不许硬编码路径）
 # ---------------------------------------------------------------------------
 

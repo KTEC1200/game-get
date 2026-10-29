@@ -86,9 +86,25 @@ manifest.json 契约（对账与验收的唯一地面真相）:
 ### 阶段 1：契约化 + 编排器（当前 → M1，预计 2-3 个工作日粒度）
 1. **manifest 契约落地**：给 4 个已统一接口的工具补 `--manifest`
    （`rpa_extract_organized.py`、`krkr_auto_extract.py`、`_rpgmv_decrypt.py`、`_ypf_extract.py`）。
+   - ✅ **`krkr_auto_extract.py` 已接（2026-10-29）**：`--manifest PATH`（默认 `<--out>/manifest.json`），
+     走共用模块 `manifest.py` 的 `write_manifest()`，按 raw/final/converted 三段式落。
+     加密 xp3 无地面真相 → `reconcile.expected=None, diff=None, method="no-index-available"`
+     （**明说没对账，不许用 diff=0 蒙混**）；`verify.verified=False` + note 指向 orchestrator/_verify_media。
+   - ⏳ 其余 3 个（`rpa_extract_organized.py`、`_rpgmv_decrypt.py`、`_ypf_extract.py`）待接，
+     契约与实现都现成，照着 `write_manifest()` 抄即可。
 2. **`galgame_dispatch.py` 升级**：指纹表外置 `rules/engines.json`；输出增加「建议 extractor + 参数」。
-3. **`orchestrator.py`**：`detect → extract → postprocess → verify → manifest` 串成一条命令；
-   每步产物与日志落 `--work` 目录；对账不为 0 即停（纪律 2）。
+3. ~~**`orchestrator.py`**~~ ✅ **已完成（2026-10-29）**：`detect → extract → postprocess → verify →
+   manifest` 串成一条命令；每步产物与日志落 `--work`；对账不为 0 即停（纪律 2）。
+   - 已接 **Ren'Py 与 KiriKiri 两条链路**（其余引擎判得出 → 退出码 2，明确「没链路」而不是假装成功）。
+   - 退出码契约：`0` 全通过 / `1` 阶段失败或对账有差 / `2` 引擎判出但无链路 / `3` 未命中。
+   - **实测**：`Swipe Right`（Ren'Py，4 包 2156 条目，退出码 0，图片 326/326、音频 1539/1539）；
+     `兼职人妻`（KiriKiri 静态，2562 条目对账 0 差，507 个 tlg→png，图片 **902/902**、音频 1577/1577）。
+   - 关键设计：地面真相一律取索引（Ren'Py 用 RPA 索引去重条目数、KiriKiri 用 GARbro 列表行数）；
+     `--reuse-raw` **仍做对账**（跳步不等于跳验）；0 字节文件单列并用 1% 比例护栏兜底。
+   - 测试 **143 项全绿**（`tests/test_orchestrator.py` 42 项契约 + `tests/test_orchestrator_smoke.py`
+     真实样本冒烟；变异验证：改回「信退出码」→ rc 测试变红、去掉 0 字节护栏 → 2 项变红）。
+   - 顺带修掉一个真缺陷：`_final_files()` 的标签在 Windows 嵌套路径下混用 `/` 与 `\`，
+     已统一 `as_posix()`（manifest 要跨机器比对）。
 4. ~~**外部工具桥** `toolbridge.py`~~ ✅ **已完成（2026-10-29）**：覆盖 GARbro / tlg2png / ffprobe /
    AssetStudio / KrkrExtract 五个。`python toolbridge.py check` 自检，`run(key, argv, product_dir=…)`
    统一调用；**成败一律由产物判定，退出码只作诊断**；路径按
@@ -142,11 +158,21 @@ manifest.json 契约（对账与验收的唯一地面真相）:
 > 属**有回归风险的重构**，不该排在新增工作前面。调整后的顺序：
 
 1. ~~`toolbridge.py` + 五工具接入~~ ✅ **已完成（2026-10-29）**，101 项测试全绿。
-2. **`orchestrator.py` 最小闭环**（detect → extract → postprocess → verify → manifest），
-   先只接 Ren'Py 与 KiriKiri 两条链路（它们已有契约化工具 + toolbridge 就位），
-   用 `Swipe Right`（Ren'Py）与 `高慢妻陥落！！`（加密 krkr）双样本回归。
-3. manifest 契约在 `krkr_auto_extract.py` 试点（数据现成：§17.5 的全部数字；
-   按 §2 新定的 raw/final/converted 三段式落）。
+2. ~~`orchestrator.py` 最小闭环~~ ✅ **已完成（2026-10-29）**，见 §3 阶段 1 第 6 条。
+3. ~~manifest 契约在 `krkr_auto_extract.py` 试点~~ ✅ **已完成（2026-10-29）**：
+   先把契约抽成独立模块 **`manifest.py`**（唯一实现，供 orchestrator 与 krkr_auto_extract 共用
+   ——两处各写一遍必然漂移，而 manifest 是交付清单，漂移就等于两个工具对「交付了多少」说法不一致），
+   再让 `krkr_auto_extract.py` 走 `write_manifest()` 产出三段式 manifest。
+   顺带修掉三个真实缺陷：
+   - **`toolbridge.tlg2png()` 幂等盲点**：`--reuse-raw` 复跑时 png/ 已有上次成品，
+     「产物增量 ≥ 1」判据看到增量 0 → 把 507 张图全判成失败。修法 = 调工具前先验
+     `dst` 是否已是合法 PNG，是则跳过并 ok=True。「本次没新增」≠「失败」，可能只是**已经干过了**。
+   - **`--reuse-raw` 跳过对账**：复跑时 extract 直接 return，没填 `expected_total`，
+     manifest 变成 `期望 None vs 落盘 2562 (diff=None)`。修法 = 跳过解包但仍用索引算地面真相并对账
+     （加密 xp3 列不出条目时 expected 才保持 None，并标 `no-index-available`）。
+   - **`krkr_auto_extract.STAGE_ROOT` 指向已废弃的 zcode 路径** → 改为脚本同目录 `_krkr_stage`。
+   测试 176 passed / 3 skipped（新增 `tests/test_manifest.py` 19 项、`tests/test_krkr_manifest.py` 7 项、
+   toolbridge 幂等护栏 2 项、reuse 对账护栏 3 项）。
 4. `rules/engines.json` 抽取（**重构项，放最后**；先补 `tests/` 的 golden 覆盖再动，
    确保行为不变可验证——现有 `tests/golden_detect.json` 就是为此准备的）。
 5. `galgame_dispatch.py` 输出增加「建议 extractor + 参数」（依赖第 4 项）。

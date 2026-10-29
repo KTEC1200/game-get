@@ -37,11 +37,26 @@
 - `tutorials/` —— 用户的原始教程（**用户提供的资料，勿删**）
 
 **可复用脚本**
+- **编排器：`orchestrator.py`**（2026-10-29，软件化第 3 步，**主入口**）—— 一条命令跑完
+  `detect → extract → postprocess → verify → manifest`：
+  `python orchestrator.py <游戏目录> --out <输出目录> [--allow-gui] [--reuse-raw DIR] [--no-verify] [--dry-run]`。
+  已接 **Ren'Py 与 KiriKiri** 两条链路（其余引擎判得出就退出码 2，不假装成功）。
+  退出码：`0` 全通过 / `1` 阶段失败或对账有差 / `2` 引擎判出但无链路 / `3` 未命中。
+  输出 `raw/`（原始）+ `png/`（tlg 转出的成品）+ `manifest.json`（counts 分 raw/final/converted 三段）
+  + `_work/*.log`。**对账一律以索引为地面真相，diff≠0 即失败**；`--reuse-raw` 跳解包但不跳对账。
+  实测：`Swipe Right` 2156 条目 0 差、`兼职人妻` 2562 条目 0 差 + 507 tlg→png（图片 902/902）。
 - **外部工具桥：`toolbridge.py`**（2026-10-29，软件化第 2 步）—— 统一「找工具 + 调用 + 数产物 + **退出码不信任**」，
   已覆盖 GARbro / tlg2png / ffprobe / AssetStudio / KrkrExtract 五个。
   `python toolbridge.py check` 自检路径；库用法 `tb.run("garbro", ["-x", xp3], cwd=out, product_dir=out)`。
   工具路径按 override → `TOOLBRIDGE_<KEY>` 环境变量 → `toolbridge.json` → 内置候选 → PATH 解析，
   **不再硬编码**。成败一律看产物数，`returncode` 只进诊断字段。坑 4（AssetStudio 逗号/竖线）已做成参数级护栏。
+- **manifest 契约：`manifest.py`**（2026-10-29，软件化第 4 步）—— **契约的唯一实现**，
+  供 `orchestrator.py` 与 `krkr_auto_extract.py` 共用（两处各写一遍必然漂移，而 manifest 是交付清单）。
+  counts 分 `raw`/`final`/`converted` 三段：`raw` 含待转格式（.tlg）、`final` 是**交付口径**
+  （图片报成品数，如高慢妻 1301 而非 raw 的 436）、`converted` 解释两者差额。
+  `reconcile(expected, actual)`：`expected=None` 时返回 `diff=None` + `method="no-index-available"`
+  —— **不许把「没验」伪装成「验过了」**。`final` 一律**实际扫盘不做减法**（转换失败/同名覆盖时会算错）。
+  标签统一 `as_posix()`（跨机器可比）。`python manifest.py <输出目录>` 打摘要。
 - Ren'Py：**`rpa_tool.py`**（`info`/`list`/`extract`）、**`rpa_extract_organized.py`**（一步分类解包）、`_organize_rpa.py`（先解再分，留档）
 - Unity：**`unity_unpack.ps1`**、`_as_audio_collect2.py`（FSB5 分组累积）、`_as_catalog.py`、`_as_summary.py`、`_scan_unity_video.py`
 - KiriKiri：`_tlg2png_all.ps1`、**`_krkr_tlg_convert.py`**（tlg2png 批量转换 Python 版，避开 CJK 路径坑）
@@ -83,7 +98,7 @@ Ren'Py 侧：`_rpa_stage` / `_rpa_patch_stage` / `_rpa_arch.txt` / `_rpa_patch.t
 
 | 样本 | 分支 | 产物 | 验收 |
 |---|---|---|---|
-| `D:\HY\pork社\兼职人妻` | **KiriKiri** | 图片 903 PNG / 音频 1577 OGG | Pillow 903/903、ffprobe 1577/1577（217.7 分钟） |
+| `D:\HY\pork社\兼职人妻` | **KiriKiri** | 图片 902 PNG / 音频 1577 OGG | Pillow 902/902、ffprobe 1577/1577（217.7 分钟） |
 | `D:\HY\My Wife Wants to Be a Professional Cosplayer` | **Unity**（Naninovel 2022.3.62f2 / Mono） | 图片 777 PNG / 音频 1168 WAV | Pillow 777/777、ffprobe 1168/1168 |
 | `D:\HY\最佳的交易\My_Best_Deal_v4.7-pc` | **Ren'Py**（RPA-3.0 / Python 2.7） | **视频 288**（mpeg4+v9，71.2 分钟）/ 图片 7804 / 音频 47 | Pillow 7804/7804、ffprobe 288 全通过 |
 | `D:\HY\SPITE` | **Electron 自研引擎**（asar + ChaCha20 加密，2026-10-25） | 图片 128 / 音频 68（49.4 分钟）/ 视频 45（h264 循环动画）+ Spine 8 skel/8 atlas | Pillow 128/128、ffprobe 113/113、**失败 0**；资源覆盖 257/365 槽 |
@@ -255,8 +270,10 @@ AdvHD ラブラブ / Yu-Ris あまねぇ / ExHIBIT 夕凪荘 / CatSystem2 甜蜜
 通常可用、`github.com` 直连不通但走代理偶尔可通、`api.github.com`/`codeload` 基本不通——下载 GitHub
 release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）已由用户放入 `D:\K\galgame\krkr\krkrz\`。
 
-**新会话开局**：读本文件 → 「已暂停的未完成任务」四项已全部完成（2026-10-28）；下一步按
-`software-plan.md` §5 的顺序做软件化（rules 外置 → toolbridge → orchestrator 最小闭环）。
+**新会话开局**：读本文件 → 「已暂停的未完成任务」四项已全部完成（2026-10-28）；
+软件化进度见 `software-plan.md` §5：`toolbridge.py` ✅（2026-10-29）→ `orchestrator.py` ✅（2026-10-29，
+已接 Ren'Py + KiriKiri 两链，143 项测试全绿）→ 下一步 ① manifest 在 `krkr_auto_extract.py` 试点
+② `rules/engines.json` 外置（重构项，放最后）③ dispatch 输出「建议 extractor + 参数」。
 
 ## 引擎分支要点（实测）
 

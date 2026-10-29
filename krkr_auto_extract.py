@@ -16,18 +16,22 @@ Krkr(KiriKiri) 加密 xp3 动态提取 — 一键自动化工具（可复用）
   5. 等任务完成（产物数稳定 + UI 标题回到 idle），再拖下一个 xp3
   6. 输出: <stage>/KrkrExtract_Output（结束后打印位置；--out 时移动过去）
 
-依赖: Python 标准库 + PowerShell(UIA) + explorer；KrkrExtract 三件套在 D:\K\galgame\krkr\krkr
+依赖: Python 标准库 + PowerShell(UIA) + explorer；KrkrExtract 三件套在 D:\\K\\galgame\\krkr\\krkr
 """
 import os, sys, time, json, ctypes, shutil, subprocess, argparse
 from ctypes import wintypes
 from datetime import datetime
+from pathlib import Path
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
 user32.SetProcessDPIAware()  # 本机 200% 缩放：此后全部坐标为物理像素
 
 KRKR_TOOL = r"D:\K\galgame\krkr\krkr"
-STAGE_ROOT = r"D:\K\zcode\game\_krkr_stage"
+#: ASCII stage 根目录。**必须纯 ASCII**（verified-findings §17.2）：CJK 路径注入后游戏进程活着
+#: 但窗口不弹，只弹「ANSI 文字列を UNICODE 文字列に変換できません」。
+#: 放在项目目录下（2026-10-29 起主目录是 D:\K\deepseek），名字固定为 `_krkr_stage`，已被 .gitignore 排除。
+STAGE_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_krkr_stage")
 
 LOG = os.path.join(STAGE_ROOT, "krkr_auto_extract.log")
 def log(msg):
@@ -202,6 +206,39 @@ def wait_task_done(outdir, ui_hwnd, timeout_min=40):
             return total, by_ext, size_total
     return last, {}, 0
 
+def write_manifest(outdir, game_dir, per_archive, path):
+    """按 software-plan §2 契约写 manifest（raw/final/converted 三段式）。
+
+    加密 xp3 的地面真相拿不到（GARbro 列不出条目，坑 1 假阴性），
+    所以 reconcile.expected 只能是 None + method="no-index-available"
+    —— 明说「没对账」，不许用 diff=0 蒙混。
+
+    独立成函数是为了能在没有 GUI 的情况下测（GUI 那半截没法在 CI 里跑）。
+    """
+    import manifest as mf
+    raw_dir = Path(outdir) / "data"
+    png_dir = Path(outdir) / "png"
+    counts_block = mf.counts(raw_dir, png_dir)
+    man = mf.build(
+        tool="krkr_auto_extract.py",
+        engine="KiriKiri",
+        source={"game_dir": os.path.abspath(game_dir),
+                "archives": per_archive,
+                "encrypted": True,
+                "note": "加密 xp3 动态提取：条目数无地面真相（GARbro 列不出），"
+                        "故 reconcile 标记为未对账"},
+        counts_block=counts_block,
+        reconcile_block=mf.reconcile(None, counts_block["raw"]["total"]),
+        verify={"verified": False,
+                "note": "本工具不做内容级验收，请用 orchestrator.py 或 _verify_media.py"},
+        postprocess=[{"tool": "KrkrExtract(内置 tlg→png)", "in": None,
+                      "ok": None, "fail": None}] if png_dir.is_dir() else [],
+        png_dir=mf.scan_png(png_dir),
+    )
+    mf.write(Path(path), man)
+    return man, counts_block
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("game_dir")
@@ -209,6 +246,8 @@ def main():
     ap.add_argument("--keep-stage", action="store_true")
     ap.add_argument("--only", default=None, help="逗号分隔的 xp3 文件名列表（断点续传）")
     ap.add_argument("--reuse-stage", action="store_true", help="不重建 stage（续传时用）")
+    ap.add_argument("--manifest", default=None,
+                    help="manifest.json 输出路径（默认 <--out>/manifest.json）")
     args = ap.parse_args()
     game_dir = args.game_dir
     assert os.path.isdir(game_dir), "game dir not found: %s" % game_dir
@@ -304,6 +343,7 @@ def main():
 
     outdir = os.path.join(stage, "KrkrExtract_Output")
     before = count_files(outdir)[0] if os.path.isdir(outdir) else 0
+    per_archive = []   # 逐包产物数，用于 manifest 的 source.archives
 
     # ---- 3/4/5. per-xp3 drag ----
     xp3s = sorted(f for f in os.listdir(stage) if f.lower().endswith(".xp3"))
@@ -351,12 +391,27 @@ def main():
         drag(ix, iy, tx, ty)
         total, by_ext, size_total = wait_task_done(outdir, ui)
         log("%s done: +%d files (total %d)" % (fn, total - before, total))
+        per_archive.append({"name": fn, "files": total - before, "total_after": total})
         before = total
 
     total, by_ext, size_total = count_files(outdir)
     log("ALL DONE: %d files %.1f MB" % (total, size_total / 1048576.0))
     log("by_ext %s" % json.dumps(by_ext, sort_keys=True))
     log("output at: %s" % outdir)
+
+    # ---- manifest（software-plan §2 契约，raw/final/converted 三段式）----
+    manifest_path = args.manifest
+    if manifest_path is None and args.out:
+        manifest_path = os.path.join(args.out, "manifest.json")
+    if manifest_path:
+        try:
+            man, counts_block = write_manifest(outdir, game_dir, per_archive, manifest_path)
+            log("manifest: %s" % manifest_path)
+            log("counts raw=%d final=%d converted=%s"
+                % (counts_block["raw"]["total"], counts_block["final"]["total"],
+                   json.dumps(counts_block["converted"], sort_keys=True)))
+        except Exception as exc:                               # noqa: BLE001
+            log("manifest 生成失败（不影响产物）: %s: %s" % (type(exc).__name__, exc))
 
     if args.out:
         dst = os.path.join(args.out, "KrkrExtract_Output")

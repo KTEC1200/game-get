@@ -119,12 +119,16 @@ def _first_with_suffix(roots: list[Path], suffixes: tuple[str, ...]) -> Path | N
     return None
 
 
-EXTRACTED = Path(r"D:\K\zcode\game\_extracted")
+#: 已解包产物的物理位置。用户 2026-10-29 决定「文件和空目录都不管」，
+#: 所以 `_extracted/` 仍留在旧副本目录里；同时保留项目目录下这一候选，
+#: 将来若搬回来无需改测试。
+EXTRACTED_ROOTS = [Path(r"D:\K\zcode\game\_extracted"),
+                   Path(__file__).resolve().parent.parent / "_extracted"]
 
 
 def test_ffprobe_real_audio():
     _skip_unless("ffprobe")
-    ogg = _first_with_suffix([Path(r"D:\HY\pork社\兼职人妻"), EXTRACTED], (".ogg",))
+    ogg = _first_with_suffix([Path(r"D:\HY\pork社\兼职人妻"), *EXTRACTED_ROOTS], (".ogg",))
     if ogg is None:
         pytest.skip("找不到 .ogg 样本")
 
@@ -137,7 +141,7 @@ def test_ffprobe_real_audio():
 
 def test_ffprobe_real_video():
     _skip_unless("ffprobe")
-    vid = _first_with_suffix([Path(r"D:\HY\教师催眠1"), EXTRACTED], (".wmv", ".mpg", ".mp4"))
+    vid = _first_with_suffix([Path(r"D:\HY\教师催眠1"), *EXTRACTED_ROOTS], (".wmv", ".mpg", ".mp4"))
     if vid is None:
         pytest.skip("找不到视频样本")
 
@@ -167,10 +171,10 @@ def test_tlg2png_real_conversion(tmp_path):
     找不到就 skip（不伪造样本——伪造的 tlg 转不出来反而是假失败）。
     """
     _skip_unless("tlg2png")
-    root = Path(r"D:\K\zcode\game\_extracted\高慢妻陥落！！")
-    tlg = next(iter(root.rglob("*.tlg")), None) if root.is_dir() else None
+    tlg = _first_with_suffix(
+        [r / "高慢妻陥落！！" for r in EXTRACTED_ROOTS], (".tlg",))
     if tlg is None:
-        pytest.skip(f"没有可用 .tlg 样本（{root}）")
+        pytest.skip(f"没有可用 .tlg 样本（{EXTRACTED_ROOTS}）")
 
     dst = tmp_path / "out.png"
     r = tb.tlg2png(tlg, dst)

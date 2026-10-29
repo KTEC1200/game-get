@@ -557,9 +557,21 @@ def tlg2png(src: str | os.PathLike, dst: str | os.PathLike,
 
     注意 product_dir 用 dst 的父目录，但 product_check 只认 dst 本身——
     同目录批量转换时，别的文件不该影响这一张的判定。
+
+    **幂等**：`dst` 已经是合法 PNG 就直接返回 ok=True（reason 标注「已存在」），
+    不再调工具。否则 `--reuse-raw` 这类复跑场景里 png/ 已有上次的产物，
+    `run()` 会看到产物增量 0 而判失败 —— 实测把 507 张图全判成失败（2026-10-29）。
+    「本次没新增」不等于「失败」，可能只是**已经干过了**。
     """
-    dst = Path(dst)
+    src, dst = Path(src), Path(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
+    if _is_png(dst):
+        return ToolResult(
+            key="tlg2png", exe="(skipped)", argv=[], returncode=0,
+            stdout="", stderr="", seconds=0.0, timed_out=False,
+            products=Products(total=0, by_ext={}, size=0),
+            product_dir=str(dst.parent), ok=True,
+            reason=f"产物已存在且是合法 PNG，跳过转换：{dst.name}")
     r = run("tlg2png", [str(src), str(dst)], timeout=timeout, product_dir=dst.parent,
             min_products=1)
     if r.ok and not _is_png(dst):
