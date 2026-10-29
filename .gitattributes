@@ -1,0 +1,7 @@
+# 统一按二进制/原样处理，避免 CRLF 抖动污染 diff
+* -text
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.cs text eol=lf
+*.ps1 text eol=crlf

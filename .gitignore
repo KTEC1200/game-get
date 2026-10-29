@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# 解包产物（体积大、可重建，绝不入库）
+_extracted/
+_as_stage/
+_rpa_stage/
+_rpa_patch_stage/
+_tmp_extract/
+
+# 临时/中间产物
+*.log
+_verify_*.csv
+_rpa_media*.csv
+verify.csv
+
+# 空目录占位（banben 是历史遗留空目录）
+banben/
+
+# 编辑器
+.vscode/
+.idea/

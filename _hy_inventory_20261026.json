@@ -1,0 +1,1741 @@
+{
+ "root": "D:\\HY",
+ "limit_gb": 999.0,
+ "loose_files": [],
+ "dirs": [
+  {
+   "path": "D:\\HY\\aniyome",
+   "name": "aniyome",
+   "bytes": 4287057411,
+   "gb": 3.993,
+   "files": 45,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "限定版特典 ボイスドラマ「平日昼間から爆乳・爆尻兄嫁と浮気セックス」【完堕ちX兄嫁】",
+     "gb": 0.831,
+     "files": 1
+    },
+    {
+     "name": "DLsite限定特典 ボイスドラマ「兄嫁ソープ嬢、お店にバレないように生挿入」【完堕ちX兄嫁】",
+     "gb": 0.204,
+     "files": 1
+    },
+    {
+     "name": "plugin",
+     "gb": 0.002,
+     "files": 12
+    },
+    {
+     "name": "savedata",
+     "gb": 0.0,
+     "files": 3
+    },
+    {
+     "name": "全CG存档",
+     "gb": 0.0,
+     "files": 1
+    }
+   ],
+   "archives": {
+    ".xp3": 11
+   },
+   "unity_data_dirs": [],
+   "exes": [
+    "aniyome.exe",
+    "unins000.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\Boku_Kano",
+   "name": "Boku_Kano",
+   "bytes": 577550874,
+   "gb": 0.538,
+   "files": 14,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "movie",
+     "gb": 0.001,
+     "files": 1
+    },
+    {
+     "name": "savedata",
+     "gb": 0.0,
+     "files": 3
+    },
+    {
+     "name": "system",
+     "gb": 0.0,
+     "files": 1
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": [
+    "bonusfd1.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\Bunny's Rent-a-Mom Agency",
+   "name": "Bunny's Rent-a-Mom Agency",
+   "bytes": 4440351737,
+   "gb": 4.135,
+   "files": 76,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "Game_Data",
+     "gb": 4.043,
+     "files": 59
+    },
+    {
+     "name": "D3D12",
+     "gb": 0.006,
+     "files": 1
+    },
+    {
+     "name": "Save",
+     "gb": 0.001,
+     "files": 7
+    },
+    {
+     "name": "LICENSE",
+     "gb": 0.0,
+     "files": 2
+    },
+    {
+     "name": "CG存档",
+     "gb": 0.0,
+     "files": 1
+    }
+   ],
+   "archives": {
+    ".bundle": 16
+   },
+   "unity_data_dirs": [
+    "Game_Data"
+   ],
+   "exes": [
+    "Game.exe",
+    "UnityCrashHandler64.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\Doinaka Kyoudai",
+   "name": "Doinaka Kyoudai",
+   "bytes": 4391820396,
+   "gb": 4.09,
+   "files": 77,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "plugin",
+     "gb": 0.01,
+     "files": 54
+    }
+   ],
+   "archives": {
+    ".xp3": 9
+   },
+   "unity_data_dirs": [],
+   "exes": [
+    "doinaka_brother.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\EnderLilies",
+   "name": "EnderLilies",
+   "bytes": 1446207495,
+   "gb": 1.347,
+   "files": 211,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "EnderLilies",
+     "gb": 1.166,
+     "files": 15
+    },
+    {
+     "name": "Steamworks Shared",
+     "gb": 0.123,
+     "files": 163
+    },
+    {
+     "name": "Engine",
+     "gb": 0.053,
+     "files": 23
+    },
+    {
+     "name": "debug",
+     "gb": 0.004,
+     "files": 7
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": [
+    "EnderLilies.exe",
+    "EnderLilies\\Binaries\\Win64\\EnderLiliesSteam-Win64-Shipping.exe",
+    "Engine\\Extras\\Redist\\en-us\\UE4PrereqSetup_x64.exe",
+    "Steamworks Shared\\_CommonRedist\\DirectX\\Jun2010\\DXSETUP.exe",
+    "Steamworks Shared\\_CommonRedist\\vcredist\\2019\\VC_redist.x64.exe",
+    "Steamworks Shared\\_CommonRedist\\vcredist\\2019\\VC_redist.x86.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\EnderMagnolia",
+   "name": "EnderMagnolia",
+   "bytes": 4952979146,
+   "gb": 4.613,
+   "files": 342,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "EnderMagnolia",
+     "gb": 4.539,
+     "files": 324
+    },
+    {
+     "name": "Engine",
+     "gb": 0.073,
+     "files": 14
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": [
+    "EnderMagnolia.exe",
+    "EnderMagnolia\\Binaries\\Win64\\EnderMagnoliaSteam-Win64-Shipping.exe",
+    "EnderMagnolia\\Plugins\\Sentry\\Binaries\\Win64\\crashpad_handler.exe",
+    "Engine\\Extras\\Redist\\en-us\\UEPrereqSetup_x64.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\Happiness Double Room",
+   "name": "Happiness Double Room",
+   "bytes": 4292121255,
+   "gb": 3.997,
+   "files": 155,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "Happiness Double Room_Data",
+     "gb": 3.964,
+     "files": 129
+    },
+    {
+     "name": "MonoBleedingEdge",
+     "gb": 0.006,
+     "files": 20
+    },
+    {
+     "name": "SteamEmu",
+     "gb": 0.0,
+     "files": 3
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [
+    "Happiness Double Room_Data"
+   ],
+   "exes": [
+    "Happiness Double Room.exe",
+    "UnityCrashHandler64.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\Kaiju Princess 2",
+   "name": "Kaiju Princess 2",
+   "bytes": 4088369732,
+   "gb": 3.808,
+   "files": 167,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "Kaiju Princess 2_Data",
+     "gb": 3.727,
+     "files": 136
+    },
+    {
+     "name": "Kaiju Princess 2 Soundtrack",
+     "gb": 0.046,
+     "files": 8
+    },
+    {
+     "name": "MonoBleedingEdge",
+     "gb": 0.006,
+     "files": 20
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [
+    "Kaiju Princess 2_Data"
+   ],
+   "exes": [
+    "Kaiju Princess 2.exe",
+    "UnityCrashHandler64.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\MagicalMILFs",
+   "name": "MagicalMILFs",
+   "bytes": 1528558984,
+   "gb": 1.424,
+   "files": 3947,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "game",
+     "gb": 1.295,
+     "files": 2929
+    },
+    {
+     "name": "lib",
+     "gb": 0.075,
+     "files": 599
+    },
+    {
+     "name": "renpy",
+     "gb": 0.054,
+     "files": 412
+    }
+   ],
+   "archives": {
+    ".rpyc": 67
+   },
+   "unity_data_dirs": [],
+   "exes": [
+    "MagicalMILFs.exe",
+    "SmartSteamLoader.exe",
+    "lib\\windows-i686\\dxwebsetup.exe",
+    "lib\\windows-i686\\MagicalMILFs.exe",
+    "lib\\windows-i686\\python.exe",
+    "lib\\windows-i686\\pythonw.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\Mama×Holic ～魅惑のママと甘々カンケイ～",
+   "name": "Mama×Holic ～魅惑のママと甘々カンケイ～",
+   "bytes": 5016011184,
+   "gb": 4.672,
+   "files": 37,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "Lib",
+     "gb": 0.001,
+     "files": 3
+    },
+    {
+     "name": "Save",
+     "gb": 0.0,
+     "files": 6
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": [
+    "Start.exe",
+    "Start_chs.exe",
+    "unins000.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\meikura",
+   "name": "meikura",
+   "bytes": 2636040682,
+   "gb": 2.455,
+   "files": 34,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "meikuraS",
+     "gb": 1.489,
+     "files": 14
+    },
+    {
+     "name": "Maid for Loving You",
+     "gb": 0.966,
+     "files": 20
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": [
+    "Maid for Loving You\\meikura-global.exe",
+    "meikuraS\\meikuraS.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\MiraisMidnight",
+   "name": "MiraisMidnight",
+   "bytes": 8482724689,
+   "gb": 7.9,
+   "files": 6556,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "MiraisMidnightStream_Data",
+     "gb": 7.29,
+     "files": 6519
+    },
+    {
+     "name": "美术画集",
+     "gb": 0.394,
+     "files": 2
+    },
+    {
+     "name": "Soundtrack",
+     "gb": 0.143,
+     "files": 29
+    }
+   ],
+   "archives": {
+    ".bundle": 6494
+   },
+   "unity_data_dirs": [
+    "MiraisMidnightStream_Data"
+   ],
+   "exes": [
+    "MiraisMidnightStream.exe",
+    "UnityCrashHandler64.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\Miside",
+   "name": "Miside",
+   "bytes": 4711221943,
+   "gb": 4.388,
+   "files": 18243,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "MiSideFull_Data",
+     "gb": 2.137,
+     "files": 194
+    },
+    {
+     "name": "Data",
+     "gb": 1.043,
+     "files": 17281
+    },
+    {
+     "name": "BepInEx",
+     "gb": 1.012,
+     "files": 428
+    },
+    {
+     "name": "Voice Editor",
+     "gb": 0.073,
+     "files": 142
+    },
+    {
+     "name": "dotnet",
+     "gb": 0.064,
+     "files": 187
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [
+    "MiSideFull_Data",
+    "Voice Editor\\Miside Voice Editor_Data"
+   ],
+   "exes": [
+    "MiSideFull.exe",
+    "UnityCrashHandler64.exe",
+    "Voice Editor\\Miside Voice Editor.exe",
+    "Voice Editor\\UnityCrashHandler64.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\Mizuki",
+   "name": "Mizuki",
+   "bytes": 4474912587,
+   "gb": 4.168,
+   "files": 1574,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "game",
+     "gb": 4.076,
+     "files": 158
+    },
+    {
+     "name": "lib",
+     "gb": 0.081,
+     "files": 905
+    },
+    {
+     "name": "renpy",
+     "gb": 0.01,
+     "files": 506
+    }
+   ],
+   "archives": {
+    ".rpa": 4,
+    ".rpyc": 129
+   },
+   "unity_data_dirs": [],
+   "exes": [
+    "mizuki-and-me.exe",
+    "lib\\py3-windows-x86_64\\python.exe",
+    "lib\\py3-windows-x86_64\\pythonw.exe",
+    "lib\\py3-windows-x86_64\\zsync.exe",
+    "lib\\py3-windows-x86_64\\zsyncmake.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\My Wife Wants to Be a Professional Cosplayer",
+   "name": "My Wife Wants to Be a Professional Cosplayer",
+   "bytes": 3435298176,
+   "gb": 3.199,
+   "files": 2122,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "My Wife Wants to Be a Professional Cosplayer_Data",
+     "gb": 1.618,
+     "files": 150
+    },
+    {
+     "name": "_extracted",
+     "gb": 1.542,
+     "files": 1948
+    },
+    {
+     "name": "MonoBleedingEdge",
+     "gb": 0.009,
+     "files": 21
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [
+    "My Wife Wants to Be a Professional Cosplayer_Data"
+   ],
+   "exes": [
+    "My Wife Wants to Be a Professional Cosplayer.exe",
+    "UnityCrashHandler64.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\nier",
+   "name": "nier",
+   "bytes": 52855325586,
+   "gb": 49.225,
+   "files": 1338,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "data",
+     "gb": 41.224,
+     "files": 666
+    },
+    {
+     "name": "MOD",
+     "gb": 6.32,
+     "files": 654
+    },
+    {
+     "name": "Backup",
+     "gb": 0.915,
+     "files": 1
+    },
+    {
+     "name": "CN_Uninst",
+     "gb": 0.002,
+     "files": 2
+    },
+    {
+     "name": "3DMGAME-NieR.Automata-CTxiugaijiaoben",
+     "gb": 0.0,
+     "files": 2
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": [
+    "NACNv1.4.exe",
+    "NieRAutomata.exe",
+    "NieRAutomataCompat.exe",
+    "unins000.exe",
+    "CN_Uninst\\unins000.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\nikke2",
+   "name": "nikke2",
+   "bytes": 33920368975,
+   "gb": 31.591,
+   "files": 32233,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "专用客户端",
+     "gb": 22.698,
+     "files": 31191
+    },
+    {
+     "name": "《Nikke》懒人Mod整合包",
+     "gb": 6.37,
+     "files": 779
+    },
+    {
+     "name": "必装环境包",
+     "gb": 2.251,
+     "files": 3
+    },
+    {
+     "name": "本地一键端",
+     "gb": 0.226,
+     "files": 248
+    },
+    {
+     "name": "教程和工具",
+     "gb": 0.045,
+     "files": 12
+    }
+   ],
+   "archives": {
+    ".asar": 1,
+    ".bundle": 199
+   },
+   "unity_data_dirs": [
+    "专用客户端\\NikkeGame\\NIKKE\\game\\nikke_Data"
+   ],
+   "exes": [
+    "《Nikke》懒人Mod整合包\\Mod管理器\\NMM_0.4.7重制版\\【NMM】NIKKE-MOD管理器.exe",
+    "专用客户端\\NikkeGame\\Launcher\\Assistant.exe",
+    "专用客户端\\NikkeGame\\Launcher\\nikke_launcher.exe",
+    "专用客户端\\NikkeGame\\Launcher\\startup_runner.exe",
+    "专用客户端\\NikkeGame\\Launcher\\uninst.exe",
+    "专用客户端\\NikkeGame\\Launcher\\VersionService.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\pork社",
+   "name": "pork社",
+   "bytes": 7762422685,
+   "gb": 7.229,
+   "files": 3513,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "堕落妻子",
+     "gb": 1.647,
+     "files": 77
+    },
+    {
+     "name": "昼下がり、欲求不満な人妻たちは… 〜牝堕ち・危険日種付け・交尾狂い〜",
+     "gb": 1.622,
+     "files": 10
+    },
+    {
+     "name": "兼职人妻",
+     "gb": 1.388,
+     "files": 3136
+    },
+    {
+     "name": "昼下がりの団地妻たち ～熟れた匂いとムレた肌～",
+     "gb": 0.78,
+     "files": 62
+    },
+    {
+     "name": "高慢妻陥落！！",
+     "gb": 0.68,
+     "files": 37
+    },
+    {
+     "name": "温泉蒸汽人妻",
+     "gb": 0.575,
+     "files": 127
+    },
+    {
+     "name": "[スタジオポーク] パート妻の情事 ～熟した艶と蕩ける吐息～",
+     "gb": 0.537,
+     "files": 64
+    }
+   ],
+   "archives": {
+    ".xp3": 22
+   },
+   "unity_data_dirs": [],
+   "exes": [
+    "[スタジオポーク] パート妻の情事 ～熟した艶と蕩ける吐息～\\パート妻.eXe",
+    "兼职人妻\\パート妻.eXe",
+    "堕落妻子\\7\\game\\堕ち妻.eXe",
+    "堕落妻子\\转区文件\\LocaleEmulator_v2.5.0.1\\LEGUI.exe",
+    "堕落妻子\\转区文件\\LocaleEmulator_v2.5.0.1\\LEInstaller.exe",
+    "堕落妻子\\转区文件\\LocaleEmulator_v2.5.0.1\\LEProc.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\Rebirth Pub",
+   "name": "Rebirth Pub",
+   "bytes": 11472104997,
+   "gb": 10.684,
+   "files": 2507,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "Rebirth Pub_Data",
+     "gb": 10.63,
+     "files": 2373
+    },
+    {
+     "name": "MonoBleedingEdge",
+     "gb": 0.008,
+     "files": 21
+    },
+    {
+     "name": "LocalizeData",
+     "gb": 0.007,
+     "files": 105
+    },
+    {
+     "name": "D3D12",
+     "gb": 0.006,
+     "files": 1
+    },
+    {
+     "name": "SaveDir",
+     "gb": 0.0,
+     "files": 2
+    },
+    {
+     "name": "存档",
+     "gb": 0.0,
+     "files": 2
+    }
+   ],
+   "archives": {
+    ".bundle": 2175
+   },
+   "unity_data_dirs": [
+    "Rebirth Pub_Data"
+   ],
+   "exes": [
+    "Rebirth Pub.exe",
+    "UnityCrashHandler64.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\role player",
+   "name": "role player",
+   "bytes": 19104022349,
+   "gb": 17.792,
+   "files": 1190,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "Role player いくら姉妹の粘膜ポトレ ぐりぐちゃLIVE！ 特典付き",
+     "gb": 6.169,
+     "files": 73
+    },
+    {
+     "name": "とろろ姉妹の粘膜ポトレ：ROLEPLAYER",
+     "gb": 5.968,
+     "files": 110
+    },
+    {
+     "name": "ROLEPLAYER 1.04",
+     "gb": 5.655,
+     "files": 1007
+    }
+   ],
+   "archives": {
+    ".xp3": 39
+   },
+   "unity_data_dirs": [],
+   "exes": [
+    "Role player いくら姉妹の粘膜ポトレ ぐりぐちゃLIVE！ 特典付き\\Role_player_ikura_Claude-3-7.exe",
+    "ROLEPLAYER 1.04\\rpsisters.exe",
+    "ROLEPLAYER 1.04\\rpsisters_chs1.04.exe",
+    "ROLEPLAYER 1.04\\unins000.exe",
+    "ROLEPLAYER 1.04\\エンジン設定.exe",
+    "ROLEPLAYER 1.04\\ファイル破損チェックツール.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\Seifuku Kanojo",
+   "name": "Seifuku Kanojo",
+   "bytes": 17873137201,
+   "gb": 16.646,
+   "files": 296,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "Seifuku Kanojo",
+     "gb": 8.803,
+     "files": 28
+    },
+    {
+     "name": "Seifuku Kanojo 2",
+     "gb": 7.843,
+     "files": 268
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": [
+    "Seifuku Kanojo\\Seikano.exe",
+    "Seifuku Kanojo 2\\AutoUpdate.exe",
+    "Seifuku Kanojo 2\\Filechk.exe",
+    "Seifuku Kanojo 2\\Launcher.exe",
+    "Seifuku Kanojo 2\\SEIFUKU2.exe",
+    "Seifuku Kanojo 2\\Setup.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\seihekiwoyugamasetai",
+   "name": "seihekiwoyugamasetai",
+   "bytes": 3280621427,
+   "gb": 3.055,
+   "files": 64,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "妹(姉)は兄(弟)の性癖を歪ませたい！",
+     "gb": 3.055,
+     "files": 62
+    },
+    {
+     "name": "seihekiwoyugamasetai",
+     "gb": 0.0,
+     "files": 2
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": [
+    "妹(姉)は兄(弟)の性癖を歪ませたい！\\yugamase.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\SexCP_069",
+   "name": "SexCP_069",
+   "bytes": 1419568947,
+   "gb": 1.322,
+   "files": 1916,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "SexCP_069_Data",
+     "gb": 1.282,
+     "files": 1885
+    },
+    {
+     "name": "MonoBleedingEdge",
+     "gb": 0.009,
+     "files": 20
+    },
+    {
+     "name": "SaveData",
+     "gb": 0.001,
+     "files": 7
+    }
+   ],
+   "archives": {
+    ".bundle": 1683
+   },
+   "unity_data_dirs": [
+    "SexCP_069_Data"
+   ],
+   "exes": [
+    "SexCP_069.exe",
+    "UnityCrashHandler64.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\SPITE",
+   "name": "SPITE",
+   "bytes": 1162046858,
+   "gb": 1.082,
+   "files": 204,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "data",
+     "gb": 0.719,
+     "files": 164
+    },
+    {
+     "name": "resources",
+     "gb": 0.053,
+     "files": 8
+    },
+    {
+     "name": "locales",
+     "gb": 0.008,
+     "files": 12
+    }
+   ],
+   "archives": {
+    ".asar": 1
+   },
+   "unity_data_dirs": [],
+   "exes": [
+    "spite.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\Summer Clover",
+   "name": "Summer Clover",
+   "bytes": 11539537593,
+   "gb": 10.747,
+   "files": 8680,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "SummerClover",
+     "gb": 9.803,
+     "files": 8597
+    },
+    {
+     "name": "Summer Clover -Soundtrack-",
+     "gb": 0.94,
+     "files": 32
+    },
+    {
+     "name": "steam_settings",
+     "gb": 0.001,
+     "files": 46
+    }
+   ],
+   "archives": {
+    ".bundle": 8486
+   },
+   "unity_data_dirs": [
+    "SummerClover\\SummerClover_Data"
+   ],
+   "exes": [
+    "Summer Clover.exe",
+    "SummerClover\\SummerClover.exe",
+    "SummerClover\\UnityCrashHandler64.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\SUMMER-田舎の性活",
+   "name": "SUMMER-田舎の性活",
+   "bytes": 2599235364,
+   "gb": 2.421,
+   "files": 867,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "Summer_Data",
+     "gb": 2.358,
+     "files": 858
+    },
+    {
+     "name": "Save",
+     "gb": 0.0,
+     "files": 4
+    }
+   ],
+   "archives": {
+    ".bundle": 7
+   },
+   "unity_data_dirs": [
+    "Summer_Data"
+   ],
+   "exes": [
+    "Summer.exe",
+    "UnityCrashHandler64.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\Sweet Succubus Home",
+   "name": "Sweet Succubus Home",
+   "bytes": 2335511173,
+   "gb": 2.175,
+   "files": 640,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "SweetSuccubusHome_Data",
+     "gb": 2.136,
+     "files": 616
+    },
+    {
+     "name": "MonoBleedingEdge",
+     "gb": 0.009,
+     "files": 20
+    }
+   ],
+   "archives": {
+    ".bundle": 438
+   },
+   "unity_data_dirs": [
+    "SweetSuccubusHome_Data"
+   ],
+   "exes": [
+    "SweetSuccubusHome.exe",
+    "UnityCrashHandler64.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\Swipe Right for Sugar Mama Sensei",
+   "name": "Swipe Right for Sugar Mama Sensei",
+   "bytes": 722612029,
+   "gb": 0.673,
+   "files": 1334,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "game",
+     "gb": 0.593,
+     "files": 11
+    },
+    {
+     "name": "lib",
+     "gb": 0.073,
+     "files": 878
+    },
+    {
+     "name": "renpy",
+     "gb": 0.007,
+     "files": 441
+    }
+   ],
+   "archives": {
+    ".rpa": 4,
+    ".rpyc": 61
+   },
+   "unity_data_dirs": [],
+   "exes": [
+    "sugarmama.exe",
+    "lib\\py3-windows-x86_64\\python.exe",
+    "lib\\py3-windows-x86_64\\pythonw.exe",
+    "lib\\py3-windows-x86_64\\zsync.exe",
+    "lib\\py3-windows-x86_64\\zsyncmake.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\The Detective Servant",
+   "name": "The Detective Servant",
+   "bytes": 4449387568,
+   "gb": 4.144,
+   "files": 162,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "The Detective Servant_Data",
+     "gb": 4.009,
+     "files": 135
+    },
+    {
+     "name": "The Arrogant Kaiju Princess and The Detective Servant OST",
+     "gb": 0.109,
+     "files": 2
+    },
+    {
+     "name": "MonoBleedingEdge",
+     "gb": 0.005,
+     "files": 21
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [
+    "The Detective Servant_Data"
+   ],
+   "exes": [
+    "The Detective Servant.exe",
+    "UnityCrashHandler32.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\The Neighbor's Wife",
+   "name": "The Neighbor's Wife",
+   "bytes": 4418086448,
+   "gb": 4.115,
+   "files": 373,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "Kinjo no Hitozuma_Data",
+     "gb": 3.923,
+     "files": 348
+    },
+    {
+     "name": "MonoBleedingEdge",
+     "gb": 0.008,
+     "files": 20
+    }
+   ],
+   "archives": {
+    ".bundle": 6
+   },
+   "unity_data_dirs": [
+    "Kinjo no Hitozuma_Data"
+   ],
+   "exes": [
+    "Kinjo no Hitozuma.exe",
+    "UnityCrashHandler64.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\tm",
+   "name": "tm",
+   "bytes": 3216019634,
+   "gb": 2.995,
+   "files": 44,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "ラブラブお痴験バイト性活",
+     "gb": 2.995,
+     "files": 43
+    },
+    {
+     "name": "存档",
+     "gb": 0.0,
+     "files": 1
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": [
+    "ラブラブお痴験バイト性活\\AdvHD.exe",
+    "ラブラブお痴験バイト性活\\AdvHD_chs.exe",
+    "ラブラブお痴験バイト性活\\AdvHD_new.exe",
+    "ラブラブお痴験バイト性活\\startup.exe",
+    "ラブラブお痴験バイト性活\\support.exe",
+    "ラブラブお痴験バイト性活\\uninst.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\Toshiue Kanojo",
+   "name": "Toshiue Kanojo",
+   "bytes": 1670389195,
+   "gb": 1.556,
+   "files": 47,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "購入特典",
+     "gb": 0.32,
+     "files": 34
+    },
+    {
+     "name": "movie",
+     "gb": 0.14,
+     "files": 1
+    },
+    {
+     "name": "年上彼女 Claude-3-5-sonnet翻译补丁备份",
+     "gb": 0.03,
+     "files": 2
+    },
+    {
+     "name": "savedata",
+     "gb": 0.0,
+     "files": 2
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": [
+    "Toshiue_Kanojo.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\【PC+Ty】我与公主骑士及侍女的慢活生活｜奴隷姫騎士と奴隷侍女とのスローライフ",
+   "name": "【PC+Ty】我与公主骑士及侍女的慢活生活｜奴隷姫騎士と奴隷侍女とのスローライフ",
+   "bytes": 4572745487,
+   "gb": 4.259,
+   "files": 21,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "movie",
+     "gb": 3.005,
+     "files": 10
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": [
+    "SlowLife.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\【PC】俺を欲しがる二人の母｜Ore o Hoshigaru Futari no Haha",
+   "name": "【PC】俺を欲しがる二人の母｜Ore o Hoshigaru Futari no Haha",
+   "bytes": 5234918638,
+   "gb": 4.875,
+   "files": 99,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "俺を欲しがる二人の母 アニメ追加版Sakura翻译补丁（含特典）文本修正并补本体内容",
+     "gb": 0.023,
+     "files": 93
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": []
+  },
+  {
+   "path": "D:\\HY\\【PC】爱的课堂 ～备孕人妻的爱情讲座～｜愛妻×交姦 妊活スワッピング ～孕み頃の妻たちは子種を求め肉欲の華を咲かせる～",
+   "name": "【PC】爱的课堂 ～备孕人妻的爱情讲座～｜愛妻×交姦 妊活スワッピング ～孕み頃の妻たちは子種を求め肉欲の華を咲かせる～",
+   "bytes": 4119816270,
+   "gb": 3.837,
+   "files": 957,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "cg",
+     "gb": 2.209,
+     "files": 845
+    },
+    {
+     "name": "voice",
+     "gb": 0.892,
+     "files": 2
+    },
+    {
+     "name": "movie",
+     "gb": 0.494,
+     "files": 81
+    },
+    {
+     "name": "bgm",
+     "gb": 0.236,
+     "files": 14
+    },
+    {
+     "name": "原版备份",
+     "gb": 0.001,
+     "files": 2
+    },
+    {
+     "name": "全CG存档",
+     "gb": 0.001,
+     "files": 3
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": [
+    "DDD.exe",
+    "原版备份\\DDD.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\あまねぇ -幼馴染お姉ちゃんとのえちえちあまやかされ同棲生活-",
+   "name": "あまねぇ -幼馴染お姉ちゃんとのえちえちあまやかされ同棲生活-",
+   "bytes": 2295037683,
+   "gb": 2.137,
+   "files": 34,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "pac",
+     "gb": 2.009,
+     "files": 3
+    },
+    {
+     "name": "『あまねぇ』豪華版購入特典",
+     "gb": 0.124,
+     "files": 19
+    },
+    {
+     "name": "save",
+     "gb": 0.0,
+     "files": 4
+    },
+    {
+     "name": "全CG存档",
+     "gb": 0.0,
+     "files": 2
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": [
+    "amanee.exe",
+    "amanee_chs.exe",
+    "エンジン設定.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\アネトモ",
+   "name": "アネトモ",
+   "bytes": 4591724926,
+   "gb": 4.276,
+   "files": 93,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "原版备份",
+     "gb": 0.005,
+     "files": 3
+    },
+    {
+     "name": "Save",
+     "gb": 0.002,
+     "files": 25
+    },
+    {
+     "name": "Lib",
+     "gb": 0.001,
+     "files": 3
+    },
+    {
+     "name": "Lang",
+     "gb": 0.0,
+     "files": 40
+    },
+    {
+     "name": "CG存档",
+     "gb": 0.0,
+     "files": 1
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": [
+    "Start.exe",
+    "原版备份\\Start.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\スキだらけ！～叔母と従妹同棲ライフ～",
+   "name": "スキだらけ！～叔母と従妹同棲ライフ～",
+   "bytes": 1430771847,
+   "gb": 1.333,
+   "files": 2261,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "game",
+     "gb": 1.252,
+     "files": 717
+    },
+    {
+     "name": "lib",
+     "gb": 0.061,
+     "files": 854
+    },
+    {
+     "name": "renpy",
+     "gb": 0.019,
+     "files": 676
+    },
+    {
+     "name": "免责声明请在使用前阅读我",
+     "gb": 0.0,
+     "files": 4
+    }
+   ],
+   "archives": {
+    ".rpyc": 72
+   },
+   "unity_data_dirs": [],
+   "exes": [
+    "Sukidara.exe",
+    "lib\\py3-windows-x86_64\\python.exe",
+    "lib\\py3-windows-x86_64\\pythonw.exe",
+    "lib\\py3-windows-x86_64\\zsync.exe",
+    "lib\\py3-windows-x86_64\\zsyncmake.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\リルカは幾重に夜を彩る",
+   "name": "リルカは幾重に夜を彩る",
+   "bytes": 4661597143,
+   "gb": 4.341,
+   "files": 1064,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "riruka_dl",
+     "gb": 4.313,
+     "files": 1050
+    },
+    {
+     "name": "AI翻译补丁",
+     "gb": 0.028,
+     "files": 10
+    },
+    {
+     "name": "リルカは幾重に夜を彩る_文本框水印删除补丁",
+     "gb": 0.0,
+     "files": 3
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": [
+    "AI翻译补丁\\[系慵懒吖吖吖]Claude4.6opus\\riruka.exe",
+    "riruka_dl\\riruka.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\催眠性指導 -Secret Lesson-",
+   "name": "催眠性指導 -Secret Lesson-",
+   "bytes": 2788168359,
+   "gb": 2.597,
+   "files": 1350,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "game",
+     "gb": 2.506,
+     "files": 24
+    },
+    {
+     "name": "lib",
+     "gb": 0.083,
+     "files": 879
+    },
+    {
+     "name": "renpy",
+     "gb": 0.008,
+     "files": 442
+    }
+   ],
+   "archives": {
+    ".rpa": 5,
+    ".rpyc": 61
+   },
+   "unity_data_dirs": [],
+   "exes": [
+    "催眠性指導.exe",
+    "lib\\py3-windows-x86_64\\python.exe",
+    "lib\\py3-windows-x86_64\\pythonw.exe",
+    "lib\\py3-windows-x86_64\\zsync.exe",
+    "lib\\py3-windows-x86_64\\zsyncmake.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\夏への方舟",
+   "name": "夏への方舟",
+   "bytes": 8134487691,
+   "gb": 7.576,
+   "files": 9846,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "夏への方舟1",
+     "gb": 2.739,
+     "files": 3458
+    },
+    {
+     "name": "夏への方舟3",
+     "gb": 2.485,
+     "files": 3197
+    },
+    {
+     "name": "夏への方舟2",
+     "gb": 2.352,
+     "files": 3191
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": [
+    "夏への方舟1\\benti\\acmp.exe",
+    "夏への方舟1\\benti\\Natsu-heno-Hakobune1.exe",
+    "夏への方舟1\\补丁\\[SteinsGate]夏への方舟1Claude-3-5-Sonnet\\Claude3-5-Sonnet版\\Natsu-heno-Hakobune1_Crack.exe",
+    "夏への方舟1\\补丁\\夏への方舟I修正补丁\\夏への方舟１修正パッチ\\updateFiles.exe",
+    "夏への方舟2\\benti\\acmp.exe",
+    "夏への方舟2\\benti\\Natsu-heno-Hakobune2.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\夕凪荘的S级的女朋友们",
+   "name": "夕凪荘的S级的女朋友们",
+   "bytes": 5943747160,
+   "gb": 5.536,
+   "files": 2601,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "res",
+     "gb": 5.516,
+     "files": 2318
+    },
+    {
+     "name": "userdata",
+     "gb": 0.006,
+     "files": 70
+    },
+    {
+     "name": "rld",
+     "gb": 0.004,
+     "files": 195
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": [
+    "acmp.exe",
+    "Yunagiso.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\姉ちゃんのススメ",
+   "name": "姉ちゃんのススメ",
+   "bytes": 3986016499,
+   "gb": 3.712,
+   "files": 36,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "汉化补丁备份",
+     "gb": 0.005,
+     "files": 1
+    },
+    {
+     "name": "Lib",
+     "gb": 0.001,
+     "files": 3
+    },
+    {
+     "name": "Save",
+     "gb": 0.001,
+     "files": 8
+    },
+    {
+     "name": "全CG存档",
+     "gb": 0.0,
+     "files": 1
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": [
+    "Start.exe",
+    "姐姐的推荐.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\常識改変学園-製品版-",
+   "name": "常識改変学園-製品版-",
+   "bytes": 1249723200,
+   "gb": 1.164,
+   "files": 1971,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "www",
+     "gb": 1.014,
+     "files": 1836
+    },
+    {
+     "name": "locales",
+     "gb": 0.034,
+     "files": 109
+    },
+    {
+     "name": "swiftshader",
+     "gb": 0.002,
+     "files": 5
+    },
+    {
+     "name": "免责声明请在使用前阅读我",
+     "gb": 0.0,
+     "files": 3
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": [
+    "Game.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\我与老师的私人课程2",
+   "name": "我与老师的私人课程2",
+   "bytes": 1634460793,
+   "gb": 1.522,
+   "files": 19,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "Claude-3-5-sonnet翻译补丁备份",
+     "gb": 0.034,
+     "files": 5
+    },
+    {
+     "name": "全CG存档",
+     "gb": 0.0,
+     "files": 5
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": [
+    "bokukano2.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\教师催眠1",
+   "name": "教师催眠1",
+   "bytes": 2339131968,
+   "gb": 2.178,
+   "files": 426,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "cg",
+     "gb": 0.412,
+     "files": 401
+    },
+    {
+     "name": "plugin",
+     "gb": 0.002,
+     "files": 10
+    },
+    {
+     "name": "savedata",
+     "gb": 0.0,
+     "files": 2
+    }
+   ],
+   "archives": {
+    ".xp3": 11
+   },
+   "unity_data_dirs": [],
+   "exes": [
+    "xksaimin.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\教师催眠2",
+   "name": "教师催眠2",
+   "bytes": 3093079282,
+   "gb": 2.881,
+   "files": 129,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "PC版文件",
+     "gb": 0.019,
+     "files": 3
+    },
+    {
+     "name": "Kr安卓补丁",
+     "gb": 0.013,
+     "files": 4
+    },
+    {
+     "name": "scenario",
+     "gb": 0.002,
+     "files": 86
+    },
+    {
+     "name": "plugin",
+     "gb": 0.002,
+     "files": 10
+    },
+    {
+     "name": "savedata",
+     "gb": 0.0,
+     "files": 7
+    }
+   ],
+   "archives": {
+    ".xp3": 16
+   },
+   "unity_data_dirs": [],
+   "exes": [
+    "katei2.exe",
+    "PC版文件\\katei2.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\有閑夫人倶楽部",
+   "name": "有閑夫人倶楽部",
+   "bytes": 4674224695,
+   "gb": 4.353,
+   "files": 43,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "Manual",
+     "gb": 0.021,
+     "files": 2
+    },
+    {
+     "name": "Runtime",
+     "gb": 0.017,
+     "files": 1
+    },
+    {
+     "name": "image",
+     "gb": 0.001,
+     "files": 8
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": [
+    "AdvHD.exe",
+    "AdvHD_CN.exe",
+    "launcher.exe",
+    "setup.exe",
+    "uninst.exe",
+    "Runtime\\vc_redist.x64.exe"
+   ]
+  },
+  {
+   "path": "D:\\HY\\甜蜜女友",
+   "name": "甜蜜女友",
+   "bytes": 67768041427,
+   "gb": 63.114,
+   "files": 2447,
+   "under_limit": true,
+   "children": [
+    {
+     "name": "【PC电脑】甜蜜女友ss+",
+     "gb": 15.419,
+     "files": 66
+    },
+    {
+     "name": "【PC电脑】甜蜜女友ss",
+     "gb": 10.838,
+     "files": 1936
+    },
+    {
+     "name": "【PC电脑】甜蜜女友2+",
+     "gb": 9.992,
+     "files": 125
+    },
+    {
+     "name": "【PC电脑】甜蜜女友2",
+     "gb": 8.285,
+     "files": 83
+    },
+    {
+     "name": "アマカノ3",
+     "gb": 8.034,
+     "files": 18
+    },
+    {
+     "name": "【PC电脑】甜蜜女友1+",
+     "gb": 5.553,
+     "files": 135
+    },
+    {
+     "name": "【PC电脑】甜蜜女友1",
+     "gb": 4.992,
+     "files": 84
+    }
+   ],
+   "archives": {},
+   "unity_data_dirs": [],
+   "exes": [
+    "【PC电脑】甜蜜女友1\\INSTALL.exe",
+    "【PC电脑】甜蜜女友1\\UNINST.exe",
+    "【PC电脑】甜蜜女友1\\【开始游戏】amakanoPE.exe",
+    "【PC电脑】甜蜜女友1+\\【开始游戏】amakanoPlus.exe",
+    "【PC电脑】甜蜜女友2\\BootMenu.exe",
+    "【PC电脑】甜蜜女友2\\cs2.exe"
+   ]
+  }
+ ]
+}
