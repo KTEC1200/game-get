@@ -40,7 +40,7 @@
 - **编排器：`orchestrator.py`**（2026-10-29，软件化第 3 步，**主入口**）—— 一条命令跑完
   `detect → extract → postprocess → verify → manifest`：
   `python orchestrator.py <游戏目录> --out <输出目录> [--allow-gui] [--reuse-raw DIR] [--no-verify] [--dry-run]`。
-  已接 **Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD 五条链路**（其余引擎判得出就退出码 2，不假装成功）。
+  已接 **Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD / ExHIBIT 六条链路**（其余引擎判得出就退出码 2，不假装成功）。
   退出码：`0` 全通过 / `1` 阶段失败或对账有差 / `2` 引擎判出但无链路 / `3` 未命中。
   输出 `raw/`（原始）+ `png/`（tlg/pna 转出的成品）+ `manifest.json`（counts 分 raw/final/converted 三段）
   + `_work/*.log`。**对账一律以索引为地面真相，diff≠0 即失败**；`--reuse-raw` 跳解包但不跳对账。
@@ -48,14 +48,19 @@
   `常識改変学園` 1585 条目 0 差（图片 719/719、音频 866/866、视频 0/0）、
   `あまねぇ` 8201 条目 0 差（图片 3484/3484、音频 4522/4522、527.7 分钟）、
   `ラブラブお痴験バイト性活` 9032 条目 0 差 + 48 个 `.pna`→2640 帧
-  （图片 4306/4306、音频 7031/7031、视频 9/9，媒体 857.4 分钟，全链 578.8s 退出码 0）。
+  （图片 4306/4306、音频 7031/7031、视频 9/9，媒体 857.4 分钟，全链 578.8s 退出码 0）、
+  `夕凪荘的S级的女朋友们` 11476 条目 0 差（`.gyu` 2184 + `.grp` 9185 + 散装 107；
+  图片 2184/2184、音频 9291/9291、视频 1/1，媒体 1072.0 分钟，全链 930.3s 退出码 0；
+  **22 个加密 BGM 显式排除并报出**）。
   **待转格式按扩展名分派**：`.tlg`→`tlg2png`、`.pna`→`_pna_carve.carve()`；两者都列在
   `manifest.CONVERTIBLE`（**唯一出处**，orchestrator 直接引用，别在两边各写一份，否则
   「交付了多少」两边数字对不上）。一个 `.pna` 出多帧，所以 postprocess 另记 `frames_out`。
-  **接新引擎的三条硬规矩**：① 地面真相只写一份（RPG Maker 的 `_rpgmv_decrypt.iter_candidates()`、
-  Yu-Ris 的 `_ypf_extract.read_index()`，orchestrator 直接调，别抄第二份）；
+  **接新引擎的四条硬规矩**：① 地面真相只写一份（RPG Maker 的 `_rpgmv_decrypt.iter_candidates()`、
+  Yu-Ris 的 `_ypf_extract.read_index()`、ExHIBIT 的 `_grp_extract.expected_counts()`，orchestrator 直接调，别抄第二份）；
   ② `EXTRACTORS` 存**函数名**不存函数对象（存对象会在 import 时焊死引用，monkeypatch 失效）；
-  ③ `IMPLEMENTED`（orchestrator）与 `IMPLEMENTED_CHAINS`（planner）必须同步，测试有防漂移护栏。
+  ③ `IMPLEMENTED`（orchestrator）与 `IMPLEMENTED_CHAINS`（planner）必须同步，测试有防漂移护栏；
+  ④ **有意排除的输入必须显式报出**（ExHIBIT 的 22 个加密 BGM 不纳入交付，但要进 `st.data["unsupported"]`、
+  写进 detail、并经 `source.unsupported` 落进 manifest）——`.mos` 那次教训：无声的漏验最危险。
 - **外部工具桥：`toolbridge.py`**（2026-10-29，软件化第 2 步；**2026-10-30 起含 C# 现编**）——
   统一「找工具 + 调用 + 数产物 + **退出码不信任**」，已覆盖
   GARbro / tlg2png / ffprobe / AssetStudio / KrkrExtract / **csc** / **gyu** / **hg3** 八个。
@@ -81,6 +86,8 @@
   `reconcile(expected, actual)`：`expected=None` 时返回 `diff=None` + `method="no-index-available"`
   —— **不许把「没验」伪装成「验过了」**。`final` 一律**实际扫盘不做减法**（转换失败/同名覆盖时会算错）。
   标签统一 `as_posix()`（跨机器可比）。`python manifest.py <输出目录>` 打摘要。
+  `source.unsupported`（可选）：**有意排除、没进交付**的输入（ExHIBIT 的 22 个加密 BGM），
+  空列表不写——下游读的是 `source`，不能把「我知道漏了什么」藏在 stages 里。
   - `counts(raw_dir, png_dir)` —— **raw/ + png/ 两目录形态**（orchestrator、krkr_auto_extract）。
   - `counts_flat(out_dir)` —— **落盘即成品形态**（`rpa_extract_organized.py` / `_rpgmv_decrypt.py` /
     `_ypf_extract.py`：转换做在落盘之前，磁盘上从不存在中间格式，故 raw == final、converted 为空；
@@ -314,14 +321,15 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
 （含 `counts()` 两目录形态与 `counts_flat()` 落盘即成品形态）→ 4 个解包器全部接上 `--manifest` ✅
 → `rules/engines.json` 指纹外置 ✅（规则表 + 解释器，`rules/__init__.py`）→ `planner.py` ✅
 （`dispatch --plan` 输出「建议 extractor + 参数」）。
-**测试 337 passed / 5 skipped**；`python tests/make_golden.py --check` 零漂移。
+**测试 356 passed / 7 skipped**；`python tests/make_golden.py --check` 零漂移。
 **软件化四阶段（software-plan §3）里阶段 1 已完成**；**阶段 2 进行中**：
-- ✅ orchestrator 已接 **5 条链路**（Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD），
-  五条链都用真实样本跑过退出码 0、对账 0 差。
+- ✅ orchestrator 已接 **6 条链路**（Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD / **ExHIBIT**），
+  六条链都用真实样本跑过退出码 0、对账 0 差。
 - ✅ **csc 黑盒工作流产品化进 toolbridge**（阶段 2 第 2 条）：8 个工具、C# 源码随包现编、
   `check_all()` / `check_csharp()` 自检，19 项新测试 + 3 轮变异验证（真 csc 编 hello-world 并运行）。
-- 下一步：① 接剩下 4 个引擎（Unity / Tyrano-Electron / EXHIBIT / CatSystem2，
-  后两者的 `.gyu`/HG-3 现在直接吃 `run_csharp`）② `cases/` 案例库。
+- 下一步：① 接剩下 3 个引擎（Unity / Tyrano-Electron / CatSystem2；后者的 HG-3 直接吃
+  `run_csharp`，前置是给 `_cs2_int_extract.py` 加 `--manifest` 并处理 pycryptodome 依赖）
+  ② `cases/` 案例库。
 
 ## 引擎分支要点（实测）
 
@@ -413,6 +421,17 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
 - **BGM（res/s/m/*.ogg）加密未解**：只有头两页（3853B）被加密、页 2 起明文。已排除置换类/
   两套 MT 键流/RC4/ROR 函数 2^31 爆破；密钥材料大概率在配置键 `cluu`（settings.dat）/`GUID`/
   `DPMODE=0xC300`，解密器在 resident.dll 虚调用链后（见 verified-findings §15.3 侦察全档）。
+- **orchestrator 链路（2026-10-30 接入，第 6 条）**：三条来源合一，期望总数 **11476** =
+  `.gyu` 2184 + `.grp` 9185 + 散装 `.wav/.wmv` 107。
+  ① `.gyu` → `tb.run_csharp("gyu", [游戏目录, raw/img], product_dir=…, min_products=2184)`（递归扫树、保持相对路径）；
+  ② `.grp` → `_grp_extract.py <res> <raw/audio> --manifest …`，期望取 `grp.expected_counts(res)`（唯一出处）；
+  ③ 散装媒体 → `raw/loose/<游戏相对路径>`。
+  `res2000.grp` 是纯 TOC（`@0xC` 块数），`res2001/2002.grp` 头就是 `OggS`（裸 OGG 流）；
+  `grp_arcs()` **必须把 AiFS 文件自己排除掉**，否则 TOC 会被当成「列不出的数据包」。
+  **22 个加密 BGM 不纳入交付但必须显式报出**（`st.data["unsupported"]` → `source.unsupported`）；
+  判据是**魔数不是路径**（`_exhibit_ogg_is_encrypted()` = `_head(p) != b"OggS"`，换一作路径会变、魔数不会）。
+  实测 raw == final == 11476 文件 5139.6 MB（ogg 9185 / png 2184 / wav 106 / wmv 1），
+  全链 930.3s 退出码 0（extract 93.66s、verify 828.57s）。
 - **DLL 黑盒 oracle**：32 位编译 + `LoadLibraryEx(LOAD_WITH_ALTERED_SEARCH_PATH)`（必须 CharSet.Unicode，
   否则 CJK 路径 126）+ `GetDelegateForFunctionPointer` 调未导出内部函数——resident.dll 可在裸进程稳定调用。
 

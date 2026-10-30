@@ -102,7 +102,7 @@ def _repo_root() -> Path:
 # 这里的每一项都必须对应**真实存在的工具与真实存在的参数**（2026-10-30 逐个核过
 # `--help`/docstring/源码）。凭想象写参数等于给用户一条必然失败的命令。
 
-IMPLEMENTED_CHAINS = ("Ren'Py", "KiriKiri", "RPG Maker", "Yu-Ris", "AdvHD")
+IMPLEMENTED_CHAINS = ("Ren'Py", "KiriKiri", "RPG Maker", "Yu-Ris", "AdvHD", "ExHIBIT")
 
 
 def build(rep: Any) -> Plan | None:
@@ -305,30 +305,34 @@ def _yuris(engine: str, game: Path, archives: dict, out: Path) -> Plan:
 
 def _exhibit(engine: str, game: Path, archives: dict, out: Path) -> Plan:
     gyus = archives.get(".gyu", [])
-    p = Plan(
-        engine=engine,
-        extractor="_gyu_tool.exe",
-        argv=[str(_repo_root() / "_gyu_tool.exe"), str(game), str(out / "images")],
-        kind="whole_dir",
-        implemented=False,
-        reason="批量解码 .gyu（含 7 变体/MT 去混淆/双 LZ/调色板/alpha）；需 .NET，csc 编译",
-        notes=[
-            "`.gyu` 密钥在文件头（Key≠0xFFFFFFFF 时 MT 交换 10 对字节去混淆）",
-            "Gyu-LZ 位流与字节流**共享游标**——移植大坑",
-            "**BGM（res/s/m/*.ogg）加密未解**：只有头两页 3853B 被加密，密钥疑在 cluu/GUID/DPMODE",
-        ],
+    grps = archives.get(".grp", [])
+    p = _plan_orchestrator(
+        engine, game, archives, out,
+        "_gyu_tool.exe",
+        [str(_repo_root() / "_gyu_tool.exe"), str(game), str(out / "raw" / "img")],
+        "单工具兜底：`_gyu_tool.exe` 递归解 `.gyu`；源码 `_gyu_tool.cs` 在仓库根，"
+        "exe 缺失时 orchestrator 会调 csc 现编（`python toolbridge.py csharp` 可查状态）",
     )
+    p.notes.extend([
+        "`.gyu` 密钥在文件头（Key≠0xFFFFFFFF 时 MT 交换 10 对字节去混淆）",
+        "Gyu-LZ 位流与字节流**共享游标**——移植大坑",
+        "**BGM（res/s/m/*.ogg）加密未解**：只有头两页 3853B 被加密，密钥疑在 cluu/GUID/DPMODE。"
+        "orchestrator 会把这 22 个**排除在交付之外并显式报出**（不静默丢，也不当成 22 个失败）",
+    ])
     if gyus:
         p.notes.insert(0, f"找到 {len(gyus)} 个 .gyu")
-    grps = archives.get(".grp", [])
     if grps:
         p.extras.append(Plan(
             engine=engine,
             extractor="_grp_extract.py",
-            argv=_py("_grp_extract.py") + [str(grps[0].parent), str(out / "audio")],
+            argv=_py("_grp_extract.py") + [
+                str(grps[0].parent), str(out / "raw" / "audio"),
+                "--manifest", str(out / "grp.manifest.json"),
+            ],
             kind="whole_dir",
             implemented=False,
-            reason=f"另有 {len(grps)} 个 .grp（AiFS TOC 切 ogg）",
+            reason=f"另有 {len(grps)} 个 .grp（AiFS TOC 切 ogg）：orchestrator 会自动跑它，"
+                   f"这里给的是「只想单独切音频」时的命令",
         ))
     return p
 

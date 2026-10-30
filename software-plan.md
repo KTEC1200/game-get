@@ -130,11 +130,11 @@ manifest.json 契约（对账与验收的唯一地面真相）:
 
 ### 阶段 2：引擎插件收编（M1 → M2）
 
-> **进度（2026-10-30）**：orchestrator 已从 2 条链路扩到 **5 条**（Ren'Py / KiriKiri /
-> **RPG Maker** / **Yu-Ris** / **AdvHD**），`IMPLEMENTED` 与 `EXTRACTORS` 双表对齐，
-> 测试 **337 passed / 5 skipped**。AdvHD 顺带把 postprocess 从「只会 .tlg」改成按扩展名分派
+> **进度（2026-10-30）**：orchestrator 已从 2 条链路扩到 **6 条**（Ren'Py / KiriKiri /
+> **RPG Maker** / **Yu-Ris** / **AdvHD** / **ExHIBIT**），`IMPLEMENTED` 与 `EXTRACTORS` 双表对齐，
+> 测试 **356 passed / 7 skipped**。AdvHD 顺带把 postprocess 从「只会 .tlg」改成按扩展名分派
 > （`.pna` → `_pna_carve.carve()`，一个容器出多帧），`manifest.CONVERTIBLE` 成为待转格式的唯一出处。
-> 五条链都用真实样本跑过退出码 0、对账 0 差（详见下方第 3 条）。
+> 六条链都用真实样本跑过退出码 0、对账 0 差（详见下方第 3 条）。
 > **第 2 条（csc 工作流进 toolbridge）也已完成**——`_gyu_tool`/`_hg3_tool` 源码随包、
 > `ensure_csharp()`/`run_csharp()` 现编复用，详见下方第 2 条。
 
@@ -151,15 +151,18 @@ manifest.json 契约（对账与验收的唯一地面真相）:
      新增 `python toolbridge.py csharp` 看编译状态（源码/exe/是否过期/编译器）。
    19 项新测试（14 单测 + 5 冒烟，含**用真 csc 编 hello-world 并运行**）+ 3 轮变异验证全部 CAUGHT。
 3. **验收**：12 样本全量回归（每个引擎至少一个样本走 orchestrator 全链，manifest 入案例库）。
-   - ✅ 已跑通 5/9 引擎：Ren'Py（Swipe Right 2156 条）、KiriKiri（兼职人妻 2562 条 + 507 tlg→png）、
+   - ✅ 已跑通 6/9 引擎：Ren'Py（Swipe Right 2156 条）、KiriKiri（兼职人妻 2562 条 + 507 tlg→png）、
      **RPG Maker（常識改変学園 1585 条，图片 719/719、音频 866/866、视频 0/0）**、
      **Yu-Ris（あまねぇ 8201 条，图片 3484/3484、音频 4522/4522、视频 0/0，527.7 分钟）**、
      **AdvHD（ラブラブお痴験バイト性活 9032 条 + 48 个 `.pna`→2640 帧，图片 989+677+2640=4306、
-     音频 7031/7031、视频 9/9，媒体 857.4 分钟）**。
-   - ⏳ 剩 4 个引擎待接：Unity / Tyrano-Electron / ExHIBIT / CatSystem2。
+     音频 7031/7031、视频 9/9，媒体 857.4 分钟）**、
+     **ExHIBIT（夕凪荘的S级的女朋友们 11476 条 = `.gyu` 2184 + `.grp` 9185 + 散装 107，
+     图片 2184/2184、音频 9291/9291、视频 1/1，媒体 1072.0 分钟，全链 930.3s 退出码 0；
+     22 个加密 BGM 显式排除并在 `source.unsupported` 报出）**。
+   - ⏳ 剩 3 个引擎待接：Unity / Tyrano-Electron / CatSystem2。
 4. **案例库**：`cases/`（JSON per 样本：指纹、判定、耗时、失败与修复）——蓝图 2.7 自愈闭环的地基。
 
-> **⭐ 接链路的正确姿势（2026-10-30 沉淀，接剩下 5 个引擎时照做）**
+> **⭐ 接链路的正确姿势（2026-10-30 沉淀，接剩下 3 个引擎时照做）**
 > - **地面真相只写一份**。RPG Maker 的候选筛选抽成 `_rpgmv_decrypt.iter_candidates()`、
 >   Yu-Ris 的表解析抽成 `_ypf_extract.read_index()`，orchestrator 直接调它们。
 >   各写一套必然漂移——一边算 7 个候选、另一边写 6 个文件，谁也说不清谁错。
@@ -172,6 +175,10 @@ manifest.json 契约（对账与验收的唯一地面真相）:
 > - **验收口径本身也要防漏**：AdvHD 的 `.mos` 是「内容就是 PNG、扩展名不认识」，没进 `IMG_EXT` 时
 >   verify 把它归进 `nonmedia` **静默放过**、还照样报「失败 0」——**验收器漏掉一类文件是无声的**。
 >   接新引擎时对着该引擎的扩展名清单逐条问「它现在会落进哪个分支」，别只看失败数是不是 0。
+> - **有意排除的东西要显式报出，并且要进 manifest**。ExHIBIT 有 22 个加密 BGM 解不开（§15.3），
+>   处理方式是「不复制进 raw + 记 `st.data["unsupported"]` + 写进 detail + 经 `source.unsupported`
+>   落进 manifest」而不是「复制进去让 verify 报 22 个失败」——交付物的定义是**能用的**媒体。
+>   两条路都诚实，但前者能让链路绿灯着把话说清楚；关键是**不许静默丢**（同 `.mos` 的教训）。
 > - **超过 5 分钟的验证跑不进前台 shell**（本环境硬上限 300000 ms，`DETACHED_PROCESS` 也逃不掉）：
 >   用 `run_in_background: true` 起后台 job 再 `job_output` 收；实在跑不完全链，退而求其次是
 >   **对单条口径做定向实测**（如 677 个 `.mos` 直接过一遍 Pillow 全绿），并在报告里写明

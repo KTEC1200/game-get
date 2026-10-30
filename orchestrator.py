@@ -50,6 +50,7 @@ import toolbridge as tb                # noqa: E402
 import _rpgmv_decrypt as rpgmv         # noqa: E402  （复用它的筛选常量，别抄第二份）
 import _ypf_extract as ypf             # noqa: E402  （复用它的表解析，别抄第二份）
 import _pna_carve as pna               # noqa: E402  （复用它的 carve()，别抄第二份）
+import _grp_extract as grp             # noqa: E402  （复用它的 TOC 解析，别抄第二份）
 
 if sys.platform == "win32":
     for _s in (sys.stdout, sys.stderr):
@@ -76,7 +77,7 @@ AV_EXT = {".mp4", ".mkv", ".avi", ".webm", ".mov", ".wmv", ".flv", ".mpg", ".mpe
           ".mp3", ".ogg", ".wav", ".opus", ".flac", ".m4a", ".aac", ".wma"}
 
 #: 已实现完整链路的引擎（其余判得出来但没链路 → 退出码 2）
-IMPLEMENTED = ("Ren'Py", "KiriKiri", "RPG Maker", "Yu-Ris", "AdvHD")
+IMPLEMENTED = ("Ren'Py", "KiriKiri", "RPG Maker", "Yu-Ris", "AdvHD", "ExHIBIT")
 
 
 # ---------------------------------------------------------------- 结构
@@ -671,6 +672,259 @@ def _advhd_expected(arcs: list[Path], *, reuse_raw: Path | None = None,
     return expected, listable, per_archive
 
 
+# ---------------------------------------------------------------- ExHIBIT（.gyu / .grp）
+
+#: ExHIBIT 的散装媒体后缀（不在 `.grp` 里的裸媒体）。
+_EXHIBIT_LOOSE_EXT = (".wav", ".wmv")
+
+
+def _head(p: Path, n: int = 4) -> bytes:
+    """只读文件头 n 字节（**别用 `p.read_bytes()[:4]`**：`.grp` 动辄 400 MB）。"""
+    try:
+        with p.open("rb") as fh:
+            return fh.read(n)
+    except OSError:
+        return b""
+
+
+def _exhibit_gyu(game_dir: Path) -> list[Path]:
+    """游戏目录下全部 `*.gyu`（图片）。
+
+    实测本作 2184 个 = `res/g/` 2154 + `userdata/thumbnail/` 30，两处都要解
+    （缩略图也算交付物，§15.4 的 2184 就是这么来的）。
+    """
+    return sorted(p for p in game_dir.rglob("*.gyu") if p.is_file())
+
+
+def _exhibit_res_dir(game_dir: Path) -> Path | None:
+    """`.grp` 与 TOC 所在的目录（本作是 `res/`）。"""
+    for cand in (game_dir / "res", game_dir):
+        if cand.is_dir() and list(cand.glob("res[0-9]*.grp")):
+            return cand
+    return None
+
+
+def _exhibit_ogg_is_encrypted(p: Path) -> bool:
+    """BGM 是否加密未破：**加密的 `.ogg` 头不是 `OggS`**。
+
+    本作 `res/s/m/*.ogg` 的 `[0,3853)` 被加密，所以魔数直接没了（§15.3）。
+    用魔数判据而不是写死路径：换一作时路径可能不同，但「加密的认不出 OggS」
+    这条不会变，也不会把某个明文 ogg 误当加密丢掉。
+    """
+    return _head(p) != b"OggS"
+
+
+def _exhibit_loose_media(game_dir: Path) -> list[tuple[Path, Path]]:
+    """散装媒体，返回 `[(源, 相对 raw 的目标)]`。
+
+    目标保持游戏内相对路径（`raw/loose/res/s/e/015.wav`）——出问题时能一眼看出
+    它原来在哪，也不会与 `.grp` 切出来的 `raw/audio/` 撞名。
+    """
+    out: list[tuple[Path, Path]] = []
+    for p in sorted(game_dir.rglob("*")):
+        if not p.is_file():
+            continue
+        ext = p.suffix.lower()
+        if ext in _EXHIBIT_LOOSE_EXT or (ext == ".ogg" and not _exhibit_ogg_is_encrypted(p)):
+            out.append((p, Path("loose") / p.relative_to(game_dir)))
+    return out
+
+
+def _exhibit_encrypted_ogg(game_dir: Path) -> list[Path]:
+    """加密未破的 BGM（`res/s/m/*.ogg`，§15.3）。
+
+    解密器挂在 loader 的 `this+0x70` 的 vtable[0]，构造点是**外部安装**，
+    静态追不到安装点；内存 dump 需要用户玩到标题画面配合 → 目前无解。
+
+    这些文件**不进 raw**：复制过去只会让 verify 报 N 个失败，而它们不是「解包
+    失败」，是「还没解开」。但**必须显式报出来**——`.mos` 那次的教训是：
+    无声的漏项最危险，verify 失败数 0 并不代表交付完整。
+    """
+    return sorted(p for p in game_dir.rglob("*.ogg")
+                  if p.is_file() and _exhibit_ogg_is_encrypted(p))
+
+
+def _exhibit_expected(game_dir: Path, *,
+                      raw_dir: Path | None = None) -> tuple[int, bool, list[dict]]:
+    """算 ExHIBIT 的期望落盘数：`.gyu` 个数 + `.grp` 条目数 + 散装媒体个数。
+
+    返回 `(期望总数, 是否全部可列, 逐项明细)`。抽出来是因为正常路径与 `--reuse-raw`
+    路径都要算同一件事，抄两份必然漂移。地面真相：`.gyu` 是「一个文件必出一张图」，
+    `.grp` 是 TOC 里 `size != 0` 的条目数（`grp.expected_counts()`，**唯一出处**），
+    散装媒体是「一个文件必出一个文件」。
+    """
+    per_archive: list[dict] = []
+    expected = 0
+    listable = True
+
+    gyus = _exhibit_gyu(game_dir)
+    got_gyu = None
+    if raw_dir is not None:
+        img_dir = raw_dir / "img"
+        got_gyu = sum(1 for p in img_dir.rglob("*") if p.is_file()) if img_dir.is_dir() else 0
+    expected += len(gyus)
+    per_archive.append({"archive": "(res/g + userdata/*.gyu)", "expected": len(gyus),
+                        "got": got_gyu, "listable": True})
+
+    res_dir = _exhibit_res_dir(game_dir)
+    if res_dir is not None:
+        exp = grp.expected_counts(res_dir)
+        for name, n in exp["by_arc"].items():
+            got = None
+            if raw_dir is not None:
+                dest = raw_dir / "audio" / name[:-4]
+                got = sum(1 for p in dest.rglob("*") if p.is_file()) if dest.is_dir() else 0
+            expected += n
+            per_archive.append({"archive": name, "expected": n, "got": got,
+                                "toc": exp["toc"].get(name), "listable": True})
+        for name in exp["unlistable"]:
+            listable = False
+            per_archive.append({"archive": name, "expected": None, "got": None,
+                                "listable": False})
+
+    loose = _exhibit_loose_media(game_dir)
+    got_loose = None
+    if raw_dir is not None:
+        got_loose = sum(1 for _src, rel in loose if (raw_dir / rel).exists())
+    expected += len(loose)
+    per_archive.append({"archive": "(散装 .wav/.wmv/.ogg)", "expected": len(loose),
+                        "got": got_loose, "listable": True})
+    return expected, listable, per_archive
+
+
+def stage_extract_exhibit(ctx: Ctx) -> Stage:
+    """ExHIBIT / Retouch：`.gyu` 图片解码 + `.grp` 音频切分 + 散装媒体复制。
+
+    三条来源，对账口径由 `_exhibit_expected()` 统一给出：
+      * `.gyu` → `_gyu_tool`（C# 源码随包、首启现编）递归解码成 PNG，落 `raw/img/`
+      * `.grp` → `_grp_extract.py` 按 AiFS TOC 切成 ogg，落 `raw/audio/<包名>/`
+      * `.wav`/`.wmv`/明文 `.ogg` → 复制到 `raw/loose/<游戏内相对路径>`
+
+    图片是**解码后即成品**（磁盘上不残留 `.gyu`），所以 raw == final、converted 为空。
+
+    加密未破的 BGM 不进 raw，但写进 `st.data["unsupported"]` 并在 detail 里显式报出。
+    """
+    st = Stage("extract")
+    t0 = time.time()
+    gyus = _exhibit_gyu(ctx.game_dir)
+    loose = _exhibit_loose_media(ctx.game_dir)
+    res_dir = _exhibit_res_dir(ctx.game_dir)
+    encrypted = _exhibit_encrypted_ogg(ctx.game_dir)
+    if not gyus and not loose and res_dir is None:
+        st.detail = "既没有 .gyu，也没有 .grp，也没有散装 .wav/.wmv/.ogg"
+        st.seconds = time.time() - t0
+        return st
+
+    unsupported = ([{"pattern": "*.ogg（魔数不是 OggS → 加密）", "count": len(encrypted),
+                     "reason": "BGM 加密未解密（verified-findings §15.3）"}]
+                   if encrypted else [])
+    skipped_note = (f"另有 {len(encrypted)} 个 BGM 因加密未解密，未纳入交付"
+                    if encrypted else "")
+
+    # 先算地面真相：失败路径也要能报出「期望多少」，否则对账失败时看不出差在哪。
+    expected, listable, per_archive = _exhibit_expected(ctx.game_dir)
+
+    if ctx.reuse_raw:
+        # 复用模式：不重新解包，但**仍然算地面真相** —— 对账不能因为跳步就失效。
+        st.skipped = True
+        st.ok = True
+        st.detail = f"复用已有 raw: {ctx.reuse_raw}"
+        actual = _count(ctx.raw_dir).total
+        expected, listable, per_archive = _exhibit_expected(ctx.game_dir, raw_dir=ctx.raw_dir)
+        st.data = {"reused_from": str(ctx.reuse_raw), "actual_total": actual,
+                   "archives": per_archive, "unsupported": unsupported}
+        st.seconds = time.time() - t0
+        if not listable:
+            st.data["reason"] = "有 .grp 列不出条目，无完整地面真相，未对账"
+            st.detail = f"复用已有 raw，{actual} 个文件；有包列不出条目，未对账"
+            if skipped_note:
+                st.detail += f"；{skipped_note}"
+            return st
+        st.data["expected_total"] = expected
+        if actual != expected:
+            st.detail = f"复用产物对账失败：索引 {expected} vs 落盘 {actual}"
+            st.ok = False
+            return st
+        st.detail = f"复用已有 raw，对账 {expected} == {actual}"
+        if skipped_note:
+            st.detail += f"；{skipped_note}"
+        return st
+
+    ctx.raw_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1) .gyu → raw/img/（保持游戏内相对路径；C# 工具现编，编译失败要看得见原因）
+    if gyus:
+        dest = ctx.raw_dir / "img"
+        try:
+            gyu_res = tb.run_csharp("gyu", [str(ctx.game_dir), str(dest)],
+                                    product_dir=dest, min_products=len(gyus))
+        except Exception as exc:
+            st.detail = f"自带 C# 工具 _gyu_tool 无法启用：{exc}"
+            st.data = {"archives": per_archive, "unsupported": unsupported}
+            st.seconds = time.time() - t0
+            return st
+        ctx.log("extract", f"$ gyu_tool {ctx.game_dir} {dest}\n{gyu_res.summary()}")
+        got_gyu = _count(dest).total if dest.is_dir() else 0
+        if not gyu_res.ok:
+            st.detail = (f"_gyu_tool 解码失败（期望 {len(gyus)} 张，落盘 {got_gyu}）："
+                         f"{gyu_res.reason}")
+            st.data = {"archives": per_archive, "unsupported": unsupported}
+            st.seconds = time.time() - t0
+            return st
+
+    # 2) .grp → raw/audio/<包名>/（TOC 解析在 _grp_extract.py 里，别在这儿重写）
+    if res_dir is not None:
+        audio_dst = ctx.raw_dir / "audio"
+        argv = [str(Path(__file__).parent / "_grp_extract.py"), str(res_dir),
+                str(audio_dst), "--manifest", str(ctx.work_dir / "grp.manifest.json")]
+        proc = subprocess.run([sys.executable, *argv], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
+        ctx.log("extract", f"$ {sys.executable} {' '.join(argv)}\n"
+                           f"{proc.stdout}\n{proc.stderr}")
+        if proc.returncode != 0:
+            st.detail = (f"_grp_extract.py 失败（rc={proc.returncode}）："
+                         f"{proc.stderr.strip()[:200]}")
+            st.data = {"archives": per_archive, "unsupported": unsupported}
+            st.seconds = time.time() - t0
+            return st
+
+    # 3) 散装媒体 → raw/loose/<游戏内相对路径>
+    for src, rel in loose:
+        dst = ctx.raw_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if not dst.exists():
+            shutil.copy2(src, dst)
+        ctx.log("extract", f"[媒体] {src.relative_to(ctx.game_dir)} → raw/{rel.as_posix()}")
+
+    # 跑完了再算一次，这回把 `got` 填上（期望值与上面同源，不会漂）
+    _e, _l, per_archive = _exhibit_expected(ctx.game_dir, raw_dir=ctx.raw_dir)
+    actual_total = _count(ctx.raw_dir).total
+    n_grp = len([a for a in per_archive if a.get("toc")])
+    st.data = {"mode": "static", "archives": per_archive, "loose_media": len(loose),
+               "actual_total": actual_total, "unsupported": unsupported}
+    st.seconds = time.time() - t0
+    if not listable:
+        # 有包列不出 = 没有完整地面真相，明说，别假装对过账
+        st.ok = True
+        st.data["reason"] = "有 .grp 列不出条目，无完整地面真相，未对账"
+        st.detail = f"落盘 {actual_total} 个文件，有包列不出条目，未对账"
+        if skipped_note:
+            st.detail += f"；{skipped_note}"
+        return st
+    st.data["expected_total"] = expected
+    if actual_total != expected:
+        st.detail = f"对账失败：索引 {expected} vs 落盘 {actual_total}"
+        if skipped_note:
+            st.detail += f"；{skipped_note}"
+        return st
+    st.ok = True
+    st.detail = (f"{len(gyus)} 个 .gyu 解码 + {n_grp} 个 .grp 切分 + "
+                 f"{len(loose)} 个散装媒体，{actual_total} 个文件，对账 0 差")
+    if skipped_note:
+        st.detail += f"（{skipped_note}）"
+    return st
+
+
 #: 引擎 → extract 阶段**函数名**（新增引擎只需在这里加一行 + 扩 IMPLEMENTED）。
 #: 存名字而不是函数对象：存对象会在 import 时把引用焊死，测试 monkeypatch 模块属性就失效了
 #: （实测踩过：3 个 run() 退出码测试全红），也会让热重载拿不到新实现。
@@ -680,6 +934,7 @@ EXTRACTORS = {
     "RPG Maker": "stage_extract_rpgmaker",
     "Yu-Ris": "stage_extract_yuris",
     "AdvHD": "stage_extract_advhd",
+    "ExHIBIT": "stage_extract_exhibit",
 }
 
 
@@ -923,10 +1178,18 @@ def build_manifest(ctx: Ctx, stages: list[Stage], engine: str | None) -> dict:
     rec = manifest.reconcile(extract_data.get("expected_total"),
                              counts_block["raw"]["total"])
 
+    # 「有意排除、没进交付」的东西必须出现在 source 里，不能只躺在某个 stage 的 data 里：
+    # 读 manifest 的下游（人也好程序也好）看的是 `source.archives`，不会去翻 stages。
+    # 空列表不写，免得别的链路凭空多一个字段。
+    source: dict = {"game_dir": str(ctx.game_dir), "archives": archives}
+    unsupported = extract_data.get("unsupported") or []
+    if unsupported:
+        source["unsupported"] = unsupported
+
     return manifest.build(
         tool="orchestrator.py",
         engine=engine,
-        source={"game_dir": str(ctx.game_dir), "archives": archives},
+        source=source,
         counts_block=counts_block,
         reconcile_block=rec,
         verify={

@@ -31,13 +31,16 @@ import orchestrator as orch  # noqa: E402
 
 HY = Path(r"D:\HY")
 
-#: 四条已实现链路各取一个已验证过的样本（Ren'Py/KiriKiri 2026-10-29 实测，
-#: RPG Maker/Yu-Ris 2026-10-30 接入后实测）
+#: 已实现链路各取一个已验证过的样本（Ren'Py/KiriKiri 2026-10-29 实测，
+#: RPG Maker/Yu-Ris 2026-10-30 接入后实测，ExHIBIT 2026-10-30 接入后实测）。
+#: 快速档只 detect（秒级）；`ORCH_SMOKE_FULL=1` 会**真解包并写进 tmp_path**，
+#: 这些都是数 GB 级的样本，跑之前先看 C 盘余量。
 SAMPLES: list[tuple[str, Path, str]] = [
     ("Swipe Right", HY / "Swipe Right for Sugar Mama Sensei", "Ren'Py"),
     ("兼职人妻", HY / r"pork社\兼职人妻", "KiriKiri"),
     ("常識改変学園", HY / "常識改変学園-製品版-", "RPG Maker"),
     ("あまねぇ", HY / "あまねぇ -幼馴染お姉ちゃんとのえちえちあまやかされ同棲生活-", "Yu-Ris"),
+    ("夕凪荘", HY / "夕凪荘的S级的女朋友们", "ExHIBIT"),
 ]
 
 FULL = os.environ.get("ORCH_SMOKE_FULL") == "1"

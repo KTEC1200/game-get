@@ -19,6 +19,7 @@ extract 阶段用 monkeypatch 注入（真解包链路由 smoke 测试覆盖）�
 from __future__ import annotations
 
 import json
+import struct
 import sys
 from pathlib import Path
 
@@ -186,6 +187,24 @@ def test_manifest_is_json_serialisable(tmp_path):
     _write(ctx.raw_dir / "a.ogg")
     man = orch.build_manifest(ctx, [_fake_stage("extract", expected_total=1)], "Ren'Py")
     json.dumps(man, ensure_ascii=False)  # 不抛就是过
+
+
+def test_manifest_source_carries_unsupported_when_present(tmp_path):
+    """有意排除的东西要写进 `source.unsupported`——下游看 source，不会翻 stages。"""
+    ctx = _ctx(tmp_path)
+    _write(ctx.raw_dir / "a.ogg")
+    unsupported = [{"pattern": "*.ogg", "count": 22, "reason": "加密未解密"}]
+    stages = [_fake_stage("extract", expected_total=1, unsupported=unsupported)]
+    man = orch.build_manifest(ctx, stages, "ExHIBIT")
+    assert man["source"]["unsupported"] == unsupported
+
+
+def test_manifest_source_omits_unsupported_when_empty(tmp_path):
+    """没有排除项时不留空字段（别的链路 manifest 形状不变）。"""
+    ctx = _ctx(tmp_path)
+    _write(ctx.raw_dir / "a.ogg")
+    man = orch.build_manifest(ctx, [_fake_stage("extract", expected_total=1)], "Ren'Py")
+    assert "unsupported" not in man["source"]
 
 
 # ---------------------------------------------------------------------------
@@ -846,10 +865,10 @@ def test_advhd_extract_reconciles_and_converts_dat(tmp_path, monkeypatch):
     assert not (ctx.raw_dir / "op.dat").exists(), ".dat 必须改名成 .wmv，别两个都留"
 
 
-def _write_n(dest: Path, n: int) -> None:
+def _write_n(dest: Path, n: int, ext: str = ".ogg") -> None:
     dest.mkdir(parents=True, exist_ok=True)
     for i in range(n):
-        (dest / f"f{i}.ogg").write_bytes(b"x")
+        (dest / f"f{i}{ext}").write_bytes(b"x")
 
 
 def test_advhd_extract_fails_when_short(tmp_path, monkeypatch):
@@ -947,3 +966,288 @@ def test_convertible_has_single_source_of_truth():
 
     assert orch.CONVERTIBLE == manifest.CONVERTIBLE
     assert {".tlg", ".pna"} <= orch.CONVERTIBLE
+
+
+# ---------------------------------------------------------------------------
+# 10. ExHIBIT 链路：.gyu 解码 + .grp 切分 + 散装媒体 + 加密 BGM 如实上报
+# ---------------------------------------------------------------------------
+
+def _aifs_toc(entries: list[tuple[int, int]], *, arc_num: int = 1) -> bytes:
+    """造一个最小 AiFS TOC：1 个块，块的 `num` = `arc_num`（数据包在 TOC 里排第几）。
+
+    布局（`_grp_extract.py` 与 GARbro ArcGRP.cs 一致）：`AiFS` 头 4 字节、
+    `res_count` 在 0xC、块自 0x10 起 `{i32 num, u32 start_index, u32 _, u32 count}`
+    + `count × (u32 offset, u32 size)`。
+    """
+    head = bytearray(b"AiFS" + b"\x00" * 12)   # 头 4 字节 + 填充到 0x10，res_count 在 0xC
+    struct.pack_into("<i", head, 0xC, 1)
+    head += struct.pack("<iIII", arc_num, 1, 0, len(entries))
+    for offset, size in entries:
+        head += struct.pack("<II", offset, size)
+    return bytes(head)
+
+
+def _exhibit_game(tmp_path: Path, *, gyu_n: int = 2, ogg_n: int = 2,
+                  encrypted_n: int = 1) -> Path:
+    """造一个最小 ExHIBIT 目录：1 个数据包 + TOC + .gyu + 散装媒体 + 加密 BGM。
+
+    每个 ogg 条目 12 字节（`OggS` + 8 字节载荷），所以 offset 按 12 递进——
+    真跑 `_grp_extract` 时切出来的头必须还是 `OggS`，否则它自己会判「头异常」。
+    """
+    game = tmp_path / "game"
+    res = game / "res"
+    entries = [(i * 12, 12) for i in range(ogg_n)]
+    _write(res / "res2001.grp", b"".join(b"OggS" + bytes([i]) * 8 for i in range(ogg_n)))
+    _write(res / "res2000.grp", _aifs_toc(entries))
+    for i in range(gyu_n):
+        _write(res / "g" / f"{i:08d}.gyu", b"GYU\x1a")
+    for i in range(encrypted_n):
+        # 加密 BGM：头不是 OggS（§15.3 实测：前 3853 字节被加密，魔数直接没了）
+        _write(res / "s" / "m" / f"m{i:02d}.ogg", b"\x00\x01encrypted")
+    _write(res / "s" / "e" / "001.wav", b"RIFF")
+    _write(res / "g" / "ev" / "op.wmv", b"\x30\x26\xb2\x75")
+    return game
+
+
+class _FakeProc:
+    def __init__(self, rc: int = 0, out: str = "", err: str = "") -> None:
+        self.returncode, self.stdout, self.stderr = rc, out, err
+
+
+def _fake_grp_run(n_ogg: int, rc: int = 0, seen: list | None = None):
+    """冒充 `subprocess.run` 跑 `_grp_extract.py`：造 n_ogg 个产物，返回假 proc。"""
+    def _run(cmd, **_kw):
+        if seen is not None:
+            seen.append(list(cmd))
+        if rc == 0:
+            _write_n(Path(cmd[3]) / "res2001", n_ogg)
+        return _FakeProc(rc, "ok", "boom" if rc else "")
+    return _run
+
+
+def _fake_run_csharp(n_png: int, seen: list | None = None, raises: Exception | None = None):
+    def _run(key, argv=(), *, build=None, **kw):
+        if seen is not None:
+            seen.append({"key": key, "argv": list(argv), "kw": dict(kw)})
+        if raises is not None:
+            raise raises
+        dest = Path(kw.get("product_dir") or argv[1])
+        _write_n(dest, n_png, ext=".png")
+        return _fake_tool_result(n_png > 0, n_png)
+    return _run
+
+
+def test_exhibit_res_dir_finds_res_and_returns_none_without_grp(tmp_path):
+    game = _exhibit_game(tmp_path)
+    assert orch._exhibit_res_dir(game) == game / "res"
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    assert orch._exhibit_res_dir(bare) is None
+
+
+def test_exhibit_ogg_encryption_is_judged_by_magic(tmp_path):
+    """加密判据必须是魔数，不是路径——换一作路径会变，魔数不会。"""
+    plain = _write(tmp_path / "a.ogg", b"OggS\x00\x02")
+    enc = _write(tmp_path / "b.ogg", b"\x00\x01\x02\x03")
+    assert not orch._exhibit_ogg_is_encrypted(plain)
+    assert orch._exhibit_ogg_is_encrypted(enc)
+
+
+def test_exhibit_loose_media_excludes_encrypted_ogg(tmp_path):
+    game = _exhibit_game(tmp_path, encrypted_n=1)
+    rels = sorted(rel.as_posix() for _src, rel in orch._exhibit_loose_media(game))
+    assert rels == ["loose/res/g/ev/op.wmv", "loose/res/s/e/001.wav"], \
+        "加密 ogg 不能进 loose（它解不开），明文 wav/wmv 必须进"
+    enc = orch._exhibit_encrypted_ogg(game)
+    assert [p.name for p in enc] == ["m00.ogg"]
+
+
+def test_exhibit_expected_sums_three_sources(tmp_path):
+    game = _exhibit_game(tmp_path, gyu_n=3, ogg_n=2, encrypted_n=1)
+    expected, listable, per_archive = orch._exhibit_expected(game)
+    assert expected == 3 + 2 + 2, "3 个 gyu + 2 条 grp + 2 个散装（wav + wmv）"
+    assert listable
+    assert [a["archive"] for a in per_archive][:2] == ["(res/g + userdata/*.gyu)",
+                                                       "res2001.grp"]
+    assert per_archive[1]["toc"] == "res2000.grp"
+
+
+def test_exhibit_extract_reconciles_and_calls_both_tools(tmp_path, monkeypatch):
+    game = _exhibit_game(tmp_path, gyu_n=2, ogg_n=2, encrypted_n=1)
+    gyu_calls: list = []
+    grp_calls: list = []
+    monkeypatch.setattr(orch.tb, "run_csharp",
+                        _fake_run_csharp(2, seen=gyu_calls))
+    monkeypatch.setattr(orch.subprocess, "run",
+                        _fake_grp_run(2, seen=grp_calls))
+
+    ctx = _ctx(tmp_path, game_dir=game)
+    st = orch.stage_extract_exhibit(ctx)
+    assert st.ok, st.detail
+    assert st.data["expected_total"] == st.data["actual_total"] == 6, \
+        "2 个 gyu + 2 条 grp + 2 个散装媒体（001.wav + op.wmv）"
+    # 接线：gyu 工具扫的是**游戏目录**，产物落 raw/img
+    assert gyu_calls[0]["key"] == "gyu"
+    assert gyu_calls[0]["argv"] == [str(game), str(ctx.raw_dir / "img")]
+    # 接线：grp 工具拿 res 目录，产物落 raw/audio，并带 --manifest
+    assert grp_calls[0][2] == str(game / "res")
+    assert grp_calls[0][3] == str(ctx.raw_dir / "audio")
+    assert "--manifest" in grp_calls[0]
+    # 加密 BGM 如实上报，且**不在 raw 里**
+    assert st.data["unsupported"][0]["count"] == 1
+    assert "加密未解密" in st.detail
+    assert not list(ctx.raw_dir.rglob("*.ogg")) or \
+        all("m00" not in p.name for p in ctx.raw_dir.rglob("*.ogg"))
+
+
+def test_exhibit_extract_fails_when_gyu_short(tmp_path, monkeypatch):
+    """`.gyu` 少解了几张 → 工具判失败 → extract 不许假装成功。"""
+    game = _exhibit_game(tmp_path, gyu_n=3, ogg_n=2)
+    monkeypatch.setattr(orch.tb, "run_csharp", _short_csharp)
+    monkeypatch.setattr(orch.subprocess, "run", _fake_grp_run(2))
+    st = orch.stage_extract_exhibit(_ctx(tmp_path, game_dir=game))
+    assert not st.ok
+    assert "_gyu_tool 解码失败" in st.detail
+
+
+def _short_csharp(key, argv=(), **kw):
+    """只写 1 张图但判失败（模拟「工具少产出、产物判定拦住」）。"""
+    dest = Path(kw.get("product_dir") or argv[1])
+    _write_n(dest, 1, ext=".png")
+    return _fake_tool_result(False, 1, "产物不足：期望 3 实际 1")
+
+
+def test_exhibit_extract_fails_on_count_mismatch(tmp_path, monkeypatch):
+    """工具**没报错**但少产出（1 张 vs 期望 2 张）→ 对账必须拦住。
+
+    这是最危险的一类：退出码 0、工具自认成功，只有数产物才能发现。
+    """
+    game = _exhibit_game(tmp_path, gyu_n=2, ogg_n=2, encrypted_n=0)
+    monkeypatch.setattr(orch.tb, "run_csharp", _fake_run_csharp(1))
+    monkeypatch.setattr(orch.subprocess, "run", _fake_grp_run(2))
+    st = orch.stage_extract_exhibit(_ctx(tmp_path, game_dir=game))
+    assert not st.ok
+    assert "对账失败" in st.detail
+    assert st.data["expected_total"] == 6
+
+
+def test_exhibit_extract_reports_csharp_build_failure(tmp_path, monkeypatch):
+    """C# 编译失败必须把原因带出来（`CSharpBuildError` 里有 csc 路径与 stderr）。"""
+    game = _exhibit_game(tmp_path, gyu_n=1)
+    monkeypatch.setattr(orch.tb, "run_csharp",
+                        _fake_run_csharp(0, raises=orch.tb.CSharpBuildError(
+                            "编译失败：\n命令：csc.exe\nstderr：boom")))
+    st = orch.stage_extract_exhibit(_ctx(tmp_path, game_dir=game))
+    assert not st.ok
+    assert "无法启用" in st.detail and "boom" in st.detail
+
+
+def test_exhibit_extract_fails_when_grp_rc_nonzero(tmp_path, monkeypatch):
+    game = _exhibit_game(tmp_path, gyu_n=1, ogg_n=2)
+    monkeypatch.setattr(orch.tb, "run_csharp", _fake_run_csharp(1))
+    monkeypatch.setattr(orch.subprocess, "run", _fake_grp_run(0, rc=2))
+    st = orch.stage_extract_exhibit(_ctx(tmp_path, game_dir=game))
+    assert not st.ok
+    assert "_grp_extract.py 失败" in st.detail
+
+
+def test_exhibit_reuse_raw_still_reconciles(tmp_path, monkeypatch):
+    """跳过解包 ≠ 跳过对账：复用模式照样按三条来源重算期望。"""
+    game = _exhibit_game(tmp_path, gyu_n=2, ogg_n=2, encrypted_n=0)
+    ctx = _ctx(tmp_path, game_dir=game, reuse_raw=tmp_path / "out" / "raw")
+    _write_n(ctx.raw_dir / "img", 2, ext=".png")
+    _write_n(ctx.raw_dir / "audio" / "res2001", 2)
+    _write(ctx.raw_dir / "loose" / "res" / "s" / "e" / "001.wav")
+    _write(ctx.raw_dir / "loose" / "res" / "g" / "ev" / "op.wmv")
+    monkeypatch.setattr(orch.tb, "run_csharp",
+                        lambda *a, **k: pytest.fail("复用模式不该再调工具"))
+    monkeypatch.setattr(orch.subprocess, "run",
+                        lambda *a, **k: pytest.fail("复用模式不该再调工具"))
+    st = orch.stage_extract_exhibit(ctx)
+    assert st.ok, st.detail
+    assert st.data["expected_total"] == 6
+    assert "对账 6 == 6" in st.detail
+
+
+def test_exhibit_reuse_raw_fails_on_mismatch(tmp_path, monkeypatch):
+    game = _exhibit_game(tmp_path, gyu_n=2, ogg_n=2, encrypted_n=0)
+    ctx = _ctx(tmp_path, game_dir=game, reuse_raw=tmp_path / "out" / "raw")
+    _write_n(ctx.raw_dir / "img", 1, ext=".png")
+    monkeypatch.setattr(orch.tb, "run_csharp", lambda *a, **k: None)
+    monkeypatch.setattr(orch.subprocess, "run", lambda *a, **k: None)
+    st = orch.stage_extract_exhibit(ctx)
+    assert not st.ok
+    assert "复用产物对账失败" in st.detail
+
+
+def test_exhibit_no_source_at_all_is_error(tmp_path):
+    game = tmp_path / "game"
+    game.mkdir()
+    st = orch.stage_extract_exhibit(_ctx(tmp_path, game_dir=game))
+    assert not st.ok
+    assert "既没有 .gyu" in st.detail
+
+
+def test_exhibit_unlistable_grp_marks_unverified(tmp_path):
+    """有 .grp 找不到 TOC = 没有完整地面真相，明说，别假装对过账。"""
+    game = tmp_path / "game"
+    _write(game / "res" / "res2001.grp", b"OggS" + b"\x00" * 8)
+    st = orch.stage_extract_exhibit(_ctx(tmp_path, game_dir=game))
+    assert st.ok
+    assert "expected_total" not in st.data
+    assert any(a["listable"] is False for a in st.data["archives"])
+
+
+# ---------------------------- _grp_extract.py 本体（真解析真落盘） ----------
+
+def test_grp_expected_counts_matches_toc_entries(tmp_path):
+    import _grp_extract as grp
+
+    game = _exhibit_game(tmp_path, ogg_n=3)
+    exp = grp.expected_counts(game / "res")
+    assert exp["total"] == 3
+    assert exp["by_arc"] == {"res2001.grp": 3}
+    assert exp["unlistable"] == []
+    assert exp["arcs"] == ["res2001.grp"], "AiFS 文件本身是 TOC，不是数据包"
+
+
+def test_grp_zero_size_entries_are_not_counted(tmp_path):
+    """`size == 0` 是占位，不算条目——与切分时的 `if size` 必须同一口径。"""
+    import _grp_extract as grp
+
+    res = tmp_path / "res"
+    _write(res / "res2001.grp", b"OggS" + b"\x00" * 20)
+    _write(res / "res2000.grp", _aifs_toc([(0, 12), (12, 0), (12, 12)]))
+    exp = grp.expected_counts(res)
+    assert exp["total"] == 2
+
+
+def test_grp_main_writes_manifest_and_reconciles(tmp_path):
+    """真跑一遍 `_grp_extract.main`：切出来的 ogg 头合法、manifest 对账为 0。"""
+    import json as _json
+
+    import _grp_extract as grp
+
+    game = _exhibit_game(tmp_path, ogg_n=3)
+    out = tmp_path / "audio"
+    man = tmp_path / "grp.manifest.json"
+    rc = grp.main([str(game / "res"), str(out), "--manifest", str(man)])
+    assert rc == 0
+    assert sorted(p.name for p in (out / "res2001").iterdir()) == \
+        ["00001.ogg", "00002.ogg", "00003.ogg"]
+    rec = _json.loads(man.read_text(encoding="utf-8"))
+    assert rec["counts"]["raw"]["total"] == 3
+    assert rec["reconcile"] == {"expected": 3, "actual": 3, "diff": 0,
+                               "method": "archive-index"}
+    assert rec["engine"] == "ExHIBIT"
+
+
+def test_grp_main_reports_bad_ogg_head_as_failure(tmp_path):
+    """切出来的头不是 OggS/RIFF → 算失败（别把噪声当音频交付）。"""
+    import _grp_extract as grp
+
+    res = tmp_path / "res"
+    _write(res / "res2001.grp", b"XXXX" + b"\x00" * 8)
+    _write(res / "res2000.grp", _aifs_toc([(0, 12)]))
+    rc = grp.main([str(res), str(tmp_path / "out")])
+    assert rc == 1
