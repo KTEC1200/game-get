@@ -129,13 +129,34 @@ manifest.json 契约（对账与验收的唯一地面真相）:
    > （四包 2156 条目，已双样本验证过通用性）。
 
 ### 阶段 2：引擎插件收编（M1 → M2）
+
+> **进度（2026-10-30）**：orchestrator 已从 2 条链路扩到 **4 条**（Ren'Py / KiriKiri /
+> **RPG Maker** / **Yu-Ris**），`IMPLEMENTED` 与 `EXTRACTORS` 双表对齐，测试 304 passed / 5 skipped。
+> 四条链都用真实样本跑过退出码 0、对账 0 差（详见下方第 3 条）。
+
 1. 把剩余 extractor 逐个改造成契约插件（每个 ≤ 半天）：`_cs2_int_extract`（去 pycryptodome 硬依赖或
    随包带二进制）、`_ypf_extract`、`_pna_carve`、`asar_tool` 系、`_gyu_tool`（C# 源码随包 + csc
    运行时编译回退）、`_hg3_tool.exe`。
 2. **csc 黑盒工作流产品化**：`_gyu_tool` 模式（源码随包、首启 csc 编译、失败给明确提示）写进
    toolbridge，ExHIBIT/HG-3 两处复用。
 3. **验收**：12 样本全量回归（每个引擎至少一个样本走 orchestrator 全链，manifest 入案例库）。
+   - ✅ 已跑通 4/9 引擎：Ren'Py（Swipe Right 2156 条）、KiriKiri（兼职人妻 2562 条 + 507 tlg→png）、
+     **RPG Maker（常識改変学園 1585 条，图片 719/719、音频 866/866、视频 0/0）**、
+     **Yu-Ris（あまねぇ 8201 条，图片 3484/3484、音频 4522/4522、视频 0/0，527.7 分钟）**。
+   - ⏳ 剩 5 个引擎待接：Unity / Tyrano-Electron / AdvHD / ExHIBIT / CatSystem2。
 4. **案例库**：`cases/`（JSON per 样本：指纹、判定、耗时、失败与修复）——蓝图 2.7 自愈闭环的地基。
+
+> **⭐ 接链路的正确姿势（2026-10-30 沉淀，接剩下 5 个引擎时照做）**
+> - **地面真相只写一份**。RPG Maker 的候选筛选抽成 `_rpgmv_decrypt.iter_candidates()`、
+>   Yu-Ris 的表解析抽成 `_ypf_extract.read_index()`，orchestrator 直接调它们。
+>   各写一套必然漂移——一边算 7 个候选、另一边写 6 个文件，谁也说不清谁错。
+> - **`EXTRACTORS` 存函数名不存函数对象**。存对象会在 import 时把引用焊死，
+>   monkeypatch 模块属性就失效（实测 3 个 `run()` 退出码测试全红）。
+> - **`--reuse-raw` 跳过解包但不许跳过对账**。KiriKiri 侧踩过一次（`expected` 变 None，
+>   明明能列出条目却把「没对账」当结果），两条新链路都带 `reuse` 对账测试。
+> - **双表必须同步**：`IMPLEMENTED`（orchestrator）与 `IMPLEMENTED_CHAINS`（planner）不一致时，
+>   `test_implemented_flag_matches_orchestrator` 会红——这是设计好的防漂移护栏，别绕过它改测试。
+
 
 ### 阶段 3：Windows 软件壳（M2 → M3）
 1. PyInstaller onedir 冒烟：**先验证「冻结 + subprocess 调外部 exe」**（蓝图 §4.3 官方坑，阶段 1

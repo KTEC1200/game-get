@@ -31,10 +31,13 @@ import orchestrator as orch  # noqa: E402
 
 HY = Path(r"D:\HY")
 
-#: 两条已实现链路各取一个已验证过的样本（2026-10-29 实测均可跑通）
+#: 四条已实现链路各取一个已验证过的样本（Ren'Py/KiriKiri 2026-10-29 实测，
+#: RPG Maker/Yu-Ris 2026-10-30 接入后实测）
 SAMPLES: list[tuple[str, Path, str]] = [
     ("Swipe Right", HY / "Swipe Right for Sugar Mama Sensei", "Ren'Py"),
     ("兼职人妻", HY / r"pork社\兼职人妻", "KiriKiri"),
+    ("常識改変学園", HY / "常識改変学園-製品版-", "RPG Maker"),
+    ("あまねぇ", HY / "あまねぇ -幼馴染お姉ちゃんとのえちえちあまやかされ同棲生活-", "Yu-Ris"),
 ]
 
 FULL = os.environ.get("ORCH_SMOKE_FULL") == "1"

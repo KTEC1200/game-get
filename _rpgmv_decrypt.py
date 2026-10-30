@@ -33,6 +33,9 @@ REN = {".rpgmvp": ".png", ".rpgmvo": ".ogg", ".rpgmvm": ".m4a",
        ".png_": ".png", ".ogg_": ".ogg", ".m4a_": ".m4a"}
 JUNK_PREFIX = "免责声明"
 SIGS = (b"RPGMV", b"RPGMZ")
+#: RPG Maker 的默认 encryptionKey 就是 MD5("")。实测 `常識改変学園` 的 System.json
+#: 显式写的就是这个值——它并不等于「没加密」，只是用了默认口令。
+MD5_EMPTY = "d41d8cd98f00b204e9800998ecf8427e"
 
 
 def find_www(root: Path) -> Path:
@@ -43,6 +46,32 @@ def find_www(root: Path) -> Path:
     raise SystemExit(f"在 {root} 下找不到 www/（或 data/System.json）")
 
 
+def iter_candidates(www: Path):
+    """逐个产出 (源文件, 相对路径, 目标扩展名)。
+
+    **这是「地面真相」的唯一出处**：main() 落盘与 orchestrator 的对账都用它，
+    抄成两份必然漂移——一边算 7 个候选、另一边写 6 个文件，谁也说不清谁错。
+    """
+    for p in sorted(www.rglob("*")):
+        if not p.is_file():
+            continue
+        rel = p.relative_to(www)
+        if any(part.startswith(JUNK_PREFIX) for part in rel.parts):
+            continue
+        if rel.parts[0] in ("icon", "save"):
+            continue
+        ext = p.suffix.lower()
+        if ext in REN:
+            yield p, rel, REN[ext]
+        elif ext in MEDIA_EXT:
+            yield p, rel, ext
+
+
+def expected_total(www: Path) -> int:
+    """地面真相 = 候选文件数。每处理一个候选必然落在且只落在 decrypt / plain-copy 之一。"""
+    return sum(1 for _ in iter_candidates(www))
+
+
 def load_key(www: Path, override: str | None) -> bytes:
     if override:
         h = override.strip()
@@ -51,7 +80,18 @@ def load_key(www: Path, override: str | None) -> bytes:
         s = json.loads(sj.read_text(encoding="utf-8-sig"))
         h = s.get("encryptionKey") or ""
         if not h:
-            raise SystemExit(f"System.json 无 encryptionKey（游戏可能未加密），或用 --key 提供")
+            # 没有 key 分两种情况，不能一律报错：
+            # ① 游戏**根本没加密**（hasEncryptedImages/hasEncryptedAudio 都是 false）
+            #    —— 此时正确动作是原样复制全部媒体，硬失败等于把能解的游戏判死；
+            # ② 声称加密却没有 key —— 这才是真错误。
+            enc = bool(s.get("hasEncryptedImages")) or bool(s.get("hasEncryptedAudio"))
+            if not enc:
+                # RPG Maker 的默认 key 是 MD5("")，这里用它只是为了不让下游拿 None；
+                # 走的是 plain-copy 分支，这个值不会被真正用来异或。
+                return bytes.fromhex(MD5_EMPTY)
+            raise SystemExit(
+                "System.json 声明了加密（hasEncryptedImages/hasEncryptedAudio）但没有 "
+                "encryptionKey —— 用 --key <32hex> 提供")
     h = h.strip().strip('"')
     if len(h) != 32:
         raise SystemExit(f"encryptionKey 长度应为 32 hex，得到 {len(h)}: {h!r}")
@@ -124,25 +164,7 @@ def main() -> int:
     stats = Counter()
     magic_fails: list[str] = []
 
-    for p in sorted(www.rglob("*")):
-        if not p.is_file():
-            continue
-        rel = p.relative_to(www)
-        if any(part.startswith(JUNK_PREFIX) for part in rel.parts):
-            stats["skip/junk-disclaimer"] += 1
-            continue
-        if rel.parts[0] in ("icon", "save"):
-            stats["skip/icon-save"] += 1
-            continue
-        ext = p.suffix.lower()
-        if ext in REN:
-            target_ext = REN[ext]
-        elif ext in MEDIA_EXT:
-            target_ext = ext
-        else:
-            stats[f"skip/nonmedia{ext or '-noext'}"] += 1
-            continue
-
+    for p, rel, target_ext in iter_candidates(www):
         data = p.read_bytes()
         if data[:5] in SIGS:  # 加密体：去假头 + 前 16B XOR key
             body = bytearray(data[16:])
@@ -155,7 +177,7 @@ def main() -> int:
         else:  # 未加密（明文媒体，或假头不匹配）
             out = data
             stats["plain-copy"] += 1
-            if ext in REN:
+            if p.suffix.lower() in REN:
                 stats["plain-renamed"] += 1
                 print(f"  [明文但用加密后缀] {rel}")
 

@@ -40,11 +40,17 @@
 - **编排器：`orchestrator.py`**（2026-10-29，软件化第 3 步，**主入口**）—— 一条命令跑完
   `detect → extract → postprocess → verify → manifest`：
   `python orchestrator.py <游戏目录> --out <输出目录> [--allow-gui] [--reuse-raw DIR] [--no-verify] [--dry-run]`。
-  已接 **Ren'Py 与 KiriKiri** 两条链路（其余引擎判得出就退出码 2，不假装成功）。
+  已接 **Ren'Py / KiriKiri / RPG Maker / Yu-Ris 四条链路**（其余引擎判得出就退出码 2，不假装成功）。
   退出码：`0` 全通过 / `1` 阶段失败或对账有差 / `2` 引擎判出但无链路 / `3` 未命中。
   输出 `raw/`（原始）+ `png/`（tlg 转出的成品）+ `manifest.json`（counts 分 raw/final/converted 三段）
   + `_work/*.log`。**对账一律以索引为地面真相，diff≠0 即失败**；`--reuse-raw` 跳解包但不跳对账。
-  实测：`Swipe Right` 2156 条目 0 差、`兼职人妻` 2562 条目 0 差 + 507 tlg→png（图片 902/902）。
+  实测：`Swipe Right` 2156 条目 0 差、`兼职人妻` 2562 条目 0 差 + 507 tlg→png（图片 902/902）、
+  `常識改変学園` 1585 条目 0 差（图片 719/719、音频 866/866、视频 0/0）、
+  `あまねぇ` 8201 条目 0 差（图片 3484/3484、音频 4522/4522、527.7 分钟）。
+  **接新引擎的三条硬规矩**：① 地面真相只写一份（RPG Maker 的 `_rpgmv_decrypt.iter_candidates()`、
+  Yu-Ris 的 `_ypf_extract.read_index()`，orchestrator 直接调，别抄第二份）；
+  ② `EXTRACTORS` 存**函数名**不存函数对象（存对象会在 import 时焊死引用，monkeypatch 失效）；
+  ③ `IMPLEMENTED`（orchestrator）与 `IMPLEMENTED_CHAINS`（planner）必须同步，测试有防漂移护栏。
 - **外部工具桥：`toolbridge.py`**（2026-10-29，软件化第 2 步）—— 统一「找工具 + 调用 + 数产物 + **退出码不信任**」，
   已覆盖 GARbro / tlg2png / ffprobe / AssetStudio / KrkrExtract 五个。
   `python toolbridge.py check` 自检路径；库用法 `tb.run("garbro", ["-x", xp3], cwd=out, product_dir=out)`。
@@ -105,7 +111,7 @@ Ren'Py 侧：`_rpa_stage` / `_rpa_patch_stage` / `_rpa_arch.txt` / `_rpa_patch.t
 - 引擎判定已实测正确 **9/9**（1 Unity + 8 KiriKiri）；回归样例 `_fixtures/`（用 `make_fixtures.py` 重建）**6/6 通过**（2026-10-14 复跑确认）。
   2026-10-30 起引擎规则扩到 **9 个**（Unity / KiriKiri / Ren'Py / Tyrano-Electron / RPG Maker /
   AdvHD / Yu-Ris / ExHIBIT / CatSystem2），12 个真实样本里 11 个在场全部判对（`My Best Deal` 已从磁盘消失）；
-  `tests/golden_detect.json` 逐字锁定 engine/score/evidence/facts 四个维度，**测试 278 passed / 3 skipped**。
+  `tests/golden_detect.json` 逐字锁定 engine/score/evidence/facts 四个维度，**测试 304 passed / 5 skipped**。
 - 用户的 `D:\HY\pork社` 7 个游戏经 **GUI 实测全部可静态提取**。
 - ✅ **三条产出线（视频 / 图片 / 音频）全部有实测验证过的样本** —— 见下表。
 
@@ -287,13 +293,15 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
 
 **新会话开局**：读本文件 → 「已暂停的未完成任务」四项已全部完成（2026-10-28）；
 软件化进度见 `software-plan.md` §5（2026-10-30 状态，**§5 六项全部完成**）：
-`toolbridge.py` ✅ → `orchestrator.py` ✅（Ren'Py + KiriKiri 两链）→ `manifest.py` ✅ 契约唯一实现
+`toolbridge.py` ✅ → `orchestrator.py` ✅ → `manifest.py` ✅ 契约唯一实现
 （含 `counts()` 两目录形态与 `counts_flat()` 落盘即成品形态）→ 4 个解包器全部接上 `--manifest` ✅
 → `rules/engines.json` 指纹外置 ✅（规则表 + 解释器，`rules/__init__.py`）→ `planner.py` ✅
 （`dispatch --plan` 输出「建议 extractor + 参数」）。
-**测试 278 passed / 3 skipped**；`python tests/make_golden.py --check` 零漂移。
-**软件化的四个阶段（software-plan §3）里，阶段 1 已完成**；下一步是阶段 2（各引擎分支接
-orchestrator，目前只有 Ren'Py / KiriKiri 两条链）。
+**测试 304 passed / 5 skipped**；`python tests/make_golden.py --check` 零漂移。
+**软件化四阶段（software-plan §3）里阶段 1 已完成**；**阶段 2 进行中**：orchestrator 已接
+**4 条链路**（Ren'Py / KiriKiri / RPG Maker / Yu-Ris），四条链都用真实样本跑过退出码 0、对账 0 差。
+下一步：① 接剩下 5 个引擎（Unity / Tyrano-Electron / AdvHD / EXHIBIT / CatSystem2）
+② csc 黑盒工作流产品化进 toolbridge ③ `cases/` 案例库。
 
 ## 引擎分支要点（实测）
 

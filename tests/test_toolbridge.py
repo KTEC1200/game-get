@@ -406,6 +406,51 @@ def test_av_ext_whitelist_nonempty():
 
 
 # ---------------------------------------------------------------------------
+# ffprobe 内嵌封面（验收纪律第 4 条）
+# ---------------------------------------------------------------------------
+#
+# 真调 ffprobe 测不出「刚好挑中带封面的那个 ogg」，那种测试迟早退化成 skip，
+# 所以把 JSON 解析抽成 parse_ffprobe_json() 直接喂构造数据。
+
+_COVER = {"codec_type": "video", "codec_name": "mjpeg", "width": 500, "height": 500,
+          "disposition": {"attached_pic": 1}}
+_AUDIO = {"codec_type": "audio", "codec_name": "vorbis", "sample_rate": "44100",
+          "duration": "12.5", "disposition": {"attached_pic": 0}}
+_REAL_VIDEO = {"codec_type": "video", "codec_name": "wmv3", "width": 1280, "height": 720,
+               "duration": "124.0", "disposition": {"attached_pic": 0}}
+
+
+def test_ogg_with_embedded_cover_is_audio_not_video():
+    """★核心★ 带 mjpeg 封面的 ogg 必须判 audio，且封面宽高不许泄漏。"""
+    info = tb.parse_ffprobe_json({"streams": [_AUDIO, _COVER],
+                                  "format": {"duration": "12.5"}})
+    assert info["kind"] == "audio"
+    assert info["codec"] == "vorbis"
+    assert info["w"] is None and info["h"] is None
+    assert info["has_cover"] is True
+    assert info["dur"] == 12.5
+
+
+def test_real_video_with_cover_still_counts_as_video():
+    """有真视频流 + 封面时，仍应判 video（别把修复做过头）。"""
+    info = tb.parse_ffprobe_json({"streams": [_AUDIO, _REAL_VIDEO, _COVER],
+                                  "format": {"duration": "124.0"}})
+    assert info["kind"] == "video"
+    assert (info["w"], info["h"]) == (1280, 720)
+    assert info["has_cover"] is True
+
+
+def test_cover_only_file_is_not_a_video():
+    """只有封面流、没有音轨也没有真视频 → None，不是「一个视频」。"""
+    assert tb.parse_ffprobe_json({"streams": [_COVER]}) is None
+
+
+def test_ffprobe_json_without_streams_is_none():
+    assert tb.parse_ffprobe_json({"streams": []}) is None
+    assert tb.parse_ffprobe_json({}) is None
+
+
+# ---------------------------------------------------------------------------
 # 自检 CLI
 # ---------------------------------------------------------------------------
 

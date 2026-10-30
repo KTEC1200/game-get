@@ -102,7 +102,7 @@ def _repo_root() -> Path:
 # 这里的每一项都必须对应**真实存在的工具与真实存在的参数**（2026-10-30 逐个核过
 # `--help`/docstring/源码）。凭想象写参数等于给用户一条必然失败的命令。
 
-IMPLEMENTED_CHAINS = ("Ren'Py", "KiriKiri")
+IMPLEMENTED_CHAINS = ("Ren'Py", "KiriKiri", "RPG Maker", "Yu-Ris")
 
 
 def build(rep: Any) -> Plan | None:
@@ -241,22 +241,20 @@ def _electron(engine: str, game: Path, archives: dict, out: Path) -> Plan:
 
 
 def _rpgmaker(engine: str, game: Path, archives: dict, out: Path) -> Plan:
-    argv = _py("_rpgmv_decrypt.py") + [
+    single = _py("_rpgmv_decrypt.py") + [
         str(game), str(out), "--manifest", str(out / "manifest.json"),
     ]
-    return Plan(
-        engine=engine,
-        extractor="_rpgmv_decrypt.py",
-        argv=argv,
-        kind="whole_dir",
-        implemented=False,
-        reason="自动找 www/、自动读 System.json 的 encryptionKey；只 XOR 前 16 字节",
-        notes=[
-            "先看 System.json 的 hasEncryptedImages/hasEncryptedAudio——都是 false 就无需解密",
-            "后缀还原：.rpgmvp→png / .rpgmvo→ogg / .rpgmvm→m4a（MZ 是 .png_/.ogg_ 风格）",
-            "MV 视频在 www/movies/*.webm|mp4（明文）；目录没有就是没有",
-        ],
+    p = _plan_orchestrator(
+        engine, game, archives, out,
+        "_rpgmv_decrypt.py", single,
+        "单独跑解密器：自动找 www/、自动读 System.json 的 encryptionKey；只 XOR 前 16 字节",
     )
+    p.notes.extend([
+        "先看 System.json 的 hasEncryptedImages/hasEncryptedAudio——都是 false 就无需解密",
+        "后缀还原：.rpgmvp→png / .rpgmvo→ogg / .rpgmvm→m4a（MZ 是 .png_/.ogg_ 风格）",
+        "MV 视频在 www/movies/*.webm|mp4（明文）；目录没有就是没有",
+    ])
+    return p
 
 
 def _advhd(engine: str, game: Path, archives: dict, out: Path) -> Plan:
@@ -303,21 +301,19 @@ def _advhd(engine: str, game: Path, archives: dict, out: Path) -> Plan:
 
 def _yuris(engine: str, game: Path, archives: dict, out: Path) -> Plan:
     ypfs = archives.get(".ypf", [])
-    argv = _py("_ypf_extract.py") + (
-        [str(ypfs[0]), str(out), "--manifest", str(out / "manifest.json")] if ypfs else []
+    single = _py("_ypf_extract.py") + (
+        [str(ypfs[0]), str(out / ypfs[0].stem),
+         "--manifest", str(out / f"{ypfs[0].stem}.manifest.json")] if ypfs else []
     )
-    p = Plan(
-        engine=engine,
-        extractor="_ypf_extract.py",
-        argv=argv,
-        kind="per_archive",
-        implemented=False,
-        reason="自研 YPF 提取器（格式已完整逆向）；GARbro 不支持 YPF",
-        notes=[
-            "**每个 .ypf 单独跑一次**，输出目录别混（同名文件跨包会互相覆盖）",
-            "arc_unpacker 可作备选：`--out=DIR` 必须等号形式，大包疑似卡死",
-        ],
+    p = _plan_orchestrator(
+        engine, game, archives, out,
+        "_ypf_extract.py", single,
+        "单独跑 YPF 提取器（格式已完整逆向）；GARbro 不支持 YPF",
     )
+    p.notes.extend([
+        "**每个 .ypf 单独跑一次**，输出目录别混（同名文件跨包会互相覆盖）",
+        "arc_unpacker 可作备选：`--out=DIR` 必须等号形式，大包疑似卡死",
+    ])
     if ypfs:
         p.notes.append(f"找到 {len(ypfs)} 个 .ypf：" + "、".join(x.name for x in ypfs[:6]))
     else:

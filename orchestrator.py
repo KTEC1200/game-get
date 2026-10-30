@@ -47,6 +47,8 @@ import galgame_dispatch as gd          # noqa: E402
 import manifest                        # noqa: E402
 import rpa_tool                        # noqa: E402
 import toolbridge as tb                # noqa: E402
+import _rpgmv_decrypt as rpgmv         # noqa: E402  （复用它的筛选常量，别抄第二份）
+import _ypf_extract as ypf             # noqa: E402  （复用它的表解析，别抄第二份）
 
 if sys.platform == "win32":
     for _s in (sys.stdout, sys.stderr):
@@ -69,7 +71,7 @@ AV_EXT = {".mp4", ".mkv", ".avi", ".webm", ".mov", ".wmv", ".flv", ".mpg", ".mpe
           ".mp3", ".ogg", ".wav", ".opus", ".flac", ".m4a", ".aac", ".wma"}
 
 #: 已实现完整链路的引擎（其余判得出来但没链路 → 退出码 2）
-IMPLEMENTED = ("Ren'Py", "KiriKiri")
+IMPLEMENTED = ("Ren'Py", "KiriKiri", "RPG Maker", "Yu-Ris")
 
 
 # ---------------------------------------------------------------- 结构
@@ -371,8 +373,169 @@ def stage_extract_kirikiri(ctx: Ctx) -> Stage:
     return st
 
 
-# ---------------------------------------------------------------- 阶段 3: postprocess
+# ---------------------------------------------------------------- RPG Maker / Yu-Ris
 
+def _find_www(game_dir: Path) -> Path | None:
+    """定位 www/。与 `_rpgmv_decrypt.find_www()` 同一判据，但这里返回 None 而不是退出。"""
+    if (game_dir / "data" / "System.json").is_file():
+        return game_dir
+    if (game_dir / "www" / "data" / "System.json").is_file():
+        return game_dir / "www"
+    for p in game_dir.rglob("System.json"):
+        if p.parent.name == "data" and p.parent.parent.name == "www":
+            return p.parent.parent
+    return None
+
+
+def stage_extract_rpgmaker(ctx: Ctx) -> Stage:
+    """RPG Maker MV/MZ：跑 `_rpgmv_decrypt.py`，对账地面真相 = 候选文件数。
+
+    地面真相取自 `rpgmv.expected_total(www)`——**与解包器共用同一个筛选函数**。
+    另写一份筛选逻辑的话，一边算 7 个候选、另一边写 6 个文件，谁也说不清谁错。
+    """
+    st = Stage("extract")
+    t0 = time.time()
+    www = _find_www(ctx.game_dir)
+    if www is None:
+        st.detail = "找不到 www/（或 www/data/System.json）"
+        st.seconds = time.time() - t0
+        return st
+
+    try:
+        expected = rpgmv.expected_total(www)
+    except Exception as exc:                                   # noqa: BLE001
+        st.detail = f"数候选文件失败：{type(exc).__name__}: {exc}"
+        st.seconds = time.time() - t0
+        return st
+
+    if ctx.reuse_raw:
+        st.skipped = True
+        st.ok = True
+        actual = _count(ctx.raw_dir).total
+        st.data = {"reused_from": str(ctx.reuse_raw), "expected_total": expected,
+                   "actual_total": actual, "reconcile_ok": actual == expected}
+        if actual != expected:
+            st.ok = False
+            st.detail = f"复用产物对账失败：候选 {expected} vs 落盘 {actual}"
+        else:
+            st.detail = f"复用已有 raw，对账 {expected} == {actual}"
+        st.seconds = time.time() - t0
+        return st
+
+    man = ctx.work_dir / "rpgmv.manifest.json"
+    proc = subprocess.run(
+        [sys.executable, str(Path(__file__).parent / "_rpgmv_decrypt.py"),
+         str(www), str(ctx.raw_dir), "--manifest", str(man)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    ctx.log("extract", f"$ _rpgmv_decrypt.py {www} -> {ctx.raw_dir}\n"
+                       f"rc={proc.returncode}\n{proc.stdout}\n{proc.stderr}")
+    actual = _count(ctx.raw_dir).total
+    st.data = {"www": str(www), "expected_total": expected, "actual_total": actual,
+               "reconcile_ok": actual == expected, "rc": proc.returncode,
+               "archives": [{"archive": str(www.name), "expected": expected,
+                             "got": actual}]}
+    st.seconds = time.time() - t0
+    if actual != expected:
+        st.detail = f"对账失败：候选 {expected} vs 落盘 {actual} (rc={proc.returncode})"
+        return st
+    st.ok = True
+    st.detail = f"{actual} 个文件，对账 0 差"
+    return st
+
+
+def _ypf_archives(game_dir: Path) -> list[Path]:
+    top = sorted(p for p in game_dir.glob("*.ypf") if p.is_file())
+    if top:
+        return top
+    return sorted(p for p in game_dir.rglob("*.ypf") if p.is_file())
+
+
+def stage_extract_yuris(ctx: Ctx) -> Stage:
+    """Yu-Ris：逐 .ypf 跑 `_ypf_extract.py`，对账地面真相 = 表内条目数。
+
+    条目数取自 `_ypf_extract.read_index()`——与解包器共用同一份表解析。
+    """
+    st = Stage("extract")
+    t0 = time.time()
+    ypfs = _ypf_archives(ctx.game_dir)
+    if not ypfs:
+        st.detail = "没找到任何 .ypf 归档"
+        st.seconds = time.time() - t0
+        return st
+
+    expected_total = 0
+    per_archive = []
+    for arc in ypfs:
+        try:
+            _ver, entries, _key, _data = ypf.read_index(arc)
+        except Exception as exc:                               # noqa: BLE001
+            st.detail = f"读索引失败 {arc.name}: {type(exc).__name__}: {exc}"
+            st.data = {"archives": per_archive}
+            st.seconds = time.time() - t0
+            return st
+        expected = len(entries)
+        expected_total += expected
+        per_archive.append({"archive": arc.name, "expected": expected,
+                            "got": None, "ok": None})
+
+    if ctx.reuse_raw:
+        st.skipped = True
+        st.ok = True
+        actual = _count(ctx.raw_dir).total
+        st.data = {"reused_from": str(ctx.reuse_raw), "archives": per_archive,
+                   "expected_total": expected_total, "actual_total": actual,
+                   "reconcile_ok": actual == expected_total}
+        if actual != expected_total:
+            st.ok = False
+            st.detail = f"复用产物对账失败：索引 {expected_total} vs 落盘 {actual}"
+        else:
+            st.detail = f"复用已有 raw，对账 {expected_total} == {actual}"
+        st.seconds = time.time() - t0
+        return st
+
+    for rec, arc in zip(per_archive, ypfs):
+        dest = ctx.raw_dir / arc.stem
+        man = ctx.work_dir / f"{arc.stem}.manifest.json"
+        proc = subprocess.run(
+            [sys.executable, str(Path(__file__).parent / "_ypf_extract.py"),
+             str(arc), str(dest), "--manifest", str(man)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace")
+        ctx.log("extract", f"$ _ypf_extract.py {arc.name} -> {dest}\n"
+                           f"rc={proc.returncode}\n{proc.stdout}\n{proc.stderr}")
+        got = _count(dest).total if dest.is_dir() else 0
+        rec.update({"got": got, "rc": proc.returncode, "ok": got == rec["expected"]})
+        if got != rec["expected"]:
+            st.detail = (f"{arc.name}: 对账失败 期望 {rec['expected']} 实得 {got} "
+                         f"(rc={proc.returncode})")
+            st.data = {"archives": per_archive}
+            st.seconds = time.time() - t0
+            return st
+
+    actual_total = _count(ctx.raw_dir).total
+    st.data = {"archives": per_archive, "expected_total": expected_total,
+               "actual_total": actual_total,
+               "reconcile_ok": actual_total == expected_total}
+    st.seconds = time.time() - t0
+    if actual_total != expected_total:
+        st.detail = f"总对账失败：索引 {expected_total} vs 落盘 {actual_total}"
+        return st
+    st.ok = True
+    st.detail = f"{len(ypfs)} 个 ypf，{actual_total} 个文件，对账 0 差"
+    return st
+
+
+#: 引擎 → extract 阶段**函数名**（新增引擎只需在这里加一行 + 扩 IMPLEMENTED）。
+#: 存名字而不是函数对象：存对象会在 import 时把引用焊死，测试 monkeypatch 模块属性就失效了
+#: （实测踩过：3 个 run() 退出码测试全红），也会让热重载拿不到新实现。
+EXTRACTORS = {
+    "Ren'Py": "stage_extract_renpy",
+    "KiriKiri": "stage_extract_kirikiri",
+    "RPG Maker": "stage_extract_rpgmaker",
+    "Yu-Ris": "stage_extract_yuris",
+}
+
+
+# ---------------------------------------------------------------- 阶段 3: postprocess
 def stage_postprocess(ctx: Ctx) -> Stage:
     """把 raw/ 里的 .tlg 转成 png/ 下的 PNG。没有 .tlg 就是空操作。"""
     st = Stage("postprocess")
@@ -615,7 +778,14 @@ def run(ctx: Ctx) -> tuple[int, dict]:
                    "stages": [s.as_dict() for s in stages]}
 
     # 2. extract
-    st = stage_extract_renpy(ctx) if engine == "Ren'Py" else stage_extract_kirikiri(ctx)
+    extractor_name = EXTRACTORS.get(engine)
+    if extractor_name is None:                                  # pragma: no cover
+        st = Stage("extract", ok=False,
+                   detail=f"引擎 {engine} 在 IMPLEMENTED 里但没有对应 extract 函数")
+        stages.append(st)
+        return 2, {"error": "no-extractor-mapped", "engine": engine,
+                   "stages": [s.as_dict() for s in stages]}
+    st = globals()[extractor_name](ctx)
     stages.append(st)
     if not st.ok:
         return 1, {"error": "extract-failed", "engine": engine,

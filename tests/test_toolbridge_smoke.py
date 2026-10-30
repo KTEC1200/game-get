@@ -139,6 +139,24 @@ def test_ffprobe_real_audio():
     assert info["codec"] and info["dur"] and info["dur"] > 0
 
 
+def test_ffprobe_embedded_cover_is_not_video():
+    """**验收纪律第 4 条**：ffprobe 把 mp3/ogg 的**内嵌封面**报成 codec_type=video。
+
+    实测 `常識改変学園` 866 个 .ogg 里有 19 个带 mjpeg 封面（disposition.attached_pic=1），
+    不排除的话音频会被算成视频、视频数虚高。样本找不到就 skip，找到就必须判 audio。
+    """
+    _skip_unless("ffprobe")
+    ogg = _first_with_suffix([Path(r"D:\HY\常識改変学園-製品版-"), *EXTRACTED_ROOTS], (".ogg",))
+    if ogg is None:
+        pytest.skip("找不到 .ogg 样本")
+
+    info = tb.ffprobe(ogg)
+
+    assert info is not None, f"ffprobe 应能解开 {ogg.name}"
+    assert info["kind"] == "audio", f"{ogg.name} 是带封面的音频，不该判成视频"
+    assert info["w"] is None and info["h"] is None, "封面流的宽高不该泄漏到结果里"
+
+
 def test_ffprobe_real_video():
     _skip_unless("ffprobe")
     vid = _first_with_suffix([Path(r"D:\HY\教师催眠1"), *EXTRACTED_ROOTS], (".wmv", ".mpg", ".mp4"))

@@ -585,6 +585,42 @@ AV_EXT = {".mp4", ".mkv", ".avi", ".webm", ".mov", ".wmv", ".flv", ".mpg", ".mpe
           ".mp3", ".ogg", ".wav", ".opus", ".flac", ".m4a", ".aac", ".wma"}
 
 
+def _is_cover_stream(s: dict) -> bool:
+    """ffprobe 会把 mp3/ogg 的**内嵌封面**报成 codec_type=video。
+
+    验收纪律第 4 条：数视频按文件扩展名/真实视频流，别被封面骗了
+    （实测 `常識改変学園` 866 个 .ogg 里有 19 个带 mjpeg 封面，全部 attached_pic=1）。
+    """
+    return bool((s.get("disposition") or {}).get("attached_pic"))
+
+
+def parse_ffprobe_json(j: dict) -> dict | None:
+    """把 ffprobe 的 JSON 规整成 {codec, kind, w, h, sr, dur, has_cover}。
+
+    抽成纯函数是为了能直接喂构造数据测封面分支——真调 ffprobe 测不出
+    「刚好挑中带封面的那个 ogg」，那种测试迟早退化成 skip。
+    """
+    streams = j.get("streams") or []
+    if not streams:
+        return None
+    v = next((s for s in streams
+              if s.get("codec_type") == "video" and not _is_cover_stream(s)), None)
+    a = next((s for s in streams if s.get("codec_type") == "audio"), None)
+    s = v or a
+    if s is None:  # 只有封面、没有音轨也没有真视频流
+        return None
+    dur = j.get("format", {}).get("duration") or s.get("duration")
+    return {
+        "codec": s.get("codec_name"),
+        "kind": "video" if v else "audio",
+        "w": v.get("width") if v else None,
+        "h": v.get("height") if v else None,
+        "sr": a.get("sample_rate") if a else None,
+        "dur": float(dur) if dur else None,
+        "has_cover": any(_is_cover_stream(x) for x in streams),
+    }
+
+
 def ffprobe(path: str | os.PathLike, *, timeout: float = 120) -> dict | None:
     """探一个媒体文件，返回规整后的信息 dict；不可解返回 None。
 
@@ -602,21 +638,7 @@ def ffprobe(path: str | os.PathLike, *, timeout: float = 120) -> dict | None:
         j = json.loads(r.stdout)
     except Exception:
         return None
-    streams = j.get("streams") or []
-    if not streams:
-        return None
-    v = next((s for s in streams if s.get("codec_type") == "video"), None)
-    a = next((s for s in streams if s.get("codec_type") == "audio"), None)
-    s = v or a
-    dur = j.get("format", {}).get("duration") or s.get("duration")
-    return {
-        "codec": s.get("codec_name"),
-        "kind": "video" if v else "audio",
-        "w": v.get("width") if v else None,
-        "h": v.get("height") if v else None,
-        "sr": a.get("sample_rate") if a else None,
-        "dur": float(dur) if dur else None,
-    }
+    return parse_ffprobe_json(j)
 
 
 def assetstudio_export(

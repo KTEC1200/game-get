@@ -595,3 +595,151 @@ def test_main_missing_game_dir_returns_3(tmp_path):
 def test_main_requires_out(tmp_path):
     with pytest.raises(SystemExit):
         orch.main([str(FIXTURES / "renpy_game")])
+
+
+# ---------------------------------------------------------------------------
+# RPG Maker / Yu-Ris 链路（阶段 2 新增）
+# ---------------------------------------------------------------------------
+
+def _make_www(tmp_path: Path) -> Path:
+    """造一个最小 www/：System.json + 2 个加密媒体 + 1 个明文媒体 + 1 个非媒体。"""
+    www = tmp_path / "game" / "www"
+    (www / "data").mkdir(parents=True, exist_ok=True)
+    # 必须带 encryptionKey 且声明加密，否则解包器会（正确地）报错退出
+    (www / "data" / "System.json").write_text(
+        '{"encryptionKey": "d41d8cd98f00b204e9800998ecf8427e",'
+        ' "hasEncryptedImages": true, "hasEncryptedAudio": true}',
+        encoding="utf-8")
+    # 加密体：假头 16B + 原[0:16] XOR key（这里内容不重要，只要走 decrypt 分支）
+    (www / "img").mkdir(parents=True, exist_ok=True)
+    (www / "img" / "a.rpgmvp").write_bytes(b"RPGMV" + b"\x00" * 11 + b"\x11" * 16 + b"tail")
+    (www / "audio").mkdir(parents=True, exist_ok=True)
+    (www / "audio" / "b.rpgmvo").write_bytes(b"RPGMV" + b"\x00" * 11 + b"\x22" * 16 + b"tail")
+    # 明文媒体：照收
+    (www / "img" / "c.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 8)
+    # 非媒体：不进候选
+    (www / "notes.txt").write_text("hi", encoding="utf-8")
+    return www
+
+
+def test_find_www_locates_nested(tmp_path):
+    www = _make_www(tmp_path)
+    assert orch._find_www(tmp_path / "game") == www
+
+
+def test_find_www_returns_none_when_absent(tmp_path):
+    (tmp_path / "game").mkdir()
+    assert orch._find_www(tmp_path / "game") is None
+
+
+def test_rpgmaker_extract_reconciles_against_candidate_count(tmp_path):
+    """地面真相 = 候选文件数（与解包器共用 iter_candidates，别各写一套）。"""
+    _make_www(tmp_path)
+    ctx = _ctx(tmp_path)
+    st = orch.stage_extract_rpgmaker(ctx)
+    assert st.ok, st.detail
+    # 2 个加密 + 1 个明文 png = 3（notes.txt 不算）
+    assert st.data["expected_total"] == 3
+    assert st.data["actual_total"] == 3
+    assert st.data["reconcile_ok"] is True
+
+
+def test_rpgmaker_extract_fails_when_www_missing(tmp_path):
+    (tmp_path / "game").mkdir()
+    st = orch.stage_extract_rpgmaker(_ctx(tmp_path))
+    assert not st.ok
+    assert "www" in st.detail
+
+
+def test_rpgmaker_reuse_raw_still_reconciles(tmp_path):
+    """复用模式跳解包但**不跳对账**（KiriKiri 侧踩过这个坑）。"""
+    _make_www(tmp_path)
+    ctx = _ctx(tmp_path, reuse_raw=tmp_path / "out" / "raw")
+    _write(ctx.raw_dir / "a.png")
+    _write(ctx.raw_dir / "b.ogg")
+    _write(ctx.raw_dir / "c.png")
+    st = orch.stage_extract_rpgmaker(ctx)
+    assert st.skipped and st.ok
+    assert st.data["expected_total"] == 3
+    assert "对账 3 == 3" in st.detail
+
+
+def test_rpgmaker_reuse_raw_fails_on_mismatch(tmp_path):
+    _make_www(tmp_path)
+    ctx = _ctx(tmp_path, reuse_raw=tmp_path / "out" / "raw")
+    _write(ctx.raw_dir / "a.png")  # 只有 1 个，期望 3
+    st = orch.stage_extract_rpgmaker(ctx)
+    assert not st.ok
+    assert "对账失败" in st.detail
+
+
+def test_yuris_extract_fails_without_ypf(tmp_path):
+    (tmp_path / "game").mkdir()
+    st = orch.stage_extract_yuris(_ctx(tmp_path))
+    assert not st.ok
+    assert "ypf" in st.detail.lower()
+
+
+def test_yuris_extract_reconciles_per_archive(tmp_path, monkeypatch):
+    """逐包对账：地面真相来自 _ypf_extract.read_index()（与解包器共用表解析）。"""
+    game = tmp_path / "game"
+    game.mkdir()
+    (game / "cg.ypf").write_bytes(b"YPF\x00")
+    (game / "data.ypf").write_bytes(b"YPF\x00")
+
+    class _E:
+        def __init__(self, n):
+            self.n = n
+
+    monkeypatch.setattr(orch.ypf, "read_index",
+                        lambda p: (0x1EE, [_E(0)] * (2 if p.name == "cg.ypf" else 3), 0xFF, b""))
+
+    def _fake_run(argv, **kw):
+        # argv = [python, _ypf_extract.py, <ypf>, <dest>, --manifest, <man>]
+        dest = Path(argv[3])
+        n = 2 if "cg.ypf" in argv[2] else 3
+        dest.mkdir(parents=True, exist_ok=True)
+        for i in range(n):
+            (dest / f"f{i}.png").write_bytes(b"x")
+
+        class _R:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return _R()
+
+    monkeypatch.setattr(orch.subprocess, "run", _fake_run)
+
+    st = orch.stage_extract_yuris(_ctx(tmp_path))
+    assert st.ok, st.detail
+    assert st.data["expected_total"] == 5
+    assert st.data["actual_total"] == 5
+    assert len(st.data["archives"]) == 2
+
+
+def test_yuris_reuse_raw_fails_on_mismatch(tmp_path, monkeypatch):
+    game = tmp_path / "game"
+    game.mkdir()
+    (game / "cg.ypf").write_bytes(b"YPF\x00")
+
+    class _E:
+        pass
+
+    monkeypatch.setattr(orch.ypf, "read_index", lambda p: (0x1EE, [_E(), _E()], 0xFF, b""))
+    ctx = _ctx(tmp_path, reuse_raw=tmp_path / "out" / "raw")
+    _write(ctx.raw_dir / "only.png")  # 1 vs 期望 2
+    st = orch.stage_extract_yuris(ctx)
+    assert not st.ok
+    assert "对账失败" in st.detail
+
+
+def test_extractors_map_covers_every_implemented_engine():
+    """IMPLEMENTED 与 EXTRACTORS 必须同步——漏一个就会在运行时才炸。"""
+    assert set(orch.EXTRACTORS) == set(orch.IMPLEMENTED)
+
+
+def test_extractors_stores_names_not_functions():
+    """存名字而不是函数对象：存对象会在 import 时把引用焊死，monkeypatch 就失效。"""
+    for engine, name in orch.EXTRACTORS.items():
+        assert isinstance(name, str), f"{engine} 存的不是函数名"
+        assert callable(getattr(orch, name, None)), f"{name} 在模块里不存在"

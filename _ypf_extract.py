@@ -147,34 +147,46 @@ def write_manifest(out_root: Path, arc_path: Path, version: int, key: int,
     return man
 
 
+def read_index(arc_path: Path):
+    """解析 YPF 索引，返回 (version, entries, key, data_all)。
+
+    **这是「地面真相」的唯一出处**：条目数 = len(entries)，main() 落盘与 orchestrator
+    的对账都用它。抄成两份必然漂移——一边按 195 条对账、另一边按 194 条，谁也说不清谁错。
+    四种名长置换表逐个试，校验「条数相符 且 没有越界条目」才算命中。
+    """
+    data_all = arc_path.read_bytes()
+    version = int.from_bytes(data_all[4:8], "little")
+    file_count = int.from_bytes(data_all[8:12], "little")
+    table_size = int.from_bytes(data_all[12:16], "little")
+    table_buf = data_all[0x20:0x20 + table_size]
+
+    entries = None
+    for t in NAME_SIZE_TABLES:
+        try:
+            cand = parse_table(table_buf, version, t, file_count)
+        except ValueError:
+            continue
+        bad = [e for e in cand if e["offset"] + e["size_comp"] > len(data_all)]
+        if len(cand) == file_count and not bad:
+            entries = cand
+            break
+    if entries is None:
+        raise ValueError(f"{arc_path.name}: 四种名长置换表都解析失败")
+    key = guess_key([e["name"] for e in entries])
+    return version, entries, key, data_all
+
+
 def main() -> int:
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     ycg_png = "--no-ycg" not in sys.argv
     man_path = Path(sys.argv[sys.argv.index("--manifest") + 1]) if "--manifest" in sys.argv else None
     arc_path, out_root = Path(args[0]), Path(args[1])
-    data_all = arc_path.read_bytes()
 
-    version = int.from_bytes(data_all[4:8], "little")
-    file_count = int.from_bytes(data_all[8:12], "little")
-    table_size = int.from_bytes(data_all[12:16], "little")
-    table_buf = data_all[0x20:0x20 + table_size]
-    print(f"{arc_path.name}: version={version:#x} count={file_count} table={table_size}B")
-
-    entries = None
-    for ti, t in enumerate(NAME_SIZE_TABLES):
-        try:
-            cand = parse_table(table_buf, version, t, file_count)
-            bad = [e for e in cand if e["offset"] + e["size_comp"] > len(data_all)]
-            if len(cand) == file_count and not bad:
-                entries = cand
-                print(f"  名长置换表 #{ti+1} 命中，条目 {len(cand)}")
-                break
-        except ValueError:
-            continue
-    if entries is None:
-        raise SystemExit("四种置换表都解析失败")
-
-    key = guess_key([e["name"] for e in entries])
+    try:
+        version, entries, key, data_all = read_index(arc_path)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+    print(f"{arc_path.name}: version={version:#x} count={len(entries)}")
     print(f"  名字 XOR key = {key:#04x}")
 
     out_root.mkdir(parents=True, exist_ok=True)
