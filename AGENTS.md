@@ -56,11 +56,23 @@
   Yu-Ris 的 `_ypf_extract.read_index()`，orchestrator 直接调，别抄第二份）；
   ② `EXTRACTORS` 存**函数名**不存函数对象（存对象会在 import 时焊死引用，monkeypatch 失效）；
   ③ `IMPLEMENTED`（orchestrator）与 `IMPLEMENTED_CHAINS`（planner）必须同步，测试有防漂移护栏。
-- **外部工具桥：`toolbridge.py`**（2026-10-29，软件化第 2 步）—— 统一「找工具 + 调用 + 数产物 + **退出码不信任**」，
-  已覆盖 GARbro / tlg2png / ffprobe / AssetStudio / KrkrExtract 五个。
-  `python toolbridge.py check` 自检路径；库用法 `tb.run("garbro", ["-x", xp3], cwd=out, product_dir=out)`。
+- **外部工具桥：`toolbridge.py`**（2026-10-29，软件化第 2 步；**2026-10-30 起含 C# 现编**）——
+  统一「找工具 + 调用 + 数产物 + **退出码不信任**」，已覆盖
+  GARbro / tlg2png / ffprobe / AssetStudio / KrkrExtract / **csc** / **gyu** / **hg3** 八个。
+  `python toolbridge.py check` 自检（含自带 C# 工具）、`python toolbridge.py csharp` 看编译状态；
+  库用法 `tb.run("garbro", ["-x", xp3], cwd=out, product_dir=out)`。
   工具路径按 override → `TOOLBRIDGE_<KEY>` 环境变量 → `toolbridge.json` → 内置候选 → PATH 解析，
   **不再硬编码**。成败一律看产物数，`returncode` 只进诊断字段。坑 4（AssetStudio 逗号/竖线）已做成参数级护栏。
+- **自带 C# 工具源码随包、首启现编**（阶段 2 第 2 条，2026-10-30）：`_gyu_tool` / `_hg3_tool`
+  **只带 `.cs`**（exe 不入库）；`ensure_csharp("gyu")` / `run_csharp("gyu", argv, product_dir=…)`
+  先确保 exe 在——仓库里已有且不比源码旧就直接复用，否则 `csc /nologo /target:exe /platform:X /out:…`
+  现编一次，产物缓存在源码旁（**源码 mtime 变新才重编**）。编译失败抛 `CSharpBuildError`，
+  消息带 **csc 路径 + 源码名 + stderr 原文**——不许静默退化成「工具不存在」（那会把用户引到错方向）。
+  `run_csharp` 与 `run()` 共用同一套「数产物」判定（自带工具都是「扫一棵树 → 另存一棵树」，
+  rc=0 而 0 产物完全可能）。`check_all()` 的特例：exe 不在但**源码在且 csc 在**记为可用
+  （`buildable=True`），否则「源码随包」的干净检出会被误报成缺工具。
+  编译平台：载 32 位游戏 DLL 的黑盒 oracle 必须 `x86`（否则 `BadImageFormatException`），
+  纯独立转换器 `anycpu` 即可。
 - **manifest 契约：`manifest.py`**（2026-10-29，软件化第 4 步）—— **契约的唯一实现**，
   供 `orchestrator.py`、`krkr_auto_extract.py` 与三个单格式解包器共用（各写一遍必然漂移，
   而 manifest 是交付清单，漂移就等于工具之间对「交付了多少」说法不一致）。
@@ -302,11 +314,14 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
 （含 `counts()` 两目录形态与 `counts_flat()` 落盘即成品形态）→ 4 个解包器全部接上 `--manifest` ✅
 → `rules/engines.json` 指纹外置 ✅（规则表 + 解释器，`rules/__init__.py`）→ `planner.py` ✅
 （`dispatch --plan` 输出「建议 extractor + 参数」）。
-**测试 318 passed / 5 skipped**；`python tests/make_golden.py --check` 零漂移。
-**软件化四阶段（software-plan §3）里阶段 1 已完成**；**阶段 2 进行中**：orchestrator 已接
-**5 条链路**（Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD），五条链都用真实样本跑过退出码 0、对账 0 差。
-下一步：① 接剩下 4 个引擎（Unity / Tyrano-Electron / EXHIBIT / CatSystem2）
-② csc 黑盒工作流产品化进 toolbridge ③ `cases/` 案例库。
+**测试 337 passed / 5 skipped**；`python tests/make_golden.py --check` 零漂移。
+**软件化四阶段（software-plan §3）里阶段 1 已完成**；**阶段 2 进行中**：
+- ✅ orchestrator 已接 **5 条链路**（Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD），
+  五条链都用真实样本跑过退出码 0、对账 0 差。
+- ✅ **csc 黑盒工作流产品化进 toolbridge**（阶段 2 第 2 条）：8 个工具、C# 源码随包现编、
+  `check_all()` / `check_csharp()` 自检，19 项新测试 + 3 轮变异验证（真 csc 编 hello-world 并运行）。
+- 下一步：① 接剩下 4 个引擎（Unity / Tyrano-Electron / EXHIBIT / CatSystem2，
+  后两者的 `.gyu`/HG-3 现在直接吃 `run_csharp`）② `cases/` 案例库。
 
 ## 引擎分支要点（实测）
 

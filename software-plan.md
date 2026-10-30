@@ -132,15 +132,24 @@ manifest.json 契约（对账与验收的唯一地面真相）:
 
 > **进度（2026-10-30）**：orchestrator 已从 2 条链路扩到 **5 条**（Ren'Py / KiriKiri /
 > **RPG Maker** / **Yu-Ris** / **AdvHD**），`IMPLEMENTED` 与 `EXTRACTORS` 双表对齐，
-> 测试 **318 passed / 5 skipped**。AdvHD 顺带把 postprocess 从「只会 .tlg」改成按扩展名分派
+> 测试 **337 passed / 5 skipped**。AdvHD 顺带把 postprocess 从「只会 .tlg」改成按扩展名分派
 > （`.pna` → `_pna_carve.carve()`，一个容器出多帧），`manifest.CONVERTIBLE` 成为待转格式的唯一出处。
 > 五条链都用真实样本跑过退出码 0、对账 0 差（详见下方第 3 条）。
+> **第 2 条（csc 工作流进 toolbridge）也已完成**——`_gyu_tool`/`_hg3_tool` 源码随包、
+> `ensure_csharp()`/`run_csharp()` 现编复用，详见下方第 2 条。
 
 1. 把剩余 extractor 逐个改造成契约插件（每个 ≤ 半天）：`_cs2_int_extract`（去 pycryptodome 硬依赖或
-   随包带二进制）、`_ypf_extract`、`_pna_carve`、`asar_tool` 系、`_gyu_tool`（C# 源码随包 + csc
-   运行时编译回退）、`_hg3_tool.exe`。
-2. **csc 黑盒工作流产品化**：`_gyu_tool` 模式（源码随包、首启 csc 编译、失败给明确提示）写进
-   toolbridge，ExHIBIT/HG-3 两处复用。
+   随包带二进制）、`_ypf_extract`、`_pna_carve`、`asar_tool` 系、`_gyu_tool`、`_hg3_tool`
+   （后两者的「C# 源码随包 + csc 运行时编译」已由第 2 条完成）。
+2. ~~**csc 黑盒工作流产品化**~~ ✅ **已完成（2026-10-30）**：`_gyu_tool` / `_hg3_tool` **只带 `.cs`**，
+   toolbridge 新增 `csc`（系统自带 Framework 编译器）/ `gyu` / `hg3` 三个注册项，
+   以及 `build_csharp()` / `ensure_csharp()` / `run_csharp()`：
+   - 编译产物**缓存在源码旁**，`exe mtime >= 源码 mtime` 就复用，源码变新或 `force=True` 才重编；
+   - 失败抛 `CSharpBuildError`，消息带 **csc 路径 + 源码名 + 退出码 + stderr 原文**；
+   - `run_csharp()` 复用 `run()` 的**产物判定**（`_run_exe()` 抽出执行体，判定口径只写一份）；
+   - `check_all()` 认「源码在 + csc 在」为可用（`buildable=True`），
+     新增 `python toolbridge.py csharp` 看编译状态（源码/exe/是否过期/编译器）。
+   19 项新测试（14 单测 + 5 冒烟，含**用真 csc 编 hello-world 并运行**）+ 3 轮变异验证全部 CAUGHT。
 3. **验收**：12 样本全量回归（每个引擎至少一个样本走 orchestrator 全链，manifest 入案例库）。
    - ✅ 已跑通 5/9 引擎：Ren'Py（Swipe Right 2156 条）、KiriKiri（兼职人妻 2562 条 + 507 tlg→png）、
      **RPG Maker（常識改変学園 1585 条，图片 719/719、音频 866/866、视频 0/0）**、

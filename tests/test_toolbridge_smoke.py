@@ -40,25 +40,57 @@ def _skip_unless(key: str):
 
 
 # ---------------------------------------------------------------------------
-# 1. 五个工具都要能被解析出来（阶段 1 的交付判据）
+# 1. 注册表里的工具都要能被解析出来（阶段 1 的 5 个 + 阶段 2 的 csc 与两个自带 C# 工具）
 # ---------------------------------------------------------------------------
 
 
-def test_check_all_reports_five():
+def test_check_all_covers_registry():
     rows = tb.check_all()
-    assert len(rows) == 5
+    assert len(rows) == len(tb.TOOLS) == 8
     missing = [r["key"] for r in rows if not r["found"]]
     # 不 fail：工具是可选依赖。但要在输出里明确可见
     assert isinstance(missing, list)
 
 
-@pytest.mark.parametrize("key", ["garbro", "tlg2png", "ffprobe", "assetstudio", "krkr"])
+@pytest.mark.parametrize("key", ["garbro", "tlg2png", "ffprobe", "assetstudio", "krkr",
+                                 "csc", "gyu", "hg3"])
 def test_tool_resolvable_and_is_file(key):
     _skip_unless(key)
     p = tb.find_tool(key)
     assert p.is_file()
     assert p.stat().st_size > 0
     assert p.name.lower() == tb.TOOLS[key].exe_name.lower()
+
+
+def test_csc_really_compiles_and_runs(tmp_path):
+    """★核心★ 真 csc 编一个 hello-world 并跑起来——「源码随包」这条链的地面验证。
+
+    只查 `find_tool("csc")` 找到文件是不够的：真正要证明的是
+    「csc 能把 .cs 变出可执行 exe」，这是 `_gyu_tool` / `_hg3_tool` 的生存前提。
+    """
+    _skip_unless("csc")
+    src = tmp_path / "hello.cs"
+    src.write_text(
+        "using System; class P { static void Main() { Console.WriteLine(\"OK-CSC\"); } }",
+        encoding="utf-8",
+    )
+
+    exe = tb.build_csharp(src, platform="anycpu")
+    assert exe.is_file(), "csc 报成功却没产出 exe"
+
+    import subprocess
+    r = subprocess.run([str(exe)], capture_output=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert b"OK-CSC" in r.stdout
+
+
+def test_csharp_tools_build_or_are_buildable():
+    """自带 C# 工具：要么 exe 已在，要么源码 + csc 都在（用时会现编）。"""
+    rows = tb.check_csharp()
+    assert {r["key"] for r in rows} == set(tb.CSHARP)
+    for r in rows:
+        assert r["source_found"], f"{r['key']} 的源码不在仓库里：{r['source']}"
+        assert r["ready"], f"{r['key']} 既没有现成 exe 也没有编译器"
 
 
 # ---------------------------------------------------------------------------

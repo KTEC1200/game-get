@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -248,9 +250,13 @@ def test_config_file_is_honored(tmp_path, monkeypatch):
     assert tb.find_tool("garbro") == fake
 
 
-def test_all_five_tools_registered():
-    """阶段 1 要求覆盖 5 个工具，少一个就红。"""
-    assert set(tb.TOOLS) == {"garbro", "tlg2png", "ffprobe", "assetstudio", "krkr"}
+def test_all_tools_registered():
+    """注册表必须覆盖：阶段 1 的 5 个外部工具 + 阶段 2 的 csc 与两个自带 C# 工具。
+
+    这条断言故意写死集合——注册表少一条、或悄悄多一条没人管的工具，都要在这里红。
+    """
+    assert set(tb.TOOLS) == {"garbro", "tlg2png", "ffprobe", "assetstudio", "krkr",
+                             "csc", "gyu", "hg3"}
     for spec in tb.TOOLS.values():
         assert spec.purpose, f"{spec.key} 缺 purpose"
         assert spec.notes, f"{spec.key} 缺 notes（已知坑要随工具走）"
@@ -451,15 +457,287 @@ def test_ffprobe_json_without_streams_is_none():
 
 
 # ---------------------------------------------------------------------------
+# 阶段 2 第 2 条：自带 C# 工具「源码随包 + csc 现编」
+# ---------------------------------------------------------------------------
+# 假编译器用 python.exe 顶替：compiler 参数是**命令前缀列表**，所以
+# `[sys.executable, <脚本>]` 就能冒充一个 csc，且能精确控制「编译几次 / 失败 / 不产 exe」。
+
+FAKE_CSC = '''
+import os, pathlib, sys
+
+log = pathlib.Path(os.environ["FAKE_CSC_LOG"])
+n = int(log.read_text()) if log.exists() else 0
+log.write_text(str(n + 1))
+
+if os.environ.get("FAKE_CSC_FAIL"):
+    sys.stderr.write("fake error: boom\\n")
+    raise SystemExit(1)
+
+out = None
+for a in sys.argv[1:]:
+    if a.startswith("/out:"):
+        out = a[len("/out:"):]
+if not out:
+    sys.stderr.write("no /out: argument\\n")
+    raise SystemExit(2)
+pathlib.Path(out).write_bytes(b"MZfake")
+'''
+
+FAKE_DECODER = '''
+import pathlib, sys
+
+root, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+out.mkdir(parents=True, exist_ok=True)
+for p in sorted(root.rglob("*")):
+    if p.is_file():
+        (out / (p.stem + ".png")).write_bytes(b"PNG")
+'''
+
+
+def fake_csc(tmp_path: Path, monkeypatch, *, fail: bool = False):
+    """造一个假 csc，返回 (compiler 前缀, 调用计数文件)。"""
+    script = make_fake_tool(tmp_path, "fake_csc.py", FAKE_CSC)
+    log = tmp_path / "csc_calls.txt"
+    monkeypatch.setenv("FAKE_CSC_LOG", str(log))
+    if fail:
+        monkeypatch.setenv("FAKE_CSC_FAIL", "1")
+    return [sys.executable, str(script)], log
+
+
+def csc_calls(log: Path) -> int:
+    return int(log.read_text(encoding="utf-8")) if log.exists() else 0
+
+
+def test_build_csharp_compiles_and_returns_exe(tmp_path, monkeypatch):
+    src = tmp_path / "_t.cs"
+    src.write_text("class P { static void Main() {} }", encoding="utf-8")
+    prefix, log = fake_csc(tmp_path, monkeypatch)
+
+    exe = tb.build_csharp(src, compiler=prefix)
+
+    assert exe == tmp_path / "_t.exe"
+    assert exe.is_file()
+    assert csc_calls(log) == 1
+
+
+def test_build_csharp_reuses_fresh_exe(tmp_path, monkeypatch):
+    """exe 不比源码旧 → 直接复用，不再调编译器（否则每次解包都白等几秒）。"""
+    src = tmp_path / "_t.cs"
+    src.write_text("// x", encoding="utf-8")
+    prefix, log = fake_csc(tmp_path, monkeypatch)
+
+    first = tb.build_csharp(src, compiler=prefix)
+    second = tb.build_csharp(src, compiler=prefix)
+
+    assert first == second and first.is_file()
+    assert csc_calls(log) == 1
+
+
+def test_build_csharp_rebuilds_when_source_newer(tmp_path, monkeypatch):
+    """改了 .cs 就该重编——否则用户改了解码器却还在跑旧 exe，最难查的那种错。"""
+    src = tmp_path / "_t.cs"
+    src.write_text("// x", encoding="utf-8")
+    prefix, log = fake_csc(tmp_path, monkeypatch)
+    tb.build_csharp(src, compiler=prefix)
+
+    os.utime(src, (time.time() + 10, time.time() + 10))
+    tb.build_csharp(src, compiler=prefix)
+
+    assert csc_calls(log) == 2
+
+
+def test_build_csharp_force_rebuilds(tmp_path, monkeypatch):
+    src = tmp_path / "_t.cs"
+    src.write_text("// x", encoding="utf-8")
+    prefix, log = fake_csc(tmp_path, monkeypatch)
+    tb.build_csharp(src, compiler=prefix)
+
+    tb.build_csharp(src, compiler=prefix, force=True)
+
+    assert csc_calls(log) == 2
+
+
+def test_build_csharp_failure_includes_stderr(tmp_path, monkeypatch):
+    """★核心★ 编译失败必须把 stderr 原文、源码名、编译器路径一起抛出。
+
+    只报「工具不存在」会把用户引到错方向：真因是语法错/编译器缺失。
+    """
+    src = tmp_path / "_t.cs"
+    src.write_text("// x", encoding="utf-8")
+    prefix, _ = fake_csc(tmp_path, monkeypatch, fail=True)
+
+    with pytest.raises(tb.CSharpBuildError) as ei:
+        tb.build_csharp(src, compiler=prefix)
+
+    msg = str(ei.value)
+    assert "fake error: boom" in msg
+    assert "_t.cs" in msg
+    assert "退出码：1" in msg
+    assert prefix[0] in msg
+
+
+def test_build_csharp_missing_source_raises(tmp_path, monkeypatch):
+    prefix, _ = fake_csc(tmp_path, monkeypatch)
+
+    with pytest.raises(tb.CSharpBuildError) as ei:
+        tb.build_csharp(tmp_path / "nope.cs", compiler=prefix)
+
+    assert "nope.cs" in str(ei.value)
+
+
+def test_build_csharp_missing_compiler_raises(tmp_path):
+    src = tmp_path / "_t.cs"
+    src.write_text("// x", encoding="utf-8")
+
+    with pytest.raises(tb.CSharpBuildError) as ei:
+        tb.build_csharp(src, compiler=[str(tmp_path / "no_such_csc.exe")])
+
+    assert "编译器" in str(ei.value)
+
+
+def test_ensure_csharp_prefers_prebuilt_exe(tmp_path, monkeypatch):
+    """仓库里已有新鲜 exe 时不该动编译器（发布包带 exe 也能直接跑）。"""
+    src = tmp_path / "_gyu_tool.cs"
+    src.write_text("// x", encoding="utf-8")
+    exe = tmp_path / "_gyu_tool.exe"
+    exe.write_bytes(b"MZprebuilt")
+    os.utime(src, (1_000_000, 1_000_000))
+    os.utime(exe, (2_000_000, 2_000_000))
+    monkeypatch.setattr(tb, "CSHARP", {"gyu": tb.CSharpSource(
+        key="gyu", source_name="_gyu_tool.cs", exe_name="_gyu_tool.exe",
+        purpose="fake")})
+    monkeypatch.setattr(tb, "_REPO", tmp_path)
+    prefix, log = fake_csc(tmp_path, monkeypatch)
+
+    got = tb.ensure_csharp("gyu", compiler=prefix)
+
+    assert got == exe
+    assert csc_calls(log) == 0
+
+
+def test_csharp_and_tools_registries_agree():
+    """CSHARP 与 TOOLS 不能各说各话；源码必须真在仓库里（防拼错文件名）。"""
+    for key, spec in tb.CSHARP.items():
+        assert key in tb.TOOLS, f"{key} 在 CSHARP 里但没进 TOOLS"
+        assert tb.TOOLS[key].exe_name == spec.exe_name
+        assert spec.exe_name.endswith(".exe")
+        assert (tb.repo_root() / spec.source_name).is_file(), \
+            f"{spec.source_name} 不在仓库根（CSHARP 里拼错了？）"
+        assert spec.platform in {"anycpu", "x86", "x64"}
+
+
+def test_ensure_csharp_unknown_key_raises():
+    with pytest.raises(KeyError):
+        tb.ensure_csharp("no-such-key")
+    with pytest.raises(KeyError):
+        tb.run_csharp("no-such-key")
+
+
+def test_run_csharp_judges_by_products(tmp_path, monkeypatch):
+    """★核心★ run_csharp 端到端：现编拿 exe → 调用 → **按产物判定成败**。
+
+    自带工具都是「扫一棵树 → 另存一棵树」，rc=0 而 0 产物完全可能发生，
+    所以它必须走和 run() 同一套判定。
+    """
+    # 用 python.exe 冒充编好的 exe（复制成 <stem>.exe，ensure_csharp 就会直接复用）
+    exe = tmp_path / "_gyu_tool.exe"
+    shutil.copy2(sys.executable, exe)
+    src = tmp_path / "_gyu_tool.cs"
+    src.write_text("// x", encoding="utf-8")
+    os.utime(src, (1_000_000, 1_000_000))
+    monkeypatch.setattr(tb, "CSHARP", {"gyu": tb.CSharpSource(
+        key="gyu", source_name="_gyu_tool.cs", exe_name="_gyu_tool.exe",
+        purpose="fake")})
+    monkeypatch.setattr(tb, "_REPO", tmp_path)
+    decoder = make_fake_tool(tmp_path, "decoder.py", FAKE_DECODER)
+    root = tmp_path / "game"
+    root.mkdir()
+    (root / "a.gyu").write_bytes(b"GYU")
+    (root / "b.gyu").write_bytes(b"GYU")
+    out = tmp_path / "out"
+    out.mkdir()
+
+    r = tb.run_csharp("gyu", [str(decoder), str(root), str(out)],
+                      product_dir=out, min_products=2)
+
+    assert r.ok, r.reason
+    assert r.products.total == 2
+    assert r.key == "gyu"
+    assert sorted(p.name for p in out.iterdir()) == ["a.png", "b.png"]
+
+
+# ---------------------------------------------------------------------------
 # 自检 CLI
 # ---------------------------------------------------------------------------
 
 
 def test_check_all_shape():
     rows = tb.check_all()
-    assert len(rows) == 5
+    assert len(rows) == len(tb.TOOLS)
     for r in rows:
         assert set(r) >= {"key", "exe_name", "found", "sync", "notes"}
+        assert r["found"], f"{r['key']} 在本机找不到：{r.get('error')}"
+
+
+def test_check_all_counts_source_shipped_tool_as_usable(tmp_path, monkeypatch):
+    """★核心★ 自带 C# 工具 exe 缺失、但源码在且 csc 在 → 算可用（用时会现编）。
+
+    否则「源码随包」的干净检出会被 check 误报成缺工具，用户会去到处找 exe。
+    """
+    src = tmp_path / "_gyu_tool.cs"
+    src.write_text("// fake\n", encoding="utf-8")
+    monkeypatch.setattr(tb, "CSHARP", {"gyu": tb.CSharpSource(
+        key="gyu", source_name="_gyu_tool.cs", exe_name="_gyu_tool.exe",
+        purpose="fake")})
+    monkeypatch.setattr(tb, "_REPO", tmp_path)
+    monkeypatch.setattr(tb, "_csc_path", lambda: Path(r"C:\fake\csc.exe"))
+    real_find = tb.find_tool
+
+    def fake_find(key, override=None):
+        if key == "gyu":                      # 模拟「干净检出，exe 还没编出来」
+            raise tb.ToolNotFound("找不到工具 'gyu'（_gyu_tool.exe）")
+        return real_find(key, override)
+
+    monkeypatch.setattr(tb, "find_tool", fake_find)
+
+    row = next(r for r in tb.check_all() if r["key"] == "gyu")
+
+    assert row["found"] is True
+    assert row.get("buildable") is True
+    assert "现编" in row["path"]
+
+
+def test_check_csharp_reports_stale_exe(tmp_path, monkeypatch):
+    src = tmp_path / "_hg3_tool.cs"
+    src.write_text("// fake\n", encoding="utf-8")
+    exe = tmp_path / "_hg3_tool.exe"
+    exe.write_bytes(b"MZ")
+    os.utime(exe, (1_000_000, 1_000_000))          # exe 比源码旧
+    os.utime(src, (2_000_000, 2_000_000))
+    monkeypatch.setattr(tb, "CSHARP", {"hg3": tb.CSharpSource(
+        key="hg3", source_name="_hg3_tool.cs", exe_name="_hg3_tool.exe",
+        purpose="fake")})
+    monkeypatch.setattr(tb, "_REPO", tmp_path)
+
+    row = tb.check_csharp()[0]
+
+    assert row["stale"] is True
+    assert row["ready"] is True, "过期但编译器在 → 仍算可用（会重编）"
+
+
+def test_check_csharp_ready_requires_compiler_or_fresh_exe(tmp_path, monkeypatch):
+    src = tmp_path / "_hg3_tool.cs"
+    src.write_text("// fake\n", encoding="utf-8")
+    monkeypatch.setattr(tb, "CSHARP", {"hg3": tb.CSharpSource(
+        key="hg3", source_name="_hg3_tool.cs", exe_name="_hg3_tool.exe",
+        purpose="fake")})
+    monkeypatch.setattr(tb, "_REPO", tmp_path)
+    monkeypatch.setattr(tb, "_csc_path", lambda: None)
+
+    row = tb.check_csharp()[0]
+
+    assert row["exe_found"] is False and row["compiler"] is None
+    assert row["ready"] is False
 
 
 def test_cli_where_unknown_returns_nonzero(capsys):

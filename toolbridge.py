@@ -2,9 +2,10 @@
 # -*- coding: utf-8 -*-
 """外部工具桥（toolbridge）—— 找工具 / 调工具 / 数产物 / 退出码不信任。
 
-设计目标（software-plan §3 阶段1 第 4 条）：
+设计目标（software-plan §3 阶段1 第 4 条 + 阶段2 第 2 条）：
   统一「找工具（注册表化路径）+ 调用 + 数产物 + 退出码不信任」，
-  先覆盖 GARbro / tlg2png / ffprobe / AssetStudio / KrkrExtract 五个。
+  覆盖 GARbro / tlg2png / ffprobe / AssetStudio / KrkrExtract / csc / gyu / hg3 八个。
+  其中 gyu / hg3 是**本仓库自带的 C# 工具**：源码随包，exe 缺失或比源码旧时用 csc 现编（`ensure_csharp`）。
 
 四条硬规矩（每条都是踩坑换来的，见 AGENTS.md「坑」与 verified-findings）：
   1. **退出码 0 毫无意义**（坑 4）：AssetStudio `--types A,B,C` 会静默归零且 exit=0。
@@ -15,6 +16,10 @@
      子进程继承后会优先加载包内同名 DLL 而崩溃；同时清 `SetDllDirectoryW`。
   4. **判「有没有视频」不能靠魔数扫描**（坑 3）：本模块只负责调工具与数产物，
      不做任何内容级猜测——那属于各引擎 extractor 的职责。
+  5. **C# 工具源码随包、首启现编**（software-plan §3 阶段2 第 2 条）：`_gyu_tool` / `_hg3_tool`
+     的 exe 不作为交付物入库，由 `ensure_csharp()` 用 csc 现场编译并缓存（源码更新则重编）。
+     编译失败必须把 **csc 路径 + stderr 原文**一起抛出来，不许静默退化成「工具不存在」——
+     否则用户看到的会是「.gyu 解不出来」，而真因是编译器没找到。
 
 用法（库）::
 
@@ -25,8 +30,9 @@
 
 用法（CLI，自检）::
 
-    python toolbridge.py check              # 列出 5 个工具的解析结果
+    python toolbridge.py check              # 列出注册表里全部工具的解析结果（含自带 C# 工具）
     python toolbridge.py check --json       # 机器可读
+    python toolbridge.py csharp             # 自带 C# 工具编译状态（源码/exe/过期/编译器）
     python toolbridge.py where garbro       # 只查一个
 """
 from __future__ import annotations
@@ -45,7 +51,9 @@ __all__ = [
     "ToolSpec", "Products", "ToolResult", "ToolNotFound",
     "TOOLS", "find_tool", "run", "count_products", "snapshot",
     "garbro_list", "garbro_extract", "tlg2png", "ffprobe",
-    "assetstudio_export", "krkr_inject", "check_all",
+    "assetstudio_export", "krkr_inject", "check_all", "check_csharp",
+    "CSharpSource", "CSHARP", "CSharpBuildError",
+    "repo_root", "build_csharp", "ensure_csharp", "run_csharp",
 ]
 
 # ---------------------------------------------------------------------------
@@ -53,6 +61,9 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # 每条的 candidates 只放「本机已知的安装位置」，全部可被环境变量/配置文件覆盖。
 # 环境变量名统一 TOOLBRIDGE_<KEY>，避免和游戏自己的环境变量撞车。
+
+_REPO = Path(__file__).resolve().parent
+"""本仓库根目录。自带工具（_gyu_tool.exe 等）与它们的 .cs 源码都在这里。"""
 
 
 @dataclass(frozen=True)
@@ -142,10 +153,101 @@ TOOLS: dict[str, ToolSpec] = {
             "游戏路径**必须纯 ASCII**（CJK 会弹 `ANSI 文字列を UNICODE 文字列に変換できません`）。"
         ),
     ),
+    "csc": ToolSpec(
+        key="csc",
+        exe_name="csc.exe",
+        purpose="把本仓库自带的 C# 解码器现场编译成 exe（argv: /nologo /target:exe /platform:X /out:X.exe <src.cs>）",
+        candidates=(
+            r"%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe",
+            r"%WINDIR%\Microsoft.NET\Framework\v4.0.30319\csc.exe",
+        ),
+        notes=(
+            "系统自带的 .NET Framework 编译器（Framework 目录下那个），**不需要装 .NET SDK**。"
+            "**平台要对齐**：要 `LoadLibrary` 载 32 位游戏 DLL 时必须 `/platform:x86`，"
+            "否则运行时 `BadImageFormatException`；纯独立的转换器用 anycpu 即可。"
+            "编译产物缓存到源码旁边，只在**源码 mtime 比 exe 新**或显式 force 时才重编。"
+        ),
+    ),
+    "gyu": ToolSpec(
+        key="gyu",
+        exe_name="_gyu_tool.exe",
+        purpose="ExHIBIT/Retouch 的 .gyu 图片批量解码成 PNG（argv: <root> <outdir>）",
+        candidates=(str(_REPO / "_gyu_tool.exe"),),
+        notes=(
+            "**源码随包**（`_gyu_tool.cs`）：exe 不在或比源码旧时由 `ensure_csharp(\"gyu\")` 用 csc 现编。"
+            "CLI 是「递归扫 root 下的 *.gyu → 按相同相对路径另存到 outdir」的批量式，不是单文件转换；"
+            "含 7 种变体 / MT 去混淆 / 双 LZ / 调色板 / alpha，**成功判据一律数产物，不看 rc**。"
+        ),
+    ),
+    "hg3": ToolSpec(
+        key="hg3",
+        exe_name="_hg3_tool.exe",
+        purpose="CatSystem2 的 HG-3 家族（.hg3/.nm3/.gf3 等）批量转 PNG（argv: <root> <outdir>）",
+        candidates=(str(_REPO / "_hg3_tool.exe"),),
+        notes=(
+            "**源码随包**（`_hg3_tool.cs`）：exe 不在或比源码旧时由 `ensure_csharp(\"hg3\")` 用 csc 现编。"
+            "**必须按魔数筛选**：引擎会二次混淆扩展名，任意扩展名的文件都可能是 HG-3，"
+            "所以它扫 `*.*` 全部文件（`IsHg3Magic`）。"
+            "改 bpp 支持时记得 row 要按 `w * (bpp/8)` 算——硬编码 `w*4` 在 24bpp 上越界（§16.5）。"
+        ),
+    ),
 }
+
+
+# ---------------------------------------------------------------------------
+# 自带 C# 工具：源码随包，exe 现编现用
+# ---------------------------------------------------------------------------
+# 交付物里**不带 exe**（二进制不入库，也不受杀软待见），只带 .cs；
+# 首次用到时用系统自带的 csc 编一次，编好的 exe 就放在源码旁边缓存。
+
+
+@dataclass(frozen=True)
+class CSharpSource:
+    """一个「源码随包」的 C# 工具。"""
+
+    key: str
+    source_name: str
+    exe_name: str
+    purpose: str
+    platform: str = "anycpu"
+
+    @property
+    def source(self) -> Path:
+        return _REPO / self.source_name
+
+    @property
+    def exe(self) -> Path:
+        return _REPO / self.exe_name
+
+
+CSHARP: dict[str, CSharpSource] = {
+    "gyu": CSharpSource(
+        key="gyu",
+        source_name="_gyu_tool.cs",
+        exe_name="_gyu_tool.exe",
+        purpose="ExHIBIT .gyu → PNG（含 7 变体/MT 去混淆/双 LZ/调色板/alpha）",
+    ),
+    "hg3": CSharpSource(
+        key="hg3",
+        source_name="_hg3_tool.cs",
+        exe_name="_hg3_tool.exe",
+        purpose="CatSystem2 HG-3 家族 → PNG（按魔数扫描，不看扩展名）",
+    ),
+}
+
+
+class CSharpBuildError(RuntimeError):
+    """C# 编译失败。消息里必须带 **csc 路径 + 源码路径 + stderr 原文**。
+
+    只报「工具不存在」是把用户往错方向引：真因是编译器找不到或源码有语法错，
+    而用户看到的会是「.gyu 解不出来」。
+    """
+
 
 # 配置文件：优先仓库根，其次用户目录。两者可同时存在，后者覆盖前者。
 CONFIG_NAME = "toolbridge.json"
+
+
 
 
 class ToolNotFound(RuntimeError):
@@ -231,6 +333,104 @@ def find_tool(key: str, override: str | os.PathLike | None = None) -> Path:
         f"  * 把 {spec.exe_name} 放进 PATH\n"
         + (f"已知坑：{spec.notes}" if spec.notes else "")
     )
+
+
+# ---------------------------------------------------------------------------
+# 自带 C# 工具：编译（源码随包 → csc → exe 缓存）
+# ---------------------------------------------------------------------------
+
+
+def repo_root() -> Path:
+    """本仓库根目录。自带工具（`_gyu_tool` 等）与它们的 .cs 源码都在这里。"""
+    return _REPO
+
+
+def build_csharp(
+    source: str | os.PathLike,
+    *,
+    out_dir: str | os.PathLike | None = None,
+    exe_name: str | None = None,
+    platform: str = "anycpu",
+    force: bool = False,
+    compiler: Sequence[str] | None = None,
+    timeout: float = 300,
+) -> Path:
+    """把一个 .cs 编成 exe，返回 exe 路径（编不动就抛 `CSharpBuildError`）。
+
+    缓存规则：exe 已存在、且 **mtime 不比源码旧**，就直接复用（不重编）；
+    否则（或 `force=True`）跑一次 csc。这套「源码随包 + 现编 + 复用」是为了让
+    交付包里**不带二进制**，同时开发机上编过一次就不再等编译器。
+
+    参数
+      compiler   **命令前缀列表**（默认 `[csc]`）。测试可注入假编译器，
+                 也允许传 `["dotnet", "exec", ...]` 之类的替代前端。
+      platform   `/platform:` 的值。带 `DllImport`/`LoadLibrary` 载 32 位游戏 DLL 的
+                 工具必须 `x86`（否则运行时 `BadImageFormatException`）。
+    """
+    src = Path(source)
+    if not src.is_file():
+        raise CSharpBuildError(f"C# 源码不存在：{src}")
+
+    out = Path(out_dir) if out_dir is not None else src.parent
+    out.mkdir(parents=True, exist_ok=True)
+    exe = out / (exe_name or (src.stem + ".exe"))
+
+    if exe.is_file() and not force and exe.stat().st_mtime >= src.stat().st_mtime:
+        return exe
+
+    cmd = list(compiler) if compiler is not None else [str(find_tool("csc"))]
+    cmd += ["/nologo", "/target:exe", f"/platform:{platform}",
+            f"/out:{exe}", str(src)]
+
+    try:
+        proc = subprocess.run(cmd, capture_output=True, timeout=timeout,
+                              env=_sanitize_env())
+    except FileNotFoundError:
+        raise CSharpBuildError(
+            f"找不到 C# 编译器：{cmd[0]}\n"
+            f"（系统自带的是 %WINDIR%\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe）"
+        ) from None
+    except subprocess.TimeoutExpired:
+        raise CSharpBuildError(f"C# 编译超时（>{timeout:g}s）：{src.name}") from None
+
+    if proc.returncode != 0 or not exe.is_file():
+        raise CSharpBuildError(
+            f"C# 编译失败：{src.name}\n"
+            f"命令：{' '.join(cmd)}\n"
+            f"退出码：{proc.returncode}（exe 是否存在：{exe.is_file()}）\n"
+            f"stderr：\n{_decode(proc.stderr) or '(空)'}\n"
+            f"stdout：\n{_decode(proc.stdout) or '(空)'}"
+        )
+    return exe
+
+
+def ensure_csharp(key: str, **kw) -> Path:
+    """拿到自带 C# 工具的 exe：仓库里已有且不旧就直接用，否则用 csc 现编。
+
+    注册表见 `CSHARP`。这是「源码随包」的落地点——发布包可以不带 exe，
+    用户机器上第一次用到时才编（编好的 exe 落在源码旁边，之后直接复用）。
+    """
+    spec = CSHARP.get(key)
+    if spec is None:
+        raise KeyError(f"unknown csharp key: {key!r} (known: {sorted(CSHARP)})")
+    return build_csharp(spec.source, exe_name=spec.exe_name,
+                        platform=spec.platform, **kw)
+
+
+def run_csharp(key: str, argv: Sequence[str] = (), *, build: dict | None = None,
+               **run_kw) -> ToolResult:
+    """确保自带 C# 工具编好了，然后调它。
+
+    判定逻辑与 `run()` **完全一致**（数产物，不看退出码）：这两个工具都是
+    「扫一棵树 → 另存一棵树」，rc=0 但 0 产物完全可能发生。
+
+    `build` 透传给 `ensure_csharp`（`force` / `compiler` / `platform` 等），
+    其余关键字透传给 `_run_exe`（`product_dir` / `min_products` / `timeout` 等）。
+    """
+    if key not in CSHARP:
+        raise KeyError(f"unknown csharp key: {key!r} (known: {sorted(CSHARP)})")
+    exe = ensure_csharp(key, **(build or {}))
+    return _run_exe(exe, key=key, argv=argv, **run_kw)
 
 
 # ---------------------------------------------------------------------------
@@ -405,7 +605,33 @@ def run(
     ⚠️ 规矩 1：**returncode 只作诊断**。GARbro 假阴性、AssetStudio 静默归零都证明了这一点。
     """
     exe = find_tool(key, exe_override)
-    spec = TOOLS[key]
+    return _run_exe(
+        exe, key=key, argv=argv, cwd=cwd, timeout=timeout,
+        product_dir=product_dir, min_products=min_products,
+        product_check=product_check, env=env, stdin_text=stdin_text,
+    )
+
+
+def _run_exe(
+    exe: Path,
+    *,
+    key: str,
+    argv: Sequence[str] = (),
+    cwd: str | os.PathLike | None = None,
+    timeout: float = 1800,
+    product_dir: str | os.PathLike | None = None,
+    min_products: int = 1,
+    product_check: Callable[[Path], bool] | None = None,
+    env: Mapping[str, str] | None = None,
+    stdin_text: str | None = None,
+) -> ToolResult:
+    """`run()` 的执行体：exe 已确定，这里只管调用与判定。
+
+    抽出来是为了让**自带 C# 工具**（exe 是现编的、不在任何注册路径上）走同一套
+    「按产物判定」逻辑——判定口径只写一份，别为 C# 工具另立一套。
+    """
+    spec = TOOLS.get(key) or ToolSpec(key=key, exe_name=Path(exe).name,
+                                      purpose="(仓库自带 C# 工具)")
     cmd = [str(exe), *[str(a) for a in argv]]
 
     before = count_products(product_dir) if product_dir is not None else None
@@ -699,8 +925,21 @@ def krkr_inject(game_exe: str | os.PathLike, *, cwd: str | os.PathLike | None = 
 # ---------------------------------------------------------------------------
 
 
+def _csc_path() -> Path | None:
+    """csc 编译器路径；找不到返回 None（不抛）。"""
+    try:
+        return find_tool("csc")
+    except ToolNotFound:
+        return None
+
+
 def check_all() -> list[dict]:
-    """逐个解析 5 个工具，返回可序列化的状态表（不调用、只查在不在）。"""
+    """逐个解析注册表里的工具，返回可序列化的状态表（不调用、只查在不在）。
+
+    自带 C# 工具（`CSHARP` 那两条）特殊处理：exe 不在、但**源码在且 csc 在**时
+    记为可用（`buildable=True`，用时会现编）——否则「源码随包」的干净检出
+    会被误报成缺工具。
+    """
     rows = []
     for key, spec in TOOLS.items():
         row = {"key": key, "exe_name": spec.exe_name, "purpose": spec.purpose,
@@ -709,8 +948,34 @@ def check_all() -> list[dict]:
             p = find_tool(key)
             row.update(found=True, path=str(p), size=p.stat().st_size)
         except ToolNotFound as exc:
-            row.update(found=False, path=None, size=0, error=str(exc).splitlines()[0])
+            src = CSHARP.get(key)
+            if src is not None and src.source.is_file() and _csc_path() is not None:
+                row.update(found=True, buildable=True,
+                           path=f"(源码随包，用 csc 现编) {src.source}",
+                           size=src.source.stat().st_size)
+            else:
+                row.update(found=False, path=None, size=0,
+                           error=str(exc).splitlines()[0])
         rows.append(row)
+    return rows
+
+
+def check_csharp() -> list[dict]:
+    """自带 C# 工具的状态表：源码/exe 在不在、exe 是否过期、编译器在不在。"""
+    csc = _csc_path()
+    rows = []
+    for key, spec in CSHARP.items():
+        src, exe = spec.source, spec.exe
+        src_ok, exe_ok = src.is_file(), exe.is_file()
+        stale = exe_ok and src_ok and exe.stat().st_mtime < src.stat().st_mtime
+        rows.append({
+            "key": key,
+            "source": str(src), "source_found": src_ok,
+            "exe": str(exe), "exe_found": exe_ok, "stale": stale,
+            "compiler": str(csc) if csc else None,
+            "ready": src_ok and ((exe_ok and not stale) or csc is not None),
+            "purpose": spec.purpose, "platform": spec.platform,
+        })
     return rows
 
 
@@ -725,7 +990,30 @@ def _main(argv: list[str]) -> int:
                 mark = "OK  " if r["found"] else "MISS"
                 size = f"{r['size']:>12,} B" if r["found"] else " " * 14
                 print(f"[{mark}] {r['key']:<12} {size}  {r['path'] or r.get('error', '')}")
+            print()
+            for r in check_csharp():
+                if not r["ready"]:
+                    mark = "MISS"
+                elif r["stale"]:
+                    mark = "OLD "
+                elif not r["exe_found"]:
+                    mark = "SRC "
+                else:
+                    mark = "OK  "
+                print(f"[{mark}] {r['key']:<12} 源码随包；编译器：{r['compiler'] or '缺失'}")
         return 0 if all(r["found"] for r in rows) else 1
+    if cmd == "csharp":
+        rows = check_csharp()
+        if "--json" in argv:
+            print(json.dumps(rows, ensure_ascii=False, indent=2))
+        else:
+            for r in rows:
+                print(f"{r['key']}: 源码 {'有' if r['source_found'] else '无'} / "
+                      f"exe {'有' if r['exe_found'] else '无'}"
+                      f"{'（过期）' if r['stale'] else ''} / "
+                      f"编译器 {r['compiler'] or '缺失'} / "
+                      f"{'可用' if r['ready'] else '不可用'}")
+        return 0 if all(r["ready"] for r in rows) else 1
     if cmd == "where":
         if len(argv) < 2:
             print("usage: python toolbridge.py where <key>", file=sys.stderr)
