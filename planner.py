@@ -102,7 +102,8 @@ def _repo_root() -> Path:
 # 这里的每一项都必须对应**真实存在的工具与真实存在的参数**（2026-10-30 逐个核过
 # `--help`/docstring/源码）。凭想象写参数等于给用户一条必然失败的命令。
 
-IMPLEMENTED_CHAINS = ("Ren'Py", "KiriKiri", "RPG Maker", "Yu-Ris", "AdvHD", "ExHIBIT")
+IMPLEMENTED_CHAINS = ("Ren'Py", "KiriKiri", "RPG Maker", "Yu-Ris", "AdvHD", "ExHIBIT",
+                      "CatSystem2")
 
 
 def build(rep: Any) -> Plan | None:
@@ -339,19 +340,23 @@ def _exhibit(engine: str, game: Path, archives: dict, out: Path) -> Plan:
 
 def _catsystem2(engine: str, game: Path, archives: dict, out: Path) -> Plan:
     ints = archives.get(".int", [])
-    p = Plan(
-        engine=engine,
-        extractor="_cs2_int_extract.py",
-        argv=_py("_cs2_int_extract.py") + [str(game), str(out)],
-        kind="whole_dir",
-        implemented=False,
-        reason=".int 全链（MT 名字混淆 + 小端 Blowfish + key 爆破法）；一次处理目录下所有 .int",
-        notes=[
-            "图片是 HG-3 家族（.hg3/.nm3/.gf3 **及任意扩展名**，引擎会二次混淆扩展名）"
-            "→ 解完还要跑 `_hg3_tool.exe <root> <outdir>` 按魔数扫描",
-            "24bpp 变体的 row 必须按 `w*(bpp/8)` 算，硬编码 `w*4` 会越界",
-        ],
+    p = _plan_orchestrator(
+        engine, game, archives, out,
+        "_cs2_int_extract.py",
+        _py("_cs2_int_extract.py") + [str(game), str(out / "raw")],
+        "单工具兜底：`_cs2_int_extract.py` 一次解目录下所有 .int（MT 名字混淆 + 小端 Blowfish）；"
+        "orchestrator 会自动跑它，这里给的是「只想单独解密」时的命令",
     )
+    p.notes.extend([
+        "**扩展名不可信**：引擎对扩展名做了二次轮换（实测 3907 个 OggS 里只有 148 个恰好叫 `.ogg`，"
+        "≈1/26）→ 交付前必须按**魔数**归一，否则乱扩展名的媒体会被当成「非媒体文件」静默放过",
+        "`.int` 里约一半是 `LPD\\x00` 数据（float32，ffprobe 读不了，不是音频）——归数据文件，不算缺失",
+        "图片是 HG-3 家族（`.hg3`/`.nm3`/`.gf3` **及任意扩展名**）→ 解完还要跑 "
+        "`_hg3_tool.exe <root> <outdir>` 按魔数扫描；orchestrator 已内置这一步（`run_csharp(\"hg3\", …)`）",
+        "HG-3 的 row 必须按 `w*(bpp/8)` 算，硬编码 `w*4` 在 24bpp 越界（verified-findings §16.5）",
+        "同目录同 stem 的 `.hg3`/`.nm3` 会被 `Path.ChangeExtension('.png')` 归一化到同一张图，"
+        "所以「解码数」≥「PNG 数」——orchestrator 按去重后的张数判产物，并把撞车数写进 manifest",
+    ])
     if ints:
         p.notes.insert(0, f"找到 {len(ints)} 个 .int")
     else:

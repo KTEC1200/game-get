@@ -40,7 +40,7 @@
 - **编排器：`orchestrator.py`**（2026-10-29，软件化第 3 步，**主入口**）—— 一条命令跑完
   `detect → extract → postprocess → verify → manifest`：
   `python orchestrator.py <游戏目录> --out <输出目录> [--allow-gui] [--reuse-raw DIR] [--no-verify] [--dry-run]`。
-  已接 **Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD / ExHIBIT 六条链路**（其余引擎判得出就退出码 2，不假装成功）。
+  已接 **Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD / ExHIBIT / CatSystem2 七条链路**（其余引擎判得出就退出码 2，不假装成功）。
   退出码：`0` 全通过 / `1` 阶段失败或对账有差 / `2` 引擎判出但无链路 / `3` 未命中。
   输出 `raw/`（原始）+ `png/`（tlg/pna 转出的成品）+ `manifest.json`（counts 分 raw/final/converted 三段）
   + `_work/*.log`。**对账一律以索引为地面真相，diff≠0 即失败**；`--reuse-raw` 跳解包但不跳对账。
@@ -321,15 +321,16 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
 （含 `counts()` 两目录形态与 `counts_flat()` 落盘即成品形态）→ 4 个解包器全部接上 `--manifest` ✅
 → `rules/engines.json` 指纹外置 ✅（规则表 + 解释器，`rules/__init__.py`）→ `planner.py` ✅
 （`dispatch --plan` 输出「建议 extractor + 参数」）。
-**测试 356 passed / 7 skipped**；`python tests/make_golden.py --check` 零漂移。
+**测试 414 passed / 7 skipped**；`python tests/make_golden.py --check` 零漂移。
 **软件化四阶段（software-plan §3）里阶段 1 已完成**；**阶段 2 进行中**：
-- ✅ orchestrator 已接 **6 条链路**（Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD / **ExHIBIT**），
-  六条链都用真实样本跑过退出码 0、对账 0 差。
+- ✅ orchestrator 已接 **7 条链路**（Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD / ExHIBIT /
+  **CatSystem2**）；前六条都用真实样本跑过退出码 0、对账 0 差，CatSystem2 验到 4 包
+  （bgm/config/fes/image00 = 1351/1351 零失败，含最大单包 image00 的 1163 条）。
 - ✅ **csc 黑盒工作流产品化进 toolbridge**（阶段 2 第 2 条）：8 个工具、C# 源码随包现编、
   `check_all()` / `check_csharp()` 自检，19 项新测试 + 3 轮变异验证（真 csc 编 hello-world 并运行）。
-- 下一步：① 接剩下 3 个引擎（Unity / Tyrano-Electron / CatSystem2；后者的 HG-3 直接吃
-  `run_csharp`，前置是给 `_cs2_int_extract.py` 加 `--manifest` 并处理 pycryptodome 依赖）
-  ② `cases/` 案例库。
+- 下一步：① **CatSystem2 全量 51 包 / 53500 条真样本跑通**（8.4 GB 产物，等机器空闲、内存充足再跑，
+  别和别的重任务并发）② 接剩下 2 个引擎（Unity / Tyrano-Electron；Tyrano 目前只有 `_fixtures/tyrano_game`，
+  没有真实样本，按「每个引擎至少一个样本全链」的验收口径它还过不了）③ `cases/` 案例库。
 
 ## 引擎分支要点（实测）
 
@@ -410,6 +411,20 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
   row 必须按 `w * (bpp/8)` 算，硬编码 `w*4` 会越界崩。cptype/imgmode 节**全文件都有**（非 24bpp 特有），
   与失败无关，别被它带偏。教训：**移植解码器时先拉原版源码对拍语义，再改自己的代码**。
 - 音频 OggS 明文（解密后），视频是 MPEG-PS（`00 00 01 ba`）。
+- **orchestrator 链路（2026-10-30 接入，第 7 条）**：`stage_extract_cs2` 逐包（`raw/<包名>/`）
+  + 总计两层对账；`_cs2_postprocess` ① 按**魔数**归一扩展名 ② HG-3 家族 → `png/`。
+  - **扩展名不可信（二次轮换）**：实测 pcm_AA 的 3907 个 `OggS` 里只有 148 个恰好叫 `.ogg`
+    （≈1/26，「按文件轮换、转到 0 才露真名」），其余散在几十个随机扩展名上；同一 base name 会成对
+    出现（`.KCC` 是 OggS、`.HLx` 是 `LPD\0`）。**不按魔数归一，乱扩展名的媒体会落进
+    `stage_verify` 的 `nonmedia` 被静默放过**（`.mos` 那次的翻版）。LPD 是 float32 数据文件
+    （ffprobe 读不了），不是媒体、也不算缺失。
+  - **交付口径 vs 对账口径要分开**：HG-3 转出的 PNG 才是交付物，raw 里那份中间产物记进
+    `ctx.consumed` 并从 `final` 排除（`manifest.iter_final_files(..., exclude=)` / `counts(..., exclude=)`）
+    ——**按路径排除**，因为扩展名被混淆；且 `raw` 仍然数着它，否则 53500 条对账就没了依据。
+  - **同 stem 撞车**：`_hg3_tool` 落盘是 `Path.ChangeExtension('.png')`，`a.hg3` 与 `a.nm3` 互相覆盖
+    → 期望张数要**去重后**算（历史解 4502、交付 4499），拿文件数当 `min_products` 会误判「产物不足」。
+  - **内存**：最大的包 2.3 GB，`_cs2_int_extract.py` 已改成 **mmap + 32 MiB 分块解密**；
+    进程被杀时不会再有「日志一行都没有」的情况（进度行 `flush=True`）。
 
 ### ExHIBIT / Retouch（`夕凪荘` 实测，2026-10-26）
 - 判定：`ExHIBIT.JP`/`RESIDENT.JP` + `.gyu`（魔数 `GYU\x1a`）/ `.grp` / `.rld` + `moonstone.TTE`。
@@ -469,6 +484,12 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
    另一方面，「修逻辑 + 从源归档重跑」永远优于写迁移脚本原地修数据（坑 5）。
 
 ## 工作约定
+
+- **⭐ 跑多 GB 级样本前先看可用内存**（本机 13.8 GiB）。2026-10-30 实测：可用只剩 1.9 GiB 时，
+  `_cs2_int_extract.py` 把 2.1 GB 的包整包 `read()` 进内存 → 进程被压死、**连 stdout 都丢了**
+  （表现为 `rc=1` + 日志空白，看起来像代码 bug，其实是内存）。两条规矩：
+  ① 大文件一律 **mmap / 流式**，不要 `read()` 整包；需要整段变换时**分块**（见 `_CHUNK`）；
+  ② 别在别的重负载旁边开大任务，跑之前 `shutil.disk_usage` / 内存自检，跑完立刻收工。
 
 - **事实先核实再断言**；未核实的明确标注「未核实」，不推测。链接/版本/许可证尤其。
 - 仓库事实查 `api.github.com/repos/<owner>/<repo>`（`platform_search` 对本场景不可靠）。

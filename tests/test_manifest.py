@@ -284,3 +284,72 @@ def test_cli_without_args_exits_2():
                        errors="replace", timeout=60,
                        env={**os.environ, "PYTHONIOENCODING": "utf-8"})
     assert r.returncode == 2
+
+
+# ---------------------------------------------------------------------------
+# exclude：按**路径**排除被后处理消费掉的 raw 文件
+# ---------------------------------------------------------------------------
+
+def test_exclude_hides_consumed_raw_from_final_but_keeps_raw(tmp_path):
+    """★核心★ CatSystem2 的 HG-3：raw 里那份是中间产物，转出的 png/ 才是交付物。
+
+    `raw` 必须仍然数着它（对账 53500 条要用），`final` 只数 png/ 那张。
+    """
+    raw, png = tmp_path / "raw", tmp_path / "png"
+    _write(raw / "ch" / "a.hg3")          # HG-3 中间产物，被消费
+    _write(raw / "ch" / "b.ogg")
+    _png(png / "ch" / "a.png")            # 转换成品
+
+    without = mf.counts(raw, png)
+    with_ex = mf.counts(raw, png, exclude=["ch/a.hg3"])
+
+    assert without["raw"]["total"] == 2
+    assert without["final"]["total"] == 3        # a.hg3 + b.ogg + png/a.png（没排除就多算一张）
+    assert with_ex["raw"]["total"] == 2          # ★ raw 不受影响：对账口径
+    assert with_ex["final"]["total"] == 2        # ★ b.ogg + png/a.png
+    assert with_ex["final"]["by_ext"] == {".ogg": 1, ".png": 1}
+
+
+def test_exclude_accepts_relative_absolute_and_posix_forms(tmp_path):
+    """三种写法都得认：发起方（orchestrator）传的是 posix 相对路径，人手写可能是绝对路径。"""
+    raw, png = tmp_path / "raw", tmp_path / "png"
+    _write(raw / "x" / "a.hg3")
+    for form in ("x/a.hg3", raw / "x" / "a.hg3", Path("x/a.hg3")):
+        assert mf.counts(raw, png, exclude=[form])["final"]["total"] == 0, form
+
+
+def test_exclude_missing_path_is_harmless(tmp_path):
+    """排除一个不存在的路径不该报错、更不该少算别的文件。"""
+    raw, png = tmp_path / "raw", tmp_path / "png"
+    _write(raw / "a.ogg")
+    assert mf.counts(raw, png, exclude=["nope/not-here.hg3"])["final"]["total"] == 1
+
+
+def test_exclude_does_not_touch_convertible(tmp_path):
+    """两条排除通道各管各的：`convertible` 按扩展名、`exclude` 按路径，互不干扰。"""
+    raw, png = tmp_path / "raw", tmp_path / "png"
+    _write(raw / "a.tlg")                 # convertible（.tlg）排除
+    _write(raw / "b.hg3")                 # exclude 按路径排除
+    _write(raw / "c.ogg")
+    c = mf.counts(raw, png, exclude=["b.hg3"])
+    assert c["final"]["total"] == 1       # 只剩 c.ogg
+    assert c["converted"] == {".tlg": 1}
+
+
+def test_iter_final_files_honours_exclude(tmp_path):
+    raw, png = tmp_path / "raw", tmp_path / "png"
+    _write(raw / "keep.ogg")
+    _write(raw / "drop.hg3")
+    labels = [lab for _, lab in mf.iter_final_files(raw, png, exclude=["drop.hg3"])]
+    assert labels == ["raw/keep.ogg"]
+
+
+def test_iter_final_files_and_counts_agree_on_exclude(tmp_path):
+    """两个入口对同一个 exclude 必须给一样的答案（否则 manifest 与实际交付对不上）。"""
+    raw, png = tmp_path / "raw", tmp_path / "png"
+    _write(raw / "a.hg3")
+    _write(raw / "b.ogg")
+    _png(png / "a.png")
+    ex = ["a.hg3"]
+    assert len(mf.iter_final_files(raw, png, exclude=ex)) == mf.counts(raw, png, exclude=ex)["final"]["total"]
+

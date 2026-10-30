@@ -43,19 +43,42 @@ MANIFEST_VERSION = 1
 # ---------------------------------------------------------------- 扫盘
 
 
+def _excluded_set(raw_dir: Path, exclude) -> set:
+    """把「被后处理消费掉的 raw 文件」统一成绝对路径集合。
+
+    传进来的可以是绝对 `Path`、相对 `raw_dir` 的 `Path`，或者 `as_posix()` 字符串
+    ——写后处理的人手上有哪种就用哪种，转换在这里做一次就够了。
+    """
+    if not exclude:
+        return set()
+    out = set()
+    for item in exclude:
+        p = Path(item)
+        out.add(p if p.is_absolute() else (raw_dir / p))
+    return out
+
+
 def iter_final_files(raw_dir: Path, png_dir: Path,
-                     convertible: set[str] | None = None) -> list[tuple[Path, str]]:
+                     convertible: set[str] | None = None,
+                     exclude=None) -> list[tuple[Path, str]]:
     """返回 `[(绝对路径, 相对标签)]` —— final 口径的全部交付文件。
 
     标签一律用 `/` 分隔（`as_posix()`）：manifest 要跨机器看/比对，
     Windows 的 `raw/sub\\c.ogg` 和 Linux 的 `raw/sub/c.ogg` 混在同一份文件里
     会让任何按标签做的比对都失败。
+
+    `convertible` 是**按扩展名**排除待转格式（`.tlg`/`.pna`）。
+    `exclude` 是**按路径**排除被后处理消费掉的 raw 文件——CatSystem2 要用它：
+    引擎会把扩展名二次混淆，raw 里同一个 `.hg3` 可能叫 `.KFX` 也可能叫 `.hg3`，
+    照扩展名排除必然漏（漏掉的那几个就会以「还没转的中间产物」身份混进交付清单，
+    而 counts 那边照样自洽，属于无声的错）。传路径就没有这个歧义。
     """
     conv = CONVERTIBLE if convertible is None else convertible
+    skip = _excluded_set(raw_dir, exclude)
     out: list[tuple[Path, str]] = []
     if raw_dir.is_dir():
         for p in sorted(raw_dir.rglob("*")):
-            if p.is_file() and p.suffix.lower() not in conv:
+            if p.is_file() and p.suffix.lower() not in conv and p not in skip:
                 out.append((p, f"raw/{p.relative_to(raw_dir).as_posix()}"))
     if png_dir.is_dir():
         for p in sorted(png_dir.rglob("*")):
@@ -90,11 +113,16 @@ def scan_png(png_dir: Path) -> dict:
 
 
 def counts(raw_dir: Path, png_dir: Path,
-           convertible: set[str] | None = None) -> dict:
-    """产出 counts 三段式：`{"raw": …, "final": …, "converted": …}`。"""
+           convertible: set[str] | None = None,
+           exclude=None) -> dict:
+    """产出 counts 三段式：`{"raw": …, "final": …, "converted": …}`。
+
+    `raw` 永远是**全部**落盘文件（含待转格式、含被消费的中间产物）——对账要拿它跟索引比，
+    少算一个就变成「两边都对不上但谁也没错」。`final` 才是交付口径。
+    """
     conv = CONVERTIBLE if convertible is None else convertible
     raw = scan_raw(raw_dir)
-    final_files = iter_final_files(raw_dir, png_dir, conv)
+    final_files = iter_final_files(raw_dir, png_dir, conv, exclude)
     final = _tally([p for p, _label in final_files])
     converted = {e: n for e, n in raw["by_ext"].items() if e in conv}
     return {"raw": raw, "final": final, "converted": converted}

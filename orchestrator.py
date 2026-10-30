@@ -51,6 +51,7 @@ import _rpgmv_decrypt as rpgmv         # noqa: E402  （复用它的筛选常量
 import _ypf_extract as ypf             # noqa: E402  （复用它的表解析，别抄第二份）
 import _pna_carve as pna               # noqa: E402  （复用它的 carve()，别抄第二份）
 import _grp_extract as grp             # noqa: E402  （复用它的 TOC 解析，别抄第二份）
+import _cs2_int_extract as cs2         # noqa: E402  （复用它的地面真相/魔数识别，别抄第二份）
 
 if sys.platform == "win32":
     for _s in (sys.stdout, sys.stderr):
@@ -77,7 +78,8 @@ AV_EXT = {".mp4", ".mkv", ".avi", ".webm", ".mov", ".wmv", ".flv", ".mpg", ".mpe
           ".mp3", ".ogg", ".wav", ".opus", ".flac", ".m4a", ".aac", ".wma"}
 
 #: 已实现完整链路的引擎（其余判得出来但没链路 → 退出码 2）
-IMPLEMENTED = ("Ren'Py", "KiriKiri", "RPG Maker", "Yu-Ris", "AdvHD", "ExHIBIT")
+IMPLEMENTED = ("Ren'Py", "KiriKiri", "RPG Maker", "Yu-Ris", "AdvHD", "ExHIBIT",
+               "CatSystem2")
 
 
 # ---------------------------------------------------------------- 结构
@@ -106,6 +108,11 @@ class Ctx:
     allow_gui: bool = False
     do_verify: bool = True
     engine: str | None = None
+    # 被后处理「消费掉」的 raw 文件（相对 raw_dir 的 posix 路径）。交付清单要排除它们，
+    # 但**不能删**：raw 要留着跟索引对账（少一个就变成「两边都对不上」）。
+    # CatSystem2 用它：HG-3 转出的 PNG 进了 png/，raw 里那份中间产物不该再算一次交付。
+    # 按**路径**而不是按扩展名 —— 引擎把扩展名混淆过，照扩展名排除必然漏。
+    consumed: list[str] = field(default_factory=list)
 
     @property
     def raw_dir(self) -> Path:
@@ -928,6 +935,83 @@ def stage_extract_exhibit(ctx: Ctx) -> Stage:
 #: 引擎 → extract 阶段**函数名**（新增引擎只需在这里加一行 + 扩 IMPLEMENTED）。
 #: 存名字而不是函数对象：存对象会在 import 时把引用焊死，测试 monkeypatch 模块属性就失效了
 #: （实测踩过：3 个 run() 退出码测试全红），也会让热重载拿不到新实现。
+# ---------------------------------------------------------------- CatSystem2
+
+def _cs2_sub_dir(game: Path, raw_dir: Path, archive: str) -> Path:
+    """`_cs2_int_extract.py` 把 `xxx.int` 解到 `raw/xxx/` —— 逐包对账要按这个约定找。"""
+    return raw_dir / Path(archive).stem
+
+
+def stage_extract_cs2(ctx: Ctx) -> Stage:
+    """CatSystem2（KIF `.int` + Blowfish/MT）：地面真相取 `cs2.expected_counts()`。
+
+    对账做**两层**：逐包（`raw/<包名>/` 的文件数 vs 头部声明的条目数）与总计。
+    逐包那层是必要的——51 个包里少一个、另一个多一个，总数照样相等。
+
+    `--reuse-raw` 时不重新解包，但**照旧算同一份地面真相并对账**（跳的是解包不是验收）。
+    """
+    st = Stage("extract")
+    t0 = time.time()
+    exp = cs2.expected_counts(ctx.game_dir)
+    if not exp["arcs"]:
+        st.detail = "游戏目录里没有 KIF 格式的 .int"
+        st.seconds = time.time() - t0
+        return st
+
+    archives = [{"archive": n, "expected": c, "got": None}
+                for n, c in sorted(exp["by_arc"].items())]
+    expected_total = None if exp["unlistable"] else exp["total"]
+
+    if ctx.reuse_raw is None:
+        ctx.raw_dir.mkdir(parents=True, exist_ok=True)
+        cmd = [sys.executable, str(Path(__file__).parent / "_cs2_int_extract.py"),
+               str(ctx.game_dir), str(ctx.raw_dir),
+               "--manifest", str(ctx.work_dir / "cs2.manifest.json")]
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
+        tail = (proc.stdout or "").strip().splitlines()[-8:]
+        for line in tail:
+            ctx.log("extract", "  " + line)
+        for line in (proc.stderr or "").strip().splitlines()[-5:]:
+            ctx.log("extract", "  [stderr] " + line)
+        if proc.returncode != 0:
+            st.detail = f"_cs2_int_extract.py 失败（rc={proc.returncode}）：{tail[-1] if tail else ''}"
+            st.seconds = time.time() - t0
+            return st
+
+    actual_total = _count(ctx.raw_dir).total
+    mism: list[str] = []
+    for a in archives:
+        a["got"] = _count(_cs2_sub_dir(ctx.game_dir, ctx.raw_dir, a["archive"])).total
+        if a["got"] != a["expected"]:
+            mism.append(f"{a['archive']}(索引 {a['expected']} vs 落盘 {a['got']})")
+
+    st.data = {"archives": archives, "actual_total": actual_total,
+               "raw_by_ext": _count(ctx.raw_dir).by_ext}
+    if expected_total is not None:
+        st.data["expected_total"] = expected_total
+    if exp["unlistable"]:
+        st.data["unlistable"] = exp["unlistable"]
+        ctx.log("extract", f"  [WARN] {len(exp['unlistable'])} 个 .int 列不出条目")
+
+    st.seconds = time.time() - t0
+    if mism:
+        st.detail = "逐包对账失败：" + "；".join(mism[:3])
+        return st
+    if expected_total is not None and actual_total != expected_total:
+        st.detail = f"对账失败：索引 {expected_total} vs 落盘 {actual_total}"
+        return st
+    st.ok = True
+    if expected_total is None:
+        st.detail = f"{len(archives)} 个 .int，{actual_total} 个文件，未对账（有包列不出条目）"
+    else:
+        st.detail = (f"{len(archives)} 个 .int，{actual_total} 个文件，"
+                     f"对账 0 差（逐包 {len(archives)}/{len(archives)}）")
+    return st
+
+
+# ---------------------------------------------------------------- 阶段 3: postprocess
+
 EXTRACTORS = {
     "Ren'Py": "stage_extract_renpy",
     "KiriKiri": "stage_extract_kirikiri",
@@ -935,10 +1019,8 @@ EXTRACTORS = {
     "Yu-Ris": "stage_extract_yuris",
     "AdvHD": "stage_extract_advhd",
     "ExHIBIT": "stage_extract_exhibit",
+    "CatSystem2": "stage_extract_cs2",
 }
-
-
-# ---------------------------------------------------------------- 阶段 3: postprocess
 
 def _carve_pna(src: Path, out_dir: Path) -> int:
     """把 PNAP 容器内嵌的 PNG 逐帧 carve 到 `out_dir`，返回写出的帧数。
@@ -957,15 +1039,112 @@ def _carve_pna(src: Path, out_dir: Path) -> int:
     return len(frames)
 
 
+def _cs2_normalize_exts(raw_dir: Path) -> dict:
+    """把 raw 里的扩展名按**魔数**归一（`.KCC`→`.ogg`、`.xyz`→`.hg3`…）。
+
+    CatSystem2 的扩展名是二次混淆过的：实测 pcm_AA 的 3907 个 OggS 里只有 148 个
+    恰好还原成 `.ogg`（≈1/26，「按文件轮换、转到 0 才露真名」）。不归一的话这些文件
+    既进不了 `IMG_EXT` 也进不了 `AV_EXT`，会被 verify 当「非媒体文件」**静默放过**
+    ——`.mos` 那次的教训：少验的东西不会自己报错。
+
+    只改「认得出是什么」的文件（魔数表外的 `.bin` 一律不动，免得把数据文件改得面目全非）；
+    目标名已存在时**保留原名**并计数：改名换来的是覆盖，宁可名字难看也不能丢文件。
+    """
+    renamed = kept = 0
+    kinds: dict[str, int] = {}
+    examples: list[str] = []
+    for p in sorted(raw_dir.rglob("*")):
+        if not p.is_file():
+            continue
+        ext = cs2.sniff_ext(_head(p, 8))
+        if ext == ".bin" or ext == p.suffix.lower():
+            continue
+        kinds[ext] = kinds.get(ext, 0) + 1
+        dst = p.with_suffix(ext)
+        if dst.exists():
+            kept += 1
+            examples.append(f"{p.relative_to(raw_dir).as_posix()}: 目标 {dst.name} 已存在，保留原名")
+            continue
+        p.rename(dst)
+        renamed += 1
+        if len(examples) < 10:
+            examples.append(f"{p.name} → {dst.name}")
+    return {"renamed": renamed, "kept": kept, "kinds": kinds, "examples": examples[:10]}
+
+
+def _cs2_postprocess(ctx: Ctx) -> Stage:
+    """CatSystem2 的后处理：① 扩展名按魔数归一 ② HG-3 家族 → png/。
+
+    两步都按**魔数**走：扩展名不可信（见 `_cs2_normalize_exts`），HG-3 又必须整树扫描
+    （`_hg3_tool` 的 `IsHg3Magic()` 就是逐文件读 4 字节）。
+
+    `consumed` 记下全部 HG-3 的路径：它们转出的 PNG 才是交付物，raw 里那份不该再算一次
+    ——但**不删**（raw 要留着跟 53500 条索引对账）。排除按路径不按扩展名，理由同上。
+    """
+    st = Stage("postprocess")
+    t0 = time.time()
+    norm = _cs2_normalize_exts(ctx.raw_dir)
+    hg3 = cs2.hg3_expected_png(ctx.raw_dir)
+    if norm["renamed"] or norm["kept"]:
+        ctx.log("postprocess", f"扩展名归一: 改名 {norm['renamed']}、保留 {norm['kept']}、"
+                               f"kinds={norm['kinds']}")
+
+    if not hg3["count"]:
+        st.ok = True
+        st.data = {"tool": "扩展名归一（无 HG-3 可转）", "in": 0, "ok": 0, "fail": 0,
+                   "frames_out": 0, "renamed": norm["renamed"], "collisions": 0}
+        st.detail = f"扩展名按魔数归一 {norm['renamed']} 个；无 HG-3 文件"
+        st.seconds = time.time() - t0
+        return st
+
+    ctx.png_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        res = tb.run_csharp("hg3", [str(ctx.raw_dir), str(ctx.png_dir)],
+                            product_dir=ctx.png_dir, min_products=hg3["png_count"])
+    except Exception as exc:                     # 编译失败/找不到 csc 都得说清楚
+        st.detail = f"自带 C# 工具 _hg3_tool 无法启用：{exc}"
+        st.seconds = time.time() - t0
+        return st
+    if not res.ok:
+        st.detail = f"_hg3_tool 解码失败：{res.reason}"
+        st.seconds = time.time() - t0
+        return st
+
+    got = res.products.total
+    st.seconds = time.time() - t0
+    if got != hg3["png_count"]:
+        # rc=0、产物也不是 0，只是**比该有的少**（撞车之外的漏解）——最危险的一类，
+        # 只有拿产出数跟期望数硬比才看得见。
+        st.data = {"tool": "_hg3_tool", "in": hg3["count"], "ok": got, "fail": 0,
+                   "renamed": norm["renamed"], "expected_png": hg3["png_count"]}
+        st.detail = (f"_hg3_tool 产物数不符：期望 {hg3['png_count']} vs 落盘 {got}"
+                     f"（HG-3 文件 {hg3['count']} 个）")
+        return st
+
+    ctx.consumed = [Path(p).relative_to(ctx.raw_dir).as_posix() for p in hg3["files"]]
+    st.ok = True
+    st.data = {"tool": "_hg3_tool", "in": hg3["count"], "ok": got, "fail": 0,
+               "frames_out": got, "renamed": norm["renamed"],
+               "collisions": hg3["collisions"], "consumed": ctx.consumed}
+    st.detail = (f"扩展名按魔数归一 {norm['renamed']} 个；HG-3 {hg3['count']} 个 "
+                 f"→ png/ {got} 张")
+    if hg3["collisions"]:
+        st.detail += f"（同 stem 撞车 {hg3['collisions']} 个，已被 .png 归一化覆盖）"
+    return st
+
+
 def stage_postprocess(ctx: Ctx) -> Stage:
     """把 raw/ 里的中间格式转成 png/ 下的成品。
 
-    目前两种（都登记在 `manifest.CONVERTIBLE` 里，按**扩展名**分派，不按目录猜——坑 5）：
+    两种按**扩展名**分派（都登记在 `manifest.CONVERTIBLE` 里，不按目录猜——坑 5）：
       · `.tlg` → tlg2png 转单个 PNG
       · `.pna` → PNAP 多帧容器，逐帧 carve 成多个 PNG（AdvHD）
 
     一个 `.pna` 能产出多帧，所以 `in`（输入文件数）与写出帧数**不是一一对应**的，
     两者分开记。
+
+    CatSystem2 走单独一条：它的扩展名被引擎二次混淆过，按扩展名分派根本认不出图片，
+    只能按魔数（见 `_cs2_postprocess`）。
     """
     st = Stage("postprocess")
     t0 = time.time()
@@ -975,6 +1154,9 @@ def stage_postprocess(ctx: Ctx) -> Stage:
         st.skipped = True
         st.seconds = time.time() - t0
         return st
+
+    if ctx.engine == "CatSystem2":
+        return _cs2_postprocess(ctx)
 
     targets = sorted(p for p in ctx.raw_dir.rglob("*")
                      if p.is_file() and p.suffix.lower() in CONVERTIBLE)
@@ -1050,7 +1232,7 @@ def _final_files(ctx: Ctx) -> list[tuple[Path, str]]:
     orchestrator 与 krkr_auto_extract 必须对「交付了什么」给出同一个答案，
     两处各写一遍必然漂移。
     """
-    return manifest.iter_final_files(ctx.raw_dir, ctx.png_dir, CONVERTIBLE)
+    return manifest.iter_final_files(ctx.raw_dir, ctx.png_dir, CONVERTIBLE, ctx.consumed)
 
 
 def stage_verify(ctx: Ctx) -> Stage:
@@ -1174,7 +1356,7 @@ def build_manifest(ctx: Ctx, stages: list[Stage], engine: str | None) -> dict:
         archives.append({"name": a.get("archive"), "entries": a.get("expected"),
                          "extracted": a.get("got")})
 
-    counts_block = manifest.counts(ctx.raw_dir, ctx.png_dir, CONVERTIBLE)
+    counts_block = manifest.counts(ctx.raw_dir, ctx.png_dir, CONVERTIBLE, ctx.consumed)
     rec = manifest.reconcile(extract_data.get("expected_total"),
                              counts_block["raw"]["total"])
 
@@ -1203,8 +1385,10 @@ def build_manifest(ctx: Ctx, stages: list[Stage], engine: str | None) -> dict:
             "zero_byte": verify_data.get("zero_byte"),
             "media_minutes": verify_data.get("media_minutes"),
         },
-        postprocess=([{"tool": post_data.get("tool"), "in": post_data.get("in"),
-                       "ok": post_data.get("ok"), "fail": post_data.get("fail")}]
+        postprocess=([dict({"tool": post_data.get("tool"), "in": post_data.get("in"),
+                            "ok": post_data.get("ok"), "fail": post_data.get("fail")},
+                           **({"consumed": len(post_data["consumed"])}
+                              if post_data.get("consumed") else {}))]
                      if post_data and not post_data.get("_skipped") else []),
         png_dir=manifest.scan_png(ctx.png_dir),
         stages=[s.as_dict() for s in stages],
@@ -1231,6 +1415,7 @@ def run(ctx: Ctx) -> tuple[int, dict]:
             return 3, {"error": "detect-failed", "stages": [s.as_dict() for s in stages]}
 
     # 引擎是否已实现链路
+    ctx.engine = engine          # 后处理按引擎分派（CatSystem2 走魔数那条），必须回填
     chain_ok = engine in IMPLEMENTED
     if not chain_ok:
         st = Stage("extract", ok=False,

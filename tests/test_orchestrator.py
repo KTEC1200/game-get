@@ -1251,3 +1251,311 @@ def test_grp_main_reports_bad_ogg_head_as_failure(tmp_path):
     _write(res / "res2000.grp", _aifs_toc([(0, 12)]))
     rc = grp.main([str(res), str(tmp_path / "out")])
     assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# 11. CatSystem2 链路
+# ---------------------------------------------------------------------------
+
+
+def _cs2_exp(by_arc: dict, unlistable: list | None = None) -> dict:
+    """冒充 `cs2.expected_counts()` 的返回（真解析由 tests/test_cs2_int_extract.py 覆盖）。"""
+    return {"total": sum(by_arc.values()), "by_arc": dict(by_arc),
+            "unlistable": list(unlistable or []), "arcs": sorted(by_arc)}
+
+
+def _fake_cs2_extract(per_arc: dict, rc: int = 0, seen: list | None = None):
+    """冒充 `subprocess.run` 跑 `_cs2_int_extract.py`：按 `raw/<包名>/` 造产物。
+
+    argv 形状 = `[python, _cs2_int_extract.py, <game>, <out>, --manifest, <path>]`，
+    所以输出目录是 `cmd[3]`。
+    """
+    def _run(cmd, **_kw):
+        if seen is not None:
+            seen.append(list(cmd))
+        if rc == 0:
+            for name, n in per_arc.items():
+                dest = Path(cmd[3]) / Path(name).stem
+                for i in range(n):
+                    _write(dest / f"f{i:03d}.ogg", b"OggS" + b"x" * 8)
+        return _FakeProc(rc, "ok", "boom" if rc else "")
+    return _run
+
+
+def test_cs2_extract_reconciles_per_archive(tmp_path, monkeypatch):
+    """★核心★ 两层对账：逐包（raw/<包名> vs 索引声明）+ 总计。"""
+    ctx = _ctx(tmp_path)
+    monkeypatch.setattr(orch.cs2, "expected_counts",
+                        lambda root: _cs2_exp({"pcm_AA.int": 2, "pcm_BB.int": 3}))
+    seen: list = []
+    monkeypatch.setattr(orch.subprocess, "run",
+                        _fake_cs2_extract({"pcm_AA.int": 2, "pcm_BB.int": 3}, seen=seen))
+
+    st = orch.stage_extract_cs2(ctx)
+
+    assert st.ok, st.detail
+    assert st.data["expected_total"] == 5
+    assert st.data["actual_total"] == 5
+    assert [a["got"] for a in st.data["archives"]] == [2, 3]
+    assert "对账 0 差（逐包 2/2）" in st.detail
+    assert "2 个 .int" in st.detail
+    assert seen[0][1].endswith("_cs2_int_extract.py")
+    assert seen[0][3] == str(ctx.raw_dir)
+    assert "--manifest" in seen[0]
+
+
+def test_cs2_extract_fails_on_per_archive_mismatch_even_when_total_matches(tmp_path, monkeypatch):
+    """★核心★ 总数对得上、逐包错位 —— 只看总数就漏了，必须逐包比。"""
+    ctx = _ctx(tmp_path)
+    monkeypatch.setattr(orch.cs2, "expected_counts",
+                        lambda root: _cs2_exp({"a.int": 2, "b.int": 3}))
+    monkeypatch.setattr(orch.subprocess, "run",
+                        _fake_cs2_extract({"a.int": 3, "b.int": 2}))
+
+    st = orch.stage_extract_cs2(ctx)
+
+    assert not st.ok
+    assert "逐包对账失败" in st.detail
+    assert "a.int(索引 2 vs 落盘 3)" in st.detail
+
+
+def test_cs2_extract_fails_when_total_mismatches(tmp_path, monkeypatch):
+    """逐包都对，但 raw 里多了 [[不属任何包]] 的东西 → 总计对不上，仍然判失败。
+
+    （`expected_total` 是各包之和，所以「逐包全对」时只可能因为**多出来的散落文件**而总计不符。）
+    """
+    ctx = _ctx(tmp_path)
+    monkeypatch.setattr(orch.cs2, "expected_counts", lambda root: _cs2_exp({"a.int": 2}))
+    monkeypatch.setattr(orch.subprocess, "run", _fake_cs2_extract({"a.int": 2}))
+    _write(ctx.raw_dir / "stray.ogg", b"OggS" + b"x" * 8)      # 不属于任何包
+
+    st = orch.stage_extract_cs2(ctx)
+
+    assert not st.ok
+    assert "对账失败：索引 2 vs 落盘 3" in st.detail
+
+
+def test_cs2_extract_fails_when_tool_rc_nonzero(tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path)
+    monkeypatch.setattr(orch.cs2, "expected_counts", lambda root: _cs2_exp({"a.int": 1}))
+    monkeypatch.setattr(orch.subprocess, "run",
+                        _fake_cs2_extract({}, rc=1))
+
+    st = orch.stage_extract_cs2(ctx)
+
+    assert not st.ok
+    assert "_cs2_int_extract.py 失败（rc=1）" in st.detail
+
+
+def test_cs2_reuse_raw_still_reconciles(tmp_path, monkeypatch):
+    """`--reuse-raw` 跳的是解包，不是验收：地面真相照算、仍对账，工具不许被调用。"""
+    ctx = _ctx(tmp_path, reuse_raw=tmp_path / "elsewhere")
+    monkeypatch.setattr(orch.cs2, "expected_counts", lambda root: _cs2_exp({"a.int": 2}))
+    for i in range(2):
+        _write(ctx.raw_dir / "a" / f"f{i}.ogg", b"OggS" + b"x" * 8)
+
+    def _boom(*_a, **_kw):
+        pytest.fail("--reuse-raw 时不该再调 _cs2_int_extract.py")
+
+    monkeypatch.setattr(orch.subprocess, "run", _boom)
+    st = orch.stage_extract_cs2(ctx)
+
+    assert st.ok, st.detail
+    assert "对账 0 差" in st.detail
+
+
+def test_cs2_reuse_raw_fails_on_mismatch(tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path, reuse_raw=tmp_path / "elsewhere")
+    monkeypatch.setattr(orch.cs2, "expected_counts", lambda root: _cs2_exp({"a.int": 3}))
+    _write(ctx.raw_dir / "a" / "f0.ogg", b"OggS" + b"x" * 8)
+
+    st = orch.stage_extract_cs2(ctx)
+
+    assert not st.ok
+    assert "对账失败" in st.detail
+
+
+def test_cs2_extract_unlistable_grp_marks_unverified(tmp_path, monkeypatch):
+    """有包列不出条目 → 地面真相不完整，**不写 expected_total**、明说「未对账」。"""
+    ctx = _ctx(tmp_path)
+    monkeypatch.setattr(orch.cs2, "expected_counts",
+                        lambda root: _cs2_exp({"a.int": 2}, unlistable=["weird.int"]))
+    monkeypatch.setattr(orch.subprocess, "run", _fake_cs2_extract({"a.int": 2}))
+
+    st = orch.stage_extract_cs2(ctx)
+
+    assert st.ok, st.detail
+    assert "expected_total" not in st.data
+    assert st.data["unlistable"] == ["weird.int"]
+    assert "未对账" in st.detail
+
+
+def test_cs2_extract_no_int_is_error(tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path)
+    monkeypatch.setattr(orch.cs2, "expected_counts", lambda root: _cs2_exp({}))
+
+    st = orch.stage_extract_cs2(ctx)
+
+    assert not st.ok
+    assert "没有 KIF 格式的 .int" in st.detail
+
+
+# ---------------------------------------------------------------- 后处理
+
+def test_cs2_normalize_exts_renames_by_magic(tmp_path):
+    """`.KCC` 的 OggS 要变成 `.ogg`，认不出的 `.bin` 一律不动。"""
+    ctx = _ctx(tmp_path)
+    _write(ctx.raw_dir / "pcm" / "aa_01.ogg", b"OggS" + b"\x00" * 8)      # 名字对，不动
+    _write(ctx.raw_dir / "pcm" / "aa_02.KCC", b"OggS" + b"\x00" * 8)      # 名字骗人
+    _write(ctx.raw_dir / "pcm" / "aa_03.HLx", b"LPD\x00" + b"\x00" * 8)   # 数据文件
+    _write(ctx.raw_dir / "pcm" / "aa_04.xyz", b"\x89PNG\r\n\x1a\n" + b"\x00" * 4)
+
+    info = orch._cs2_normalize_exts(ctx.raw_dir)
+
+    assert info["renamed"] == 2
+    assert info["kept"] == 0
+    assert sorted(p.name for p in (ctx.raw_dir / "pcm").iterdir()) == \
+        ["aa_01.ogg", "aa_02.ogg", "aa_03.HLx", "aa_04.png"]
+    assert info["kinds"][".ogg"] == 1 and info["kinds"][".png"] == 1
+
+
+def test_cs2_normalize_exts_keeps_name_when_target_exists(tmp_path):
+    """★不许因为改名而覆盖已有文件★：目标是别人的名字时保留原名（宁可名字难看）。"""
+    ctx = _ctx(tmp_path)
+    _write(ctx.raw_dir / "aa.KCC", b"OggS" + b"\x00" * 8)      # 想改成 aa.ogg
+    _write(ctx.raw_dir / "aa.ogg", b"OggS" + b"\x00" * 8)      # 但它已经被占了
+
+    info = orch._cs2_normalize_exts(ctx.raw_dir)
+
+    assert info["renamed"] == 0
+    assert info["kept"] == 1
+    assert (ctx.raw_dir / "aa.KCC").is_file()      # 原文件还在
+    assert (ctx.raw_dir / "aa.ogg").read_bytes() == b"OggS" + b"\x00" * 8
+
+
+def test_cs2_postprocess_without_hg3_normalizes_and_is_not_skipped(tmp_path):
+    """没有 HG-3 要转，但扩展名归一是**真做了工作** —— `ok` 但**不算 skip**。"""
+    ctx = _ctx(tmp_path, engine="CatSystem2")
+    _write(ctx.raw_dir / "a.KCC", b"OggS" + b"\x00" * 8)
+
+    st = orch.stage_postprocess(ctx)
+
+    assert st.ok
+    assert st.skipped is False          # 归一改了一个文件，不是「无事可做」
+    assert st.data["renamed"] == 1
+    assert "无 HG-3" in st.detail
+    assert ctx.consumed == []
+
+
+def test_cs2_postprocess_converts_hg3_and_records_consumed(tmp_path, monkeypatch):
+    """★核心★ HG-3 → png/，并把 raw 里那些中间产物记进 `consumed`（按路径排除，不删）。"""
+    ctx = _ctx(tmp_path, engine="CatSystem2")
+    _write(ctx.raw_dir / "ch" / "a.hg3", b"HG-3" + b"\x00" * 8)
+    _write(ctx.raw_dir / "ch" / "a.nm3", b"HG-3" + b"\x00" * 8)   # 与 a.hg3 同 stem → 撞车
+    _write(ctx.raw_dir / "ch" / "c.ogg", b"OggS" + b"\x00" * 8)
+    seen: list = []
+    monkeypatch.setattr(orch.tb, "run_csharp", _fake_run_csharp(1, seen=seen))
+
+    st = orch.stage_postprocess(ctx)
+
+    assert st.ok, st.detail
+    assert seen[0]["key"] == "hg3"
+    assert seen[0]["argv"] == [str(ctx.raw_dir), str(ctx.png_dir)]
+    assert seen[0]["kw"]["min_products"] == 1          # 去重后的张数，不是 2
+    assert st.data["collisions"] == 1
+    assert st.data["consumed"] == ["ch/a.hg3", "ch/a.nm3"]
+    assert ctx.consumed == ["ch/a.hg3", "ch/a.nm3"]
+    assert (ctx.raw_dir / "ch" / "a.hg3").is_file()    # 不删：raw 还要对账
+    assert "HG-3 2 个 → png/ 1 张" in st.detail
+    assert "撞车 1 个" in st.detail
+
+
+def test_cs2_postprocess_fails_when_png_count_short(tmp_path, monkeypatch):
+    """★核心★ rc=0、产物也不是 0，只是比该有的少 —— 只有拿产出数跟期望数硬比才看得见。"""
+    ctx = _ctx(tmp_path, engine="CatSystem2")
+    _write(ctx.raw_dir / "a.hg3", b"HG-3" + b"\x00" * 8)
+    _write(ctx.raw_dir / "b.hg3", b"HG-3" + b"\x00" * 8)
+    monkeypatch.setattr(orch.tb, "run_csharp", _fake_run_csharp(1))
+
+    st = orch.stage_postprocess(ctx)
+
+    assert not st.ok
+    assert "产物数不符：期望 2 vs 落盘 1" in st.detail
+    assert ctx.consumed == []          # 判失败就不认领交付口径
+
+
+def test_cs2_postprocess_reports_csharp_build_failure(tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path, engine="CatSystem2")
+    _write(ctx.raw_dir / "a.hg3", b"HG-3" + b"\x00" * 8)
+    monkeypatch.setattr(orch.tb, "run_csharp",
+                        _fake_run_csharp(0, raises=orch.tb.CSharpBuildError(
+                            "编译失败：csc 路径 …；stderr：boom")))
+
+    st = orch.stage_postprocess(ctx)
+
+    assert not st.ok
+    assert "无法启用" in st.detail and "boom" in st.detail
+
+
+def test_postprocess_dispatches_to_cs2_only_for_catsystem2(tmp_path):
+    """分派按 `ctx.engine`：别的引擎不该走 CatSystem2 那条魔数路线。"""
+    ctx = _ctx(tmp_path, engine="AdvHD")
+    _write(ctx.raw_dir / "a.hg3", b"HG-3" + b"\x00" * 8)
+    st = orch.stage_postprocess(ctx)
+    assert st.ok and st.skipped                 # AdvHD 分支：无 .tlg/.pna → 跳过
+    assert "无待转格式" in st.detail
+
+
+def test_run_sets_ctx_engine_so_postprocess_can_dispatch(tmp_path, monkeypatch):
+    """★ `run()` 必须回填 `ctx.engine`：否则自动判出的引擎在后处理里是 None，分派失效。"""
+    ctx = _ctx(tmp_path)
+    monkeypatch.setattr(orch, "stage_detect",
+                        lambda c: orch.Stage("detect", ok=True, detail="CatSystem2 (score=100)",
+                                             data={"engine": "CatSystem2"}))
+    monkeypatch.setattr(orch, "stage_extract_cs2",
+                        lambda c: orch.Stage("extract", ok=True, data={"expected_total": 0}))
+    monkeypatch.setattr(orch, "stage_verify",
+                        lambda c: orch.Stage("verify", ok=True, detail="无产物",
+                                             data={"verified": True}))
+    monkeypatch.setattr(orch, "build_manifest", lambda *a, **k: {"reconcile": {"diff": 0}})
+    monkeypatch.setattr(orch.manifest, "write", lambda *a, **k: None)
+
+    rc, info = orch.run(ctx)
+
+    assert ctx.engine == "CatSystem2"
+    assert rc == 0, info
+
+
+# ---------------------------------------------------------------- manifest
+
+def test_manifest_carries_consumed_count_from_postprocess(tmp_path):
+    """被消费掉多少中间产物要进 manifest（下游看 postprocess，不会去翻 stage data）。"""
+    ctx = _ctx(tmp_path)
+    stages = [
+        _fake_stage("extract", expected_total=1),
+        _fake_stage("postprocess", tool="_hg3_tool", **{"in": 2, "ok": 2, "fail": 0},
+                    consumed=["a.hg3", "b.nm3"]),
+    ]
+    man = orch.build_manifest(ctx, stages, "CatSystem2")
+    assert man["postprocess"][0]["consumed"] == 2
+
+
+def test_manifest_omits_consumed_for_other_engines(tmp_path):
+    ctx = _ctx(tmp_path)
+    stages = [
+        _fake_stage("extract", expected_total=1),
+        _fake_stage("postprocess", tool="tlg2png", **{"in": 1, "ok": 1, "fail": 0}),
+    ]
+    man = orch.build_manifest(ctx, stages, "KiriKiri")
+    assert "consumed" not in man["postprocess"][0]
+
+
+def test_final_files_excludes_consumed(tmp_path):
+    ctx = _ctx(tmp_path)
+    _write(ctx.raw_dir / "a.hg3", b"HG-3" + b"\x00" * 8)
+    _write(ctx.raw_dir / "a.ogg", b"OggS" + b"\x00" * 8)
+    _png(ctx.png_dir / "a.png")
+    ctx.consumed = ["a.hg3"]
+    labels = [lab for _, lab in orch._final_files(ctx)]
+    assert labels == ["raw/a.ogg", "png/a.png"]
+

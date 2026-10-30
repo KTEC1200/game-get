@@ -132,7 +132,7 @@ manifest.json 契约（对账与验收的唯一地面真相）:
 
 > **进度（2026-10-30）**：orchestrator 已从 2 条链路扩到 **6 条**（Ren'Py / KiriKiri /
 > **RPG Maker** / **Yu-Ris** / **AdvHD** / **ExHIBIT**），`IMPLEMENTED` 与 `EXTRACTORS` 双表对齐，
-> 测试 **356 passed / 7 skipped**。AdvHD 顺带把 postprocess 从「只会 .tlg」改成按扩展名分派
+> 测试 **414 passed / 7 skipped**。AdvHD 顺带把 postprocess 从「只会 .tlg」改成按扩展名分派
 > （`.pna` → `_pna_carve.carve()`，一个容器出多帧），`manifest.CONVERTIBLE` 成为待转格式的唯一出处。
 > 六条链都用真实样本跑过退出码 0、对账 0 差（详见下方第 3 条）。
 > **第 2 条（csc 工作流进 toolbridge）也已完成**——`_gyu_tool`/`_hg3_tool` 源码随包、
@@ -151,7 +151,7 @@ manifest.json 契约（对账与验收的唯一地面真相）:
      新增 `python toolbridge.py csharp` 看编译状态（源码/exe/是否过期/编译器）。
    19 项新测试（14 单测 + 5 冒烟，含**用真 csc 编 hello-world 并运行**）+ 3 轮变异验证全部 CAUGHT。
 3. **验收**：12 样本全量回归（每个引擎至少一个样本走 orchestrator 全链，manifest 入案例库）。
-   - ✅ 已跑通 6/9 引擎：Ren'Py（Swipe Right 2156 条）、KiriKiri（兼职人妻 2562 条 + 507 tlg→png）、
+   - ✅ 已跑通 7/9 引擎：Ren'Py（Swipe Right 2156 条）、KiriKiri（兼职人妻 2562 条 + 507 tlg→png）、
      **RPG Maker（常識改変学園 1585 条，图片 719/719、音频 866/866、视频 0/0）**、
      **Yu-Ris（あまねぇ 8201 条，图片 3484/3484、音频 4522/4522、视频 0/0，527.7 分钟）**、
      **AdvHD（ラブラブお痴験バイト性活 9032 条 + 48 个 `.pna`→2640 帧，图片 989+677+2640=4306、
@@ -159,7 +159,11 @@ manifest.json 契约（对账与验收的唯一地面真相）:
      **ExHIBIT（夕凪荘的S级的女朋友们 11476 条 = `.gyu` 2184 + `.grp` 9185 + 散装 107，
      图片 2184/2184、音频 9291/9291、视频 1/1，媒体 1072.0 分钟，全链 930.3s 退出码 0；
      22 个加密 BGM 显式排除并在 `source.unsupported` 报出）**。
-   - ⏳ 剩 3 个引擎待接：Unity / Tyrano-Electron / CatSystem2。
+   - ⏳ 剩 2 个引擎待接：Unity / Tyrano-Electron。
+   - CatSystem2（第 7 条链路，2026-10-30）：`stage_extract_cs2` 逐包 + 总计两层对账、
+     `_cs2_postprocess` 按魔数归一扩展名 + HG-3→png/（`consumed` 按路径排除、raw 不动）；
+     **真实样本验证到 4 包**（bgm/config/fes/image00 = 1351/1351 零失败，含最大单包 image00 1163 条），
+     **全量 51 包 / 53500 条仍待跑**（8.4 GB 产物 + 内存吃紧，等机器空闲再跑，别和别的重任务并发）。
 4. **案例库**：`cases/`（JSON per 样本：指纹、判定、耗时、失败与修复）——蓝图 2.7 自愈闭环的地基。
 
 > **⭐ 接链路的正确姿势（2026-10-30 沉淀，接剩下 3 个引擎时照做）**
