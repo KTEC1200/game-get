@@ -30,8 +30,12 @@ import json
 from pathlib import Path
 
 #: 后处理会「吃掉」的中间格式 —— raw 里有、final 里没有，差额由 converted 解释。
-#: 目前只有 `.tlg`（tlg2png）；将来接 E-mote（`.pimg`/`.psb`）时加在这里。
-CONVERTIBLE: set[str] = {".tlg"}
+#: 这是**唯一出处**：orchestrator 直接引用（`CONVERTIBLE = set(manifest.CONVERTIBLE)`），
+#: 别在别处再写一份——两处各写一份，一边按 .tlg 算 final、另一边按 .tlg+.pna 算，交付数字就对不上。
+#:   · `.tlg` —— tlg2png 转 PNG
+#:   · `.pna` —— PNAP 多帧容器（AdvHD），按 PNG 签名→IEND 逐帧 carve 成多个 PNG
+#: 将来接 E-mote（`.pimg`/`.psb`）时加在这里。
+CONVERTIBLE: set[str] = {".tlg", ".pna"}
 
 MANIFEST_VERSION = 1
 

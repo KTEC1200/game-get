@@ -102,7 +102,7 @@ def _repo_root() -> Path:
 # 这里的每一项都必须对应**真实存在的工具与真实存在的参数**（2026-10-30 逐个核过
 # `--help`/docstring/源码）。凭想象写参数等于给用户一条必然失败的命令。
 
-IMPLEMENTED_CHAINS = ("Ren'Py", "KiriKiri", "RPG Maker", "Yu-Ris")
+IMPLEMENTED_CHAINS = ("Ren'Py", "KiriKiri", "RPG Maker", "Yu-Ris", "AdvHD")
 
 
 def build(rep: Any) -> Plan | None:
@@ -259,43 +259,25 @@ def _rpgmaker(engine: str, game: Path, archives: dict, out: Path) -> Plan:
 
 def _advhd(engine: str, game: Path, archives: dict, out: Path) -> Plan:
     arcs = archives.get(".arc", [])
-    argv: list[str] = []
-    p = Plan(
-        engine=engine,
-        extractor="GARbro.Console.exe",
-        argv=argv,
-        kind="per_archive",
-        implemented=False,
-        reason="GARbro 原生支持 .arc，一个工具通吃；`-x` 就地解到 cwd，所以必须逐包换 cwd",
-        notes=[
-            "**.arc 列表输出无表头**（xp3 也没有）：条目数 = 非空行数，别用 len(lines)-1",
-            "对账地面真相是包头 u32 条目数",
-        ],
+    pnas = sorted(game.rglob("*.pna"))
+    p = _plan_orchestrator(
+        engine, game, archives, out,
+        fallback_tool="GARbro.Console.exe",
+        fallback_argv=["GARbro.Console.exe", "-x", str(arcs[0])] if arcs else [],
+        fallback_reason="单工具兜底：GARbro 原生支持 .arc，一个工具通吃；"
+                        "`-x` 就地解到 cwd，所以必须逐包换 cwd",
     )
+    p.notes.extend([
+        "**.arc 列表输出无表头**（xp3 也没有）：条目数 = 非空行数，别用 len(lines)-1",
+        "对账地面真相是 GARbro 列出的条目数 + 散装 .dat 个数（.dat 改成 .wmv 才算视频）",
+    ])
     if arcs:
-        p.notes.append(f"找到 {len(arcs)} 个 .arc，逐包跑（每个包输出到 <out>/<包名>/）")
-        p.extras.append(Plan(
-            engine=engine,
-            extractor="GARbro.Console.exe",
-            argv=["GARbro.Console.exe", "-x", str(arcs[0])],
-            kind="per_archive",
-            implemented=False,
-            reason=f"示例：第一个包。cwd 必须是 {out / arcs[0].stem}",
-        ))
+        p.notes.append(f"找到 {len(arcs)} 个 .arc，orchestrator 会逐包提取到 raw/<包名>/")
     else:
         p.notes.append("没找到 .arc —— 检查游戏目录层级")
-
-    # .pna 是 PNAP 多帧容器，GARbro 不认，需要单独 carve
-    pnas = sorted(game.rglob("*.pna"))
     if pnas:
-        p.extras.append(Plan(
-            engine=engine,
-            extractor="_pna_carve.py",
-            argv=_py("_pna_carve.py") + [str(pnas[0].parent), str(out / "pna_frames")],
-            kind="whole_dir",
-            implemented=False,
-            reason=f"另有 {len(pnas)} 个 .pna（PNAP 多帧容器），GARbro 不认，按 PNG 签名逐帧 carve",
-        ))
+        p.notes.append(f"另有 {len(pnas)} 个 .pna（PNAP 多帧容器），GARbro 不认；"
+                       f"orchestrator 的 postprocess 会逐帧 carve 成 png/")
     return p
 
 

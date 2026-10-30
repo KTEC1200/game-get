@@ -40,13 +40,18 @@
 - **编排器：`orchestrator.py`**（2026-10-29，软件化第 3 步，**主入口**）—— 一条命令跑完
   `detect → extract → postprocess → verify → manifest`：
   `python orchestrator.py <游戏目录> --out <输出目录> [--allow-gui] [--reuse-raw DIR] [--no-verify] [--dry-run]`。
-  已接 **Ren'Py / KiriKiri / RPG Maker / Yu-Ris 四条链路**（其余引擎判得出就退出码 2，不假装成功）。
+  已接 **Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD 五条链路**（其余引擎判得出就退出码 2，不假装成功）。
   退出码：`0` 全通过 / `1` 阶段失败或对账有差 / `2` 引擎判出但无链路 / `3` 未命中。
-  输出 `raw/`（原始）+ `png/`（tlg 转出的成品）+ `manifest.json`（counts 分 raw/final/converted 三段）
+  输出 `raw/`（原始）+ `png/`（tlg/pna 转出的成品）+ `manifest.json`（counts 分 raw/final/converted 三段）
   + `_work/*.log`。**对账一律以索引为地面真相，diff≠0 即失败**；`--reuse-raw` 跳解包但不跳对账。
   实测：`Swipe Right` 2156 条目 0 差、`兼职人妻` 2562 条目 0 差 + 507 tlg→png（图片 902/902）、
   `常識改変学園` 1585 条目 0 差（图片 719/719、音频 866/866、视频 0/0）、
-  `あまねぇ` 8201 条目 0 差（图片 3484/3484、音频 4522/4522、527.7 分钟）。
+  `あまねぇ` 8201 条目 0 差（图片 3484/3484、音频 4522/4522、527.7 分钟）、
+  `ラブラブお痴験バイト性活` 9032 条目 0 差 + 48 个 `.pna`→2640 帧
+  （图片 4306/4306、音频 7031/7031、视频 9/9，媒体 857.4 分钟，全链 578.8s 退出码 0）。
+  **待转格式按扩展名分派**：`.tlg`→`tlg2png`、`.pna`→`_pna_carve.carve()`；两者都列在
+  `manifest.CONVERTIBLE`（**唯一出处**，orchestrator 直接引用，别在两边各写一份，否则
+  「交付了多少」两边数字对不上）。一个 `.pna` 出多帧，所以 postprocess 另记 `frames_out`。
   **接新引擎的三条硬规矩**：① 地面真相只写一份（RPG Maker 的 `_rpgmv_decrypt.iter_candidates()`、
   Yu-Ris 的 `_ypf_extract.read_index()`，orchestrator 直接调，别抄第二份）；
   ② `EXTRACTORS` 存**函数名**不存函数对象（存对象会在 import 时焊死引用，monkeypatch 失效）；
@@ -111,7 +116,7 @@ Ren'Py 侧：`_rpa_stage` / `_rpa_patch_stage` / `_rpa_arch.txt` / `_rpa_patch.t
 - 引擎判定已实测正确 **9/9**（1 Unity + 8 KiriKiri）；回归样例 `_fixtures/`（用 `make_fixtures.py` 重建）**6/6 通过**（2026-10-14 复跑确认）。
   2026-10-30 起引擎规则扩到 **9 个**（Unity / KiriKiri / Ren'Py / Tyrano-Electron / RPG Maker /
   AdvHD / Yu-Ris / ExHIBIT / CatSystem2），12 个真实样本里 11 个在场全部判对（`My Best Deal` 已从磁盘消失）；
-  `tests/golden_detect.json` 逐字锁定 engine/score/evidence/facts 四个维度，**测试 304 passed / 5 skipped**。
+  `tests/golden_detect.json` 逐字锁定 engine/score/evidence/facts 四个维度，**测试 318 passed / 5 skipped**。
 - 用户的 `D:\HY\pork社` 7 个游戏经 **GUI 实测全部可静态提取**。
 - ✅ **三条产出线（视频 / 图片 / 音频）全部有实测验证过的样本** —— 见下表。
 
@@ -297,10 +302,10 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
 （含 `counts()` 两目录形态与 `counts_flat()` 落盘即成品形态）→ 4 个解包器全部接上 `--manifest` ✅
 → `rules/engines.json` 指纹外置 ✅（规则表 + 解释器，`rules/__init__.py`）→ `planner.py` ✅
 （`dispatch --plan` 输出「建议 extractor + 参数」）。
-**测试 304 passed / 5 skipped**；`python tests/make_golden.py --check` 零漂移。
+**测试 318 passed / 5 skipped**；`python tests/make_golden.py --check` 零漂移。
 **软件化四阶段（software-plan §3）里阶段 1 已完成**；**阶段 2 进行中**：orchestrator 已接
-**4 条链路**（Ren'Py / KiriKiri / RPG Maker / Yu-Ris），四条链都用真实样本跑过退出码 0、对账 0 差。
-下一步：① 接剩下 5 个引擎（Unity / Tyrano-Electron / AdvHD / EXHIBIT / CatSystem2）
+**5 条链路**（Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD），五条链都用真实样本跑过退出码 0、对账 0 差。
+下一步：① 接剩下 4 个引擎（Unity / Tyrano-Electron / EXHIBIT / CatSystem2）
 ② csc 黑盒工作流产品化进 toolbridge ③ `cases/` 案例库。
 
 ## 引擎分支要点（实测）
@@ -349,7 +354,17 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
   别套 `len(lines)-1`，否则每包差 1（2026-10-29 实测纠正：`兼职人妻` 实为 2562 条、`温泉蒸汽人妻` 3425 条，
   旧文档记的 2561/3424 就是这个口径错误的产物）。用 `toolbridge.garbro_list()` 拿条目数可避坑。。
 - `.dat`（OP/ED）= ASF/WMV（头 GUID `30 26 b2 75…`）→ 复制改 `.wmv` 即可。
-- `.pna` = PNAP 多帧容器 → `_pna_carve.py` carve；`.mos` 内容就是 PNG，按 PNG 验收。
+- `.pna` = PNAP 多帧容器 → `_pna_carve.py` carve（orchestrator 已接进 postprocess；
+  `.pna` 与 `.tlg` 同列 `manifest.CONVERTIBLE`——**唯一出处**，48 个 `.pna` → 2640 帧，
+  一个容器出多帧所以 postprocess 另记 `frames_out`，不能拿「输入文件数」当产出数）。
+- `.mos` 内容就是 PNG（2026-10-30 实测 677/677 全部以 `89 50 4E 47 0D 0A 1A 0A` 开头），
+  **必须列进 orchestrator 的 `IMG_EXT`**：否则它落进 `verify` 的 `nonmedia` 分支**被静默放过**、
+  verify 照样报「失败 0」，交付清单凭空少验 677 张图（这是全链跑完才发现的口径漏洞）。
+  该作图片口径 = 989 png + 677 mos + 2640 PNA 帧 = **4306**（前两项 Pillow 逐个过）；
+  2026-10-30 全链复跑已确认 **4306/4306 零失败**——没列进 `IMG_EXT` 时是 3629/3629，
+  677 张图凭空消失而失败数仍是 0（口径漏洞是无声的）。
+  两个附带事实：`.mos` 的真实扩展名是**大写 `.MOS`**，且全在 `raw/<arc名>/` 子目录里
+  （`raw/` 顶层只有 9 个 `.wmv` + 18 个子目录），清点必须 `rglob`。
 
 ### Yu-Ris（`あまねぇ` 实测，2026-10-26）
 - 判定：`pac/*.ypf`（魔数 `YPF\0`）+ `yscfg.dat` + 存档 `.sd`（`YSSD`）+ `エンジン設定.exe`。
@@ -432,6 +447,22 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
   制造出「工具失败」的假象（我自己就因此误判过一次，见 §8.2）。
 - **⭐ 本环境的 Bash 工具会吃掉反斜杠转义**（`\\`、`\xNN` 都会被处理，heredoc 和 `-c` 内联代码都会中招）。
   → 含正则/转义的代码**一律先用 Write 写成 .py 文件再执行**，绝不内联。（2026-10-25 SPITE 期间实测踩坑）
+- **⭐ 试跑/验证的产物一律落 `<本仓库>/_extracted/<游戏名>/`，不许散到盘根**（2026-10-30 用户提出）。
+  我曾把 orchestrator 的 `--out` 手填成 `D:\_orch_advhd`、`D:\_orch_yuris`、`D:\_orch_rpgmv(2)`、
+  `D:\_orch_kenmin`、`D:\_orch_swipe`，六份合计 **8.4 GiB 躺在 D 盘根目录**，用户先发现我才知道。
+  当时的动机是对的（不用 Git-Bash `/tmp`——它会映射到随机 `dsh-win-bash-*` 目录、路径不可复现；
+  也不把 GB 级产物塞进 git 仓库），**但落点选错了**：`_extracted/` 已进 `.gitignore`，
+  `planner.py` 生成的提取计划里写死的就是这个路径，直接用它即可，不需要另找地方。
+- **跑长任务（>几分钟）用 `python -u`，且别只盯 stdout**：stdout 被块缓冲，跑十分钟日志文件可能还是 0 字节；
+  `orchestrator.py` 会实时写 `<输出目录>/_work/<阶段>.log`，看进度看那里。
+- **⭐ 前台 shell 有 5 分钟硬上限**（2026-10-30 实测：`timeoutMs: 1500000` 仍在 **300000 ms** 被砍，
+  报 `[timed out after 300000ms; the persistent shell was stopped]`、exit 124）→ **超过 5 分钟的活
+  不能拿前台命令硬跑**（AdvHD 的 verify 阶段约 514s，正好卡死）。两条实测结论：
+  ① 自己 `subprocess.Popen(..., creationflags=DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP)` 起的
+  「独立」进程**也逃不掉**——它仍在会话的进程树里被一起清掉，实测跑到 `verify [2000/11624]` 就消失，
+  留下「raw/ 有、png/ 和 manifest.json 没有」的半截产物；
+  ② **正解是用工具自带的 `run_in_background: true`**（harness 自己管的后台 job），拿 job id 后用
+  `job_output` 收；长任务期间**不要反复轮询**同一条命令（用户 2026-10-30 明确要求「一次性搞了」）。
 
 ## 环境
 

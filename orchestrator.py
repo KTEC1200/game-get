@@ -49,6 +49,7 @@ import rpa_tool                        # noqa: E402
 import toolbridge as tb                # noqa: E402
 import _rpgmv_decrypt as rpgmv         # noqa: E402  （复用它的筛选常量，别抄第二份）
 import _ypf_extract as ypf             # noqa: E402  （复用它的表解析，别抄第二份）
+import _pna_carve as pna               # noqa: E402  （复用它的 carve()，别抄第二份）
 
 if sys.platform == "win32":
     for _s in (sys.stdout, sys.stderr):
@@ -60,18 +61,22 @@ if sys.platform == "win32":
 
 # ---------------------------------------------------------------- 常量
 
-#: 后处理会"吃掉"的中间格式 —— raw 里有、final 里没有，差额由 manifest.converted 解释
-CONVERTIBLE = {".tlg"}
+#: 后处理会"吃掉"的中间格式 —— raw 里有、final 里没有，差额由 manifest.converted 解释。
+#: **唯一出处是 `manifest.CONVERTIBLE`**，这里只做引用（两处各写一份必然漂移）。
+CONVERTIBLE = set(manifest.CONVERTIBLE)
 
-#: 图片类（Pillow 能验的）；与 _verify_media.py 保持一致
-IMG_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif", ".tga"}
+#: 图片类（Pillow 能验的）；与 `_verify_media.py` 一致，**外加 `.mos`**。
+#: `.mos` 是 AdvHD 的图片容器，内容就是裸 PNG：2026-10-30 实测 `ラブラブお痴験バイト性活`
+#: 677/677 全部以 PNG 魔数 `89 50 4e 47 0d 0a 1a 0a` 开头（verified-findings §13）。
+#: 不列进来它们会被当「非媒体文件」静默放过，交付清单里就少验 677 张图。
+IMG_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif", ".tga", ".mos"}
 
 #: 只有这些才送 ffprobe（其余送进去只会得到 Invalid data，把结果搅浑）
 AV_EXT = {".mp4", ".mkv", ".avi", ".webm", ".mov", ".wmv", ".flv", ".mpg", ".mpeg",
           ".mp3", ".ogg", ".wav", ".opus", ".flac", ".m4a", ".aac", ".wma"}
 
 #: 已实现完整链路的引擎（其余判得出来但没链路 → 退出码 2）
-IMPLEMENTED = ("Ren'Py", "KiriKiri", "RPG Maker", "Yu-Ris")
+IMPLEMENTED = ("Ren'Py", "KiriKiri", "RPG Maker", "Yu-Ris", "AdvHD")
 
 
 # ---------------------------------------------------------------- 结构
@@ -524,6 +529,148 @@ def stage_extract_yuris(ctx: Ctx) -> Stage:
     return st
 
 
+# ---------------------------------------------------------------- AdvHD
+
+def _advhd_arcs(game_dir: Path) -> list[Path]:
+    """顶层 `*.arc` 优先，顶层没有才递归（与 `_kirikiri_xp3` 同一策略）。"""
+    top = sorted(p for p in game_dir.glob("*.arc") if p.is_file())
+    if top:
+        return top
+    return sorted(p for p in game_dir.rglob("*.arc") if p.is_file())
+
+
+def _advhd_loose_movies(game_dir: Path) -> list[tuple[Path, Path]]:
+    """游戏根目录的散装 `.dat`（OP/ED）= ASF/WMV 裸流，返回 `[(源, 目标)]`。
+
+    只扫**顶层**：递归会把 `save/`、配置目录里的 `.dat` 一并当视频抓进来。
+    目标一律改成 `.wmv` —— `.dat` 不在 `AV_EXT` 白名单里，verify 会当「非媒体文件」
+    放过去，交付清单里就留一个谁都验不了的 `.dat`（历史 `_advhd_run.py` 也是复制成 `.wmv`，
+    头 GUID `30 26 b2 75` 即 ASF，实测成立）。
+    """
+    return [(p, p.with_suffix(".wmv")) for p in sorted(game_dir.glob("*.dat")) if p.is_file()]
+
+
+def stage_extract_advhd(ctx: Ctx) -> Stage:
+    """AdvHD：GARbro 逐 `.arc` 提取 + 散装 `.dat` → `.wmv`，按索引条目数对账。
+
+    地面真相 = `tb.garbro_list()` 的条目数（GARbro 列表**无表头**，这条口径由 toolbridge
+    统一处理，**别在这里另写解析**——历史上 `len(lines)-1` 让每包少算 1，对账永远不过）
+    + 散装 `.dat` 的个数（每个 `.dat` 必然产出且只产出一个 `.wmv`）。
+
+    `.pna`（PNAP 多帧容器）GARbro 不认、原样吐出，交给 postprocess 逐帧 carve。
+    """
+    st = Stage("extract")
+    t0 = time.time()
+    arcs = _advhd_arcs(ctx.game_dir)
+    movies = _advhd_loose_movies(ctx.game_dir)
+    if not arcs and not movies:
+        st.detail = "既没有 .arc 也没有 .dat"
+        st.seconds = time.time() - t0
+        return st
+
+    if ctx.reuse_raw:
+        # 复用模式：不重新解包，但**仍然算地面真相** —— 对账不能因为跳步就失效。
+        st.skipped = True
+        st.ok = True
+        st.detail = f"复用已有 raw: {ctx.reuse_raw}"
+        actual = _count(ctx.raw_dir).total
+        st.data = {"reused_from": str(ctx.reuse_raw), "actual_total": actual,
+                   "loose_movies": len(movies)}
+        expected, listable, per_archive = _advhd_expected(arcs, reuse_raw=ctx.raw_dir,
+                                                          movie_n=len(movies))
+        st.data["archives"] = per_archive
+        if listable:
+            st.data["expected_total"] = expected
+            if actual != expected:
+                st.detail = f"复用产物对账失败：索引 {expected} vs 落盘 {actual}"
+                st.ok = False
+                st.seconds = time.time() - t0
+                return st
+            st.detail = f"复用已有 raw，对账 {expected} == {actual}"
+        st.seconds = time.time() - t0
+        return st
+
+    # 1) 散装 .dat → raw/*.wmv（在 .arc 之前做，目录先建好）
+    ctx.raw_dir.mkdir(parents=True, exist_ok=True)
+    for src, dst_name in movies:
+        dst = ctx.raw_dir / dst_name.name
+        if not dst.exists():
+            shutil.copy2(src, dst)
+        ctx.log("extract", f"[视频] {src.name} ({src.stat().st_size / 1024 / 1024:.1f}MB)"
+                           f" → raw/{dst.name}")
+
+    # 2) 逐 .arc 提取，产出落到 raw/<stem>/
+    per_archive: list[dict] = []
+    expected_total = len(movies)
+    listable = True
+    for arc in arcs:
+        ok_list, n_idx, out = tb.garbro_list(arc)
+        if not ok_list:
+            listable = False
+            per_archive.append({"archive": arc.name, "expected": None, "got": None,
+                                "listable": False})
+            ctx.log("extract", f"  {arc.name}: 列不出条目（{out.strip()[:100]}）")
+            continue
+        expected_total += n_idx
+        dest = ctx.raw_dir / arc.stem
+        res = tb.garbro_extract(arc, dest)
+        ctx.log("extract", f"$ garbro -x {arc.name}\n{res.summary()}")
+        got = _count(dest).total
+        per_archive.append({"archive": arc.name, "expected": n_idx, "got": got,
+                            "rc": res.returncode, "ok": res.ok})
+        if not res.ok:
+            st.detail = f"{arc.name}: GARbro 提取失败（{res.reason}）"
+            st.data = {"archives": per_archive}
+            st.seconds = time.time() - t0
+            return st
+
+    actual_total = _count(ctx.raw_dir).total
+    st.data = {"mode": "static", "archives": per_archive,
+               "loose_movies": len(movies), "actual_total": actual_total}
+    st.seconds = time.time() - t0
+    if not listable:
+        # 有包列不出 = 没有完整地面真相，明说，别假装对过账
+        st.ok = True
+        st.data["reason"] = "有 .arc 列不出条目，无完整地面真相，未对账"
+        st.detail = (f"{len(arcs)} 个 arc 中有的列不出条目，落盘 {actual_total} 个文件，未对账")
+        return st
+    st.data["expected_total"] = expected_total
+    if actual_total != expected_total:
+        st.detail = f"对账失败：索引 {expected_total} vs 落盘 {actual_total}"
+        return st
+    st.ok = True
+    st.detail = (f"{len(arcs)} 个 arc + {len(movies)} 个 dat，"
+                 f"{actual_total} 个文件，对账 0 差")
+    return st
+
+
+def _advhd_expected(arcs: list[Path], *, reuse_raw: Path | None = None,
+                    movie_n: int = 0) -> tuple[int, bool, list[dict]]:
+    """算 AdvHD 的期望落盘数：`arcs` 条目数之和 + 散装 `.dat` 个数。
+
+    返回 `(期望总数, 是否全部可列, 逐包明细)`。抽出来是因为正常路径与 `--reuse-raw`
+    路径都要算同一件事，抄两份必然漂移。
+    """
+    expected = movie_n
+    listable = True
+    per_archive: list[dict] = []
+    for arc in arcs:
+        ok, n_idx, out = tb.garbro_list(arc)
+        if not ok:
+            listable = False
+            per_archive.append({"archive": arc.name, "expected": None, "got": None,
+                                "listable": False})
+            continue
+        expected += n_idx
+        got = None
+        if reuse_raw is not None:
+            dest = reuse_raw / arc.stem
+            got = _count(dest).total if dest.is_dir() else 0
+        per_archive.append({"archive": arc.name, "expected": n_idx, "got": got,
+                            "listable": True})
+    return expected, listable, per_archive
+
+
 #: 引擎 → extract 阶段**函数名**（新增引擎只需在这里加一行 + 扩 IMPLEMENTED）。
 #: 存名字而不是函数对象：存对象会在 import 时把引用焊死，测试 monkeypatch 模块属性就失效了
 #: （实测踩过：3 个 run() 退出码测试全红），也会让热重载拿不到新实现。
@@ -532,12 +679,39 @@ EXTRACTORS = {
     "KiriKiri": "stage_extract_kirikiri",
     "RPG Maker": "stage_extract_rpgmaker",
     "Yu-Ris": "stage_extract_yuris",
+    "AdvHD": "stage_extract_advhd",
 }
 
 
 # ---------------------------------------------------------------- 阶段 3: postprocess
+
+def _carve_pna(src: Path, out_dir: Path) -> int:
+    """把 PNAP 容器内嵌的 PNG 逐帧 carve 到 `out_dir`，返回写出的帧数。
+
+    复用 `_pna_carve.carve()`（纯函数，**单一实现**）：PNG 自定界——8 字节签名起始、
+    `IEND` chunk 结束，所以不需要懂 PNAP 的帧索引（AdvHD 的 `.pna` 就是 "PNAP" 头 +
+    帧索引 + 若干标准 PNG，GARbro 不认、原样吐出）。
+    帧名沿用 `_pna_carve.py` 的 `__fNNN` 约定，两处产物能对得上。
+    """
+    frames = pna.carve(src.read_bytes())
+    if not frames:
+        return 0
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for n, fr in enumerate(frames):
+        (out_dir / f"{src.stem}__f{n:03d}.png").write_bytes(fr)
+    return len(frames)
+
+
 def stage_postprocess(ctx: Ctx) -> Stage:
-    """把 raw/ 里的 .tlg 转成 png/ 下的 PNG。没有 .tlg 就是空操作。"""
+    """把 raw/ 里的中间格式转成 png/ 下的成品。
+
+    目前两种（都登记在 `manifest.CONVERTIBLE` 里，按**扩展名**分派，不按目录猜——坑 5）：
+      · `.tlg` → tlg2png 转单个 PNG
+      · `.pna` → PNAP 多帧容器，逐帧 carve 成多个 PNG（AdvHD）
+
+    一个 `.pna` 能产出多帧，所以 `in`（输入文件数）与写出帧数**不是一一对应**的，
+    两者分开记。
+    """
     st = Stage("postprocess")
     t0 = time.time()
     if not ctx.raw_dir.is_dir():
@@ -547,42 +721,68 @@ def stage_postprocess(ctx: Ctx) -> Stage:
         st.seconds = time.time() - t0
         return st
 
-    tlgs = sorted(p for p in ctx.raw_dir.rglob("*")
-                  if p.is_file() and p.suffix.lower() in CONVERTIBLE)
-    if not tlgs:
+    targets = sorted(p for p in ctx.raw_dir.rglob("*")
+                     if p.is_file() and p.suffix.lower() in CONVERTIBLE)
+    if not targets:
         st.ok = True
         st.skipped = True
-        st.detail = "无 .tlg，无需后处理"
+        st.detail = "无待转格式（.tlg/.pna），无需后处理"
         st.seconds = time.time() - t0
         return st
 
     ctx.png_dir.mkdir(parents=True, exist_ok=True)
     ok_n = fail_n = 0
+    frames_out = 0
+    kinds: dict[str, int] = {}
     fails: list[str] = []
-    for i, src in enumerate(tlgs, 1):
+    for i, src in enumerate(targets, 1):
         rel = src.relative_to(ctx.raw_dir)
-        dst = ctx.png_dir / rel.with_suffix(".png")
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        res = tb.tlg2png(src, dst)
-        if res.ok:
-            ok_n += 1
-        else:
+        kind = src.suffix.lower()
+        kinds[kind] = kinds.get(kind, 0) + 1
+        if kind == ".tlg":
+            dst = ctx.png_dir / rel.with_suffix(".png")
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            res = tb.tlg2png(src, dst)
+            if res.ok:
+                ok_n += 1
+                frames_out += 1
+            else:
+                fail_n += 1
+                fails.append(f"{rel}: {res.reason}")
+        elif kind == ".pna":
+            try:
+                n = _carve_pna(src, ctx.png_dir / rel.parent)
+            except OSError as exc:
+                n = 0
+                fails.append(f"{rel}: 读取失败 {exc}")
+            else:
+                if n <= 0:
+                    fails.append(f"{rel}: carve 出 0 帧（不是 PNAP 或没有内嵌 PNG）")
+            if n > 0:
+                ok_n += 1
+                frames_out += n
+            else:
+                fail_n += 1
+        else:  # pragma: no cover - CONVERTIBLE 只有上面两种
             fail_n += 1
-            fails.append(f"{rel}: {res.reason}")
+            fails.append(f"{rel}: 不认识的可转换格式")
         if i % 200 == 0:
-            ctx.log("postprocess", f"  [{i}/{len(tlgs)}] ok={ok_n} fail={fail_n}")
-    ctx.log("postprocess", f"tlg2png: total={len(tlgs)} ok={ok_n} fail={fail_n}")
+            ctx.log("postprocess", f"  [{i}/{len(targets)}] ok={ok_n} fail={fail_n}")
+    ctx.log("postprocess", f"convert: total={len(targets)} ok={ok_n} fail={fail_n} "
+                           f"frames={frames_out}")
     for f in fails[:50]:
         ctx.log("postprocess", "  FAIL " + f)
 
-    st.data = {"tool": "tlg2png", "in": len(tlgs), "ok": ok_n, "fail": fail_n,
+    st.data = {"tool": "tlg2png/_pna_carve", "in": len(targets), "ok": ok_n,
+               "fail": fail_n, "frames_out": frames_out, "kinds": kinds,
                "fail_examples": fails[:10]}
     st.seconds = time.time() - t0
     if fail_n:
-        st.detail = f"{fail_n}/{len(tlgs)} 个 tlg 转换失败"
+        st.detail = f"{fail_n}/{len(targets)} 个待转文件转换失败"
         return st
     st.ok = True
-    st.detail = f"{ok_n} 个 tlg → png"
+    by_kind = "、".join(f"{n} 个 {k}" for k, n in sorted(kinds.items()))
+    st.detail = f"{by_kind} → png/ 共 {frames_out} 个成品"
     return st
 
 

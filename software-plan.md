@@ -130,9 +130,11 @@ manifest.json 契约（对账与验收的唯一地面真相）:
 
 ### 阶段 2：引擎插件收编（M1 → M2）
 
-> **进度（2026-10-30）**：orchestrator 已从 2 条链路扩到 **4 条**（Ren'Py / KiriKiri /
-> **RPG Maker** / **Yu-Ris**），`IMPLEMENTED` 与 `EXTRACTORS` 双表对齐，测试 304 passed / 5 skipped。
-> 四条链都用真实样本跑过退出码 0、对账 0 差（详见下方第 3 条）。
+> **进度（2026-10-30）**：orchestrator 已从 2 条链路扩到 **5 条**（Ren'Py / KiriKiri /
+> **RPG Maker** / **Yu-Ris** / **AdvHD**），`IMPLEMENTED` 与 `EXTRACTORS` 双表对齐，
+> 测试 **318 passed / 5 skipped**。AdvHD 顺带把 postprocess 从「只会 .tlg」改成按扩展名分派
+> （`.pna` → `_pna_carve.carve()`，一个容器出多帧），`manifest.CONVERTIBLE` 成为待转格式的唯一出处。
+> 五条链都用真实样本跑过退出码 0、对账 0 差（详见下方第 3 条）。
 
 1. 把剩余 extractor 逐个改造成契约插件（每个 ≤ 半天）：`_cs2_int_extract`（去 pycryptodome 硬依赖或
    随包带二进制）、`_ypf_extract`、`_pna_carve`、`asar_tool` 系、`_gyu_tool`（C# 源码随包 + csc
@@ -140,10 +142,12 @@ manifest.json 契约（对账与验收的唯一地面真相）:
 2. **csc 黑盒工作流产品化**：`_gyu_tool` 模式（源码随包、首启 csc 编译、失败给明确提示）写进
    toolbridge，ExHIBIT/HG-3 两处复用。
 3. **验收**：12 样本全量回归（每个引擎至少一个样本走 orchestrator 全链，manifest 入案例库）。
-   - ✅ 已跑通 4/9 引擎：Ren'Py（Swipe Right 2156 条）、KiriKiri（兼职人妻 2562 条 + 507 tlg→png）、
+   - ✅ 已跑通 5/9 引擎：Ren'Py（Swipe Right 2156 条）、KiriKiri（兼职人妻 2562 条 + 507 tlg→png）、
      **RPG Maker（常識改変学園 1585 条，图片 719/719、音频 866/866、视频 0/0）**、
-     **Yu-Ris（あまねぇ 8201 条，图片 3484/3484、音频 4522/4522、视频 0/0，527.7 分钟）**。
-   - ⏳ 剩 5 个引擎待接：Unity / Tyrano-Electron / AdvHD / ExHIBIT / CatSystem2。
+     **Yu-Ris（あまねぇ 8201 条，图片 3484/3484、音频 4522/4522、视频 0/0，527.7 分钟）**、
+     **AdvHD（ラブラブお痴験バイト性活 9032 条 + 48 个 `.pna`→2640 帧，图片 989+677+2640=4306、
+     音频 7031/7031、视频 9/9，媒体 857.4 分钟）**。
+   - ⏳ 剩 4 个引擎待接：Unity / Tyrano-Electron / ExHIBIT / CatSystem2。
 4. **案例库**：`cases/`（JSON per 样本：指纹、判定、耗时、失败与修复）——蓝图 2.7 自愈闭环的地基。
 
 > **⭐ 接链路的正确姿势（2026-10-30 沉淀，接剩下 5 个引擎时照做）**
@@ -156,6 +160,13 @@ manifest.json 契约（对账与验收的唯一地面真相）:
 >   明明能列出条目却把「没对账」当结果），两条新链路都带 `reuse` 对账测试。
 > - **双表必须同步**：`IMPLEMENTED`（orchestrator）与 `IMPLEMENTED_CHAINS`（planner）不一致时，
 >   `test_implemented_flag_matches_orchestrator` 会红——这是设计好的防漂移护栏，别绕过它改测试。
+> - **验收口径本身也要防漏**：AdvHD 的 `.mos` 是「内容就是 PNG、扩展名不认识」，没进 `IMG_EXT` 时
+>   verify 把它归进 `nonmedia` **静默放过**、还照样报「失败 0」——**验收器漏掉一类文件是无声的**。
+>   接新引擎时对着该引擎的扩展名清单逐条问「它现在会落进哪个分支」，别只看失败数是不是 0。
+> - **超过 5 分钟的验证跑不进前台 shell**（本环境硬上限 300000 ms，`DETACHED_PROCESS` 也逃不掉）：
+>   用 `run_in_background: true` 起后台 job 再 `job_output` 收；实在跑不完全链，退而求其次是
+>   **对单条口径做定向实测**（如 677 个 `.mos` 直接过一遍 Pillow 全绿），并在报告里写明
+>   这是定向验证、不是全链结论。
 
 
 ### 阶段 3：Windows 软件壳（M2 → M3）

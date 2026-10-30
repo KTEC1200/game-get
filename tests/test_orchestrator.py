@@ -293,6 +293,29 @@ def test_verify_nonmedia_files_are_counted_not_failed(tmp_path):
     assert st.data["nonmedia"] == 2
 
 
+def test_verify_mos_is_treated_as_image(tmp_path):
+    """AdvHD 的 `.mos` 内容就是**裸 PNG**（2026-10-30 实测 677/677 全部以
+    `89 50 4E 47 0D 0A 1A 0A` 开头），所以必须按图片验收。
+
+    为什么不放进 `IMG_EXT` 很危险：`.mos` 会落进 `nonmedia` 分支**被静默放过**，
+    而 verify 照样报「失败 0」——交付清单凭空少验 677 张图，且从输出上看不出来。
+    这是 `ラブラブお痴験バイト性活` 全链跑完后才发现的验收口径漏洞。
+    """
+    ctx = _ctx(tmp_path)
+    ctx.raw_dir.mkdir(parents=True, exist_ok=True)
+    # 注意不能直接 `_png(ctx.raw_dir / "cg.mos")`：Pillow 的 `save()` 靠扩展名
+    # 选格式，`.mos` 不认识会 ValueError。真实场景里图片是解包出来的字节，
+    # 所以这里显式指定 format="PNG"，正好也模拟「内容是 PNG、名字叫 .mos」。
+    from PIL import Image
+    Image.new("RGB", (4, 4), (10, 20, 30)).save(ctx.raw_dir / "cg.mos", format="PNG")
+    _png(ctx.raw_dir / "bg.png")
+    st = orch.stage_verify(ctx)
+    assert st.ok, st.detail
+    assert st.data["image_ok"] == 2
+    assert st.data["image_fail"] == 0
+    assert st.data["nonmedia"] == 0
+
+
 # ---------------------------------------------------------------------------
 # 4. postprocess：无 .tlg 是空操作
 # ---------------------------------------------------------------------------
@@ -309,7 +332,8 @@ def test_postprocess_without_tlg_is_skipped(tmp_path):
     _write(ctx.raw_dir / "a.png")
     st = orch.stage_postprocess(ctx)
     assert st.ok and st.skipped
-    assert "无 .tlg" in st.detail
+    # 2026-10-30 起 CONVERTIBLE 有 .tlg/.pna 两种，提示文案随之改成「无待转格式」
+    assert "无待转格式" in st.detail
 
 
 def test_postprocess_failure_is_reported(tmp_path, monkeypatch):
@@ -743,3 +767,183 @@ def test_extractors_stores_names_not_functions():
     for engine, name in orch.EXTRACTORS.items():
         assert isinstance(name, str), f"{engine} 存的不是函数名"
         assert callable(getattr(orch, name, None)), f"{name} 在模块里不存在"
+
+
+# ---------------------------------------------------------------------------
+# 9. AdvHD 链路：逐 .arc 提取 + 散装 .dat→.wmv + .pna 逐帧 carve
+# ---------------------------------------------------------------------------
+
+PNG_SIG = b"\x89PNG\r\n\x1a\n"
+
+
+def _png_frame(payload: bytes = b"body") -> bytes:
+    """造一个 carve() 认得的「PNG 帧」：签名 … `IEND` + 4 字节 CRC。
+
+    `_pna_carve.carve()` 只按签名起、`IEND` 止来切，不做 CRC 校验，
+    所以这里不需要合法 PNG。真要能过 Pillow 的图另有 `_png()`。
+    """
+    return PNG_SIG + payload + b"IEND" + b"\x00\x00\x00\x00"
+
+
+def _fake_tool_result(ok: bool = True, n: int = 0, reason: str = "") -> orch.tb.ToolResult:
+    return orch.tb.ToolResult(
+        key="garbro", exe=Path("GARbro.Console.exe"), argv=[], returncode=0 if ok else 1,
+        stdout="", stderr="", seconds=0.0, timed_out=False,
+        products=orch.tb.Products(total=n, by_ext={".ogg": n}, size=0),
+        product_dir=None, ok=ok, reason=reason)
+
+
+def test_advhd_arcs_prefers_top_level(tmp_path):
+    game = tmp_path / "game"
+    _write(game / "a.arc")
+    _write(game / "sub" / "b.arc")
+    got = [p.name for p in orch._advhd_arcs(game)]
+    assert got == ["a.arc"], "顶层有 .arc 就不该递归"
+
+
+def test_advhd_arcs_recursive_fallback(tmp_path):
+    game = tmp_path / "game"
+    _write(game / "sub" / "b.arc")
+    got = [p.name for p in orch._advhd_arcs(game)]
+    assert got == ["b.arc"]
+
+
+def test_advhd_loose_movies_only_top_level_and_renamed_wmv(tmp_path):
+    """散装 .dat 只在顶层找、并且必须改名 .wmv。
+
+    递归会把 save/ 下的 .dat 也当视频；不改名则 .dat 不在 AV_EXT 白名单里，
+    verify 会当「非媒体文件」放过去，交付清单留一个谁都验不了的扩展名。
+    """
+    game = tmp_path / "game"
+    _write(game / "op.dat")
+    _write(game / "save" / "sys.dat")
+    got = orch._advhd_loose_movies(game)
+    assert [src.name for src, _ in got] == ["op.dat"]
+    assert got[0][1].name == "op.wmv"
+
+
+def test_advhd_extract_reconciles_and_converts_dat(tmp_path, monkeypatch):
+    game = tmp_path / "game"
+    _write(game / "a.arc")
+    _write(game / "b.arc")
+    _write(game / "op.dat", b"\x30\x26\xb2\x75")
+
+    entries = {"a.arc": 3, "b.arc": 2}
+    monkeypatch.setattr(orch.tb, "garbro_list",
+                        lambda p, **k: (True, entries[p.name], ""))
+    monkeypatch.setattr(orch.tb, "garbro_extract",
+                        lambda arc, dest, **k: (_write_n(dest, entries[arc.name]),
+                                                _fake_tool_result(True, entries[arc.name]))[1])
+
+    ctx = _ctx(tmp_path, game_dir=game)
+    st = orch.stage_extract_advhd(ctx)
+    assert st.ok, st.detail
+    # 地面真相 = 3 + 2 个 arc 条目 + 1 个散装 .dat
+    assert st.data["expected_total"] == 6
+    assert st.data["actual_total"] == 6
+    assert st.data["loose_movies"] == 1
+    assert (ctx.raw_dir / "op.wmv").is_file()
+    assert not (ctx.raw_dir / "op.dat").exists(), ".dat 必须改名成 .wmv，别两个都留"
+
+
+def _write_n(dest: Path, n: int) -> None:
+    dest.mkdir(parents=True, exist_ok=True)
+    for i in range(n):
+        (dest / f"f{i}.ogg").write_bytes(b"x")
+
+
+def test_advhd_extract_fails_when_short(tmp_path, monkeypatch):
+    game = tmp_path / "game"
+    _write(game / "a.arc")
+    monkeypatch.setattr(orch.tb, "garbro_list", lambda p, **k: (True, 3, ""))
+    monkeypatch.setattr(orch.tb, "garbro_extract",
+                        lambda arc, dest, **k: (_write_n(dest, 2), _fake_tool_result(True, 2))[1])
+    st = orch.stage_extract_advhd(_ctx(tmp_path, game_dir=game))
+    assert not st.ok
+    assert "对账失败" in st.detail
+
+
+def test_advhd_extract_reports_garbro_extract_failure(tmp_path, monkeypatch):
+    game = tmp_path / "game"
+    _write(game / "a.arc")
+    monkeypatch.setattr(orch.tb, "garbro_list", lambda p, **k: (True, 3, ""))
+    monkeypatch.setattr(orch.tb, "garbro_extract",
+                        lambda arc, dest, **k: _fake_tool_result(False, 0, "产物不足"))
+    st = orch.stage_extract_advhd(_ctx(tmp_path, game_dir=game))
+    assert not st.ok
+    assert "GARbro 提取失败" in st.detail
+
+
+def test_advhd_reuse_raw_still_reconciles(tmp_path, monkeypatch):
+    """跳过解包 ≠ 跳过对账：复用模式照样要拿索引比落盘数。"""
+    game = tmp_path / "game"
+    _write(game / "a.arc")
+    monkeypatch.setattr(orch.tb, "garbro_list", lambda p, **k: (True, 2, ""))
+    ctx = _ctx(tmp_path, game_dir=game, reuse_raw=tmp_path / "out" / "raw")
+    _write_n(ctx.raw_dir / "a", 2)
+    st = orch.stage_extract_advhd(ctx)
+    assert st.ok, st.detail
+    assert st.data["expected_total"] == 2
+    assert "对账 2 == 2" in st.detail
+
+
+def test_advhd_reuse_raw_fails_on_mismatch(tmp_path, monkeypatch):
+    game = tmp_path / "game"
+    _write(game / "a.arc")
+    monkeypatch.setattr(orch.tb, "garbro_list", lambda p, **k: (True, 2, ""))
+    ctx = _ctx(tmp_path, game_dir=game, reuse_raw=tmp_path / "out" / "raw")
+    _write_n(ctx.raw_dir / "a", 1)
+    st = orch.stage_extract_advhd(ctx)
+    assert not st.ok
+    assert "复用产物对账失败" in st.detail
+
+
+def test_advhd_unlistable_archive_marks_unverified(tmp_path, monkeypatch):
+    """有 .arc 列不出条目 = 没有完整地面真相，不许把「没验」当「验过了」。"""
+    game = tmp_path / "game"
+    _write(game / "a.arc")
+    monkeypatch.setattr(orch.tb, "garbro_list",
+                        lambda p, **k: (False, 0, "unknown format"))
+    st = orch.stage_extract_advhd(_ctx(tmp_path, game_dir=game))
+    assert st.ok
+    assert "expected_total" not in st.data
+    assert st.data["archives"][0]["listable"] is False
+
+
+def test_advhd_no_archive_at_all_is_error(tmp_path):
+    game = tmp_path / "game"
+    game.mkdir()
+    st = orch.stage_extract_advhd(_ctx(tmp_path, game_dir=game))
+    assert not st.ok
+    assert "既没有 .arc 也没有 .dat" in st.detail
+
+
+def test_postprocess_carves_pna_into_multiple_frames(tmp_path):
+    ctx = _ctx(tmp_path)
+    _write(ctx.raw_dir / "anime.pna",
+           b"PNAP" + _png_frame(b"a") + _png_frame(b"b") + _png_frame(b"c"))
+    st = orch.stage_postprocess(ctx)
+    assert st.ok, st.detail
+    assert st.data["kinds"] == {".pna": 1}
+    assert st.data["frames_out"] == 3, "一个 .pna 要能产出多帧，不是一对一"
+    names = sorted(p.name for p in (ctx.png_dir).glob("*.png"))
+    assert names == ["anime__f000.png", "anime__f001.png", "anime__f002.png"]
+
+
+def test_postprocess_pna_without_frames_fails(tmp_path):
+    ctx = _ctx(tmp_path)
+    _write(ctx.raw_dir / "empty.pna", b"PNAP" + b"no png here")
+    st = orch.stage_postprocess(ctx)
+    assert not st.ok
+    assert st.data["fail"] == 1
+
+
+def test_convertible_has_single_source_of_truth():
+    """orchestrator 的 CONVERTIBLE 必须引用 manifest 的，不许各写一份。
+
+    两处各写一份，一边按 .tlg 算 final、另一边按 .tlg+.pna 算，交付数字就对不上。
+    """
+    import manifest
+
+    assert orch.CONVERTIBLE == manifest.CONVERTIBLE
+    assert {".tlg", ".pna"} <= orch.CONVERTIBLE
