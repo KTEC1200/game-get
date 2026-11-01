@@ -332,8 +332,8 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
   （bgm/config/fes/image00 = 1351/1351 零失败，含最大单包 image00 的 1163 条）。
 - ✅ **csc 黑盒工作流产品化进 toolbridge**（阶段 2 第 2 条）：8 个工具、C# 源码随包现编、
   `check_all()` / `check_csharp()` 自检，19 项新测试 + 3 轮变异验证（真 csc 编 hello-world 并运行）。
-- 下一步：① CatSystem2 **全量 51 包 / 53500 条已跑完**（extract 53500/0 差、postprocess 4499 PNG、
-  verify 只差 1 个偶发 ffprobe 失败 → 重跑一次拿绿色 manifest）② 接剩下 2 个引擎（Unity / Tyrano-Electron；
+- 下一步：① ~~CatSystem2 **全量 51 包 / 53500 条**~~ ✅ **已跑通并拿到绿色 manifest**（2026-11-01：extract 53500/0 差、postprocess 4499 PNG、
+  verify 图片 4499/4499、音频 23259/23259、视频 10/10、失败 0，媒体 2291.0 分钟，全链 2261.6s 退出码 0）② 接剩下 2 个引擎（Unity / Tyrano-Electron；
   Tyrano 目前只有 `_fixtures/tyrano_game`，没有真实样本，按「每个引擎至少一个样本全链」的验收口径它还过不了）
   ③ `cases/` 案例库。
 
