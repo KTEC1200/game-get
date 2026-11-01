@@ -1117,12 +1117,28 @@ orchestrator 新增**阶段 1.5 `case-lookup`**，位于 `detect` 之后、`IMPL
    替代方案（随包带私有 `python.exe`）不选：多一份运行时、还要管 stdlib 路径，换不来好处。
    已知取舍：`_as_audio_collect2` 子进程时代的 `timeout=3600` 进程内给不了——超时防护由
    外层对账兜底（少音频必然对不上）。
-2. **数据文件必须显式打包**。`--add-data "rules;rules"`、`cases;cases`、`*.cs`（`_gyu_tool`/`_hg3_tool` 源码随包现编）、
-   `toolbridge.json`（若存在）。**漏一个就是启动即崩**（不是降级，是崩）。
-   纪律：新增任何「代码要读的 JSON/源码文件」，同时更新打包清单——与 `manifest.CONVERTIBLE` 同理，清单只写一份。
-3. **PATH / DLL 环境卫生进 toolbridge**（阶段 3.2 由「蓝图说」变「实测证实」）：
-   冻结进程的 PATH 头部就是 `_internal`，子进程（ffprobe/GARbro/csc）会继承。
-   → 起子进程前 `SetDllDirectoryW(None)` + 从 PATH 里剥掉 `_MEIPASS` 及其子目录，并显式传 env。
+2. ✅ **数据文件必须显式打包 —— 已完成（2026-11-02）**。清单落在 **`build_exe.py`**（唯一出处，
+   `python build_exe.py --check` 可单独校验）：`rules/`、`cases/`、`_gyu_tool.cs`、`_hg3_tool.cs`、
+   **`_uia_item_rect.ps1`**（krkr GUI 链路的伴侣脚本，本次盘点新发现——krkr_auto_extract 按
+   `__file__` 调它，漏打 GUI 链路就崩）、`toolbridge.json`（可选，存在才打）。
+   各数据文件的定位全是 `Path(__file__).parent` 相对（rules/__init__ 45 行、case_lib 27 行、
+   toolbridge 65 行、krkr_auto_extract 134 行），add-data 用 `;.` 镜像仓库根布局即可命中。
+   **不需要 --hidden-import**：orchestrator 对 7 条链路全部顶部静态 import（必修第 1 条后），
+   PyInstaller 静态分析跟得全；asar_tool/_advhd_run/_spite_* 等 orchestrator 够不着的独立脚本
+   **故意不进包**（§19.1「14/14 可 import」是探针口径，不是产品口径）。
+   **冻结实测**：`build_exe.py` 产物 66.3 MiB / 183 文件；真样本 `常識改変学園-製品版-` 上
+   dry-run rc=0（detect 命中 RPG Maker + case-lookup 命中案例，`case_path` 就在包内
+   `_internal\cases\`）；**全链 rc=0（124.2s）：extract in-process 1585/1585 对账 0 差、
+   图片 719/0 失败、音频 866/0 失败、媒体 651.4 分钟、manifest ok=true**——与文档口径逐项一致。
+   驱动脚本 `_spike_pkg/run_frozen_smoke.py`（`--full` 跑全链；CJK 样本路径由脚本从文件系统解析，
+   不进命令行）。教训（§19.3）：--add-data 的相对路径相对 **spec 目录**解析——脚本一律传绝对路径。
+3. ✅ **PATH / DLL 环境卫生 —— 实质已在 toolbridge 里（盘点 2026-11-02），冻结态已实证**。
+   `_sanitize_env()`（剥 PATH 里一切含 `_MEI` 的段 + 删 PYTHONHOME/PYTHONPATH）与
+   `_clear_dll_dir()`（`SetDllDirectoryW(None)`）覆盖 toolbridge 全部 4 个子进程出口：
+   `build_csharp`（csc，env 清洗）、`_run_exe`（通用外部 exe：ffprobe/tlg2png/gyu/hg3，
+   清洗 + 清 DLL 目录双做）、`garbro_list`（env 清洗）、`assetstudio_export`（双做）。
+   冻结全链 866 个 ogg 的 ffprobe 全过 = 卫生处理在冻结态有效（§19.1 曾实测污染确实存在：
+   `_MEIPASS` 排 PATH 第一位）。
 
 ### 19.3 复现
 

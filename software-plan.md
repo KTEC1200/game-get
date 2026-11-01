@@ -210,14 +210,18 @@ manifest.json 契约（对账与验收的唯一地面真相）:
 >    `main(argv=None) -> int`，orchestrator 走 `_run_sibling(mod, argv)` + 顶部静态 import，
 >    AST 护栏禁 `sys.executable`/`subprocess` 回潮，496 passed。
 >    不选「随包带私有 python.exe」：多一份运行时、还要管 stdlib 路径。
-> ② **数据文件必须显式 `--add-data`**（`rules/engines.json`、`cases/*.json`、`*.cs` 源码、`toolbridge.json`）——
->    漏一个不是降级而是**启动即崩**（实测 `FileNotFoundError: ...\\_internal\\rules\\engines.json`）。
-> ③ 子进程环境：`_MEIPASS` 被塞进 PATH 头部，会继承给 ffprobe/GARbro/csc → 第 3 条清理**实测必要**。
-> 附带：动态 `importlib.import_module` 的模块 PyInstaller 静态分析看不到，要 `--hidden-import` 或静态 import。
+> ② ~~**数据文件必须显式 `--add-data`**~~ ✅ **已完成（2026-11-02）**：清单唯一出处 **`build_exe.py`**
+>    （rules/、cases/、两个 .cs、`_uia_item_rect.ps1`、可选 toolbridge.json）；冻结实测见 §19.2 第 2 条——
+>    真样本全链 rc=0（1585 对账 0 差 + 验收 0 失败）。
+> ③ ~~子进程环境~~ ✅ **实质已在 toolbridge**（`_sanitize_env`/`_clear_dll_dir` 覆盖全部 4 个
+>    子进程出口），冻结全链 ffprobe 866/866 实证有效（§19.2 第 3 条）。
+> 附带：动态 `importlib.import_module` 的模块 PyInstaller 静态分析看不到——orchestrator 已改为
+>    全部顶部静态 import（必修第 1 条），产品包不需要 --hidden-import。
 
 1. ~~PyInstaller onedir 冒烟：冻结 + subprocess 调外部 exe~~ ✅ **已完成（2026-11-01，见 §19）**。
-2. ~~兄弟脚本 in-process~~ ✅ **已完成（2026-11-02，见 §19.2 第 1 条）**。**当前第 ② 条：打包数据文件清单**。
-3. `SetDllDirectoryW(None)` + PATH 清理写进 toolbridge（**§19.2 第 3 条已实测证实必要**）。
+2. ~~兄弟脚本 in-process~~ ✅ **已完成（2026-11-02，见 §19.2 第 1 条）**。
+3. ~~打包数据文件清单 + 子进程环境卫生~~ ✅ **已完成（2026-11-02，见 §19.2 第 2、3 条）**；
+   `build_exe.py` 可复跑，冻结全链真样本实证通过。
 4. Inno Setup 打包；杀软误报应对文档（蓝图 §4.5，社区实践非官方结论）。
 5. GUI 最小化：先 CLI + 简单托盘/表单（拖一个目录进去 → 出 manifest 报告），不抢在管线稳之前。
 

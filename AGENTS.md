@@ -43,7 +43,11 @@
 - `cases/` —— **案例库**（12 个 case + `index.json` 9 个签名 + `_failures_raw.json` / `_docs_meta.json` 原始素材），见下方专节
 - `rules/` —— 引擎指纹**规则表**（`engines.json` + 解释器 `rules/__init__.py`，含命中信号 `fired_ids`）
 - `tests/` —— 全量测试 + `golden_detect.json` 基线（`make_golden.py --check` 查漂移）
-- `_spike_pkg/` —— PyInstaller 打包探针（`probe.py` / `run_probe.py` 复现脚本；`dist/`、`build/` 已进 .gitignore）
+- **`build_exe.py`**（2026-11-02，软件化阶段 3）—— 冻结构建 + **数据文件清单唯一出处**：
+  `python build_exe.py --check` 单验清单；`python build_exe.py` 冻结出 onedir exe。
+  新增「代码要读的数据文件」必须同步改它的 `DATA_FILES`（漏一个启动即崩）。
+- `_spike_pkg/` —— PyInstaller 探针（`probe.py` / `run_probe.py`；`run_frozen_smoke.py` 冻结包
+  真样本验证驱动，`--full` 跑全链）；`dist/`、`build/` 已进 .gitignore
 - `OUT/`（空占位）、`_unused/`（旧日志）、`banben/`（历史空目录）、`_extracted/`（解包产物，已 .gitignore）
 - `tutorials/` —— 用户的原始教程（**用户提供的资料，勿删**）
 
@@ -215,24 +219,26 @@ Ren'Py 侧：`_rpa_stage` / `_rpa_patch_stage` / `_rpa_arch.txt` / `_rpa_patch.t
 > **「Tyrano 不做，先软件化」**。终局不变——可复用的 Windows 软件（路线 `software-plan.md`）。
 
 **基线**：12 个样本全部走完（判定→提取→验收→对账→回写，见上表）；orchestrator 8 条链路；cases/ 案例库建成并接入；
-PyInstaller 冻结可行性已验证（`verified-findings.md` §19）。
+PyInstaller 打包三条必修全部完成（2026-11-02，冻结 exe 真样本全链实证，见下 ①）。
 
-### ① 打包三条必修（§19.2，按序做；不做就冻不出能用的 exe）
+### ① 打包三条必修（§19.2）—— ✅ **三条全部完成（2026-11-02），冻结全链真样本实证通过**
 
-1. ~~**7 处兄弟脚本改 in-process**~~ ✅ **已完成（2026-11-02）**：7 兄弟脚本统一
-   `main(argv: list[str] | None = None) -> int`（内部不 `sys.exit`）；orchestrator 新增
-   `_run_sibling(mod, argv)`（redirect_stdout 收输出、SystemExit 折算 rc、异常降级 rc=1+traceback、
-   KeyboardInterrupt 不拦）+ 顶部静态 import 三个此前缺失的模块（PyInstaller 只认静态 import）；
-   测试 fake 改 patch `orch.<mod>.main`；AST 护栏禁 `sys.executable`/`subprocess` 回潮
-   （test_orchestrator.py §8.5）。496 passed / 9 skipped，golden 零漂移，CLI 退出码冒烟一致。
+1. ~~**7 处兄弟脚本改 in-process**~~ ✅：7 兄弟脚本统一 `main(argv: list[str] | None = None) -> int`
+   （内部不 `sys.exit`）；orchestrator 新增 `_run_sibling(mod, argv)` + 顶部静态 import 全部 7 模块；
+   测试 fake 改 patch `orch.<mod>.main`；AST 护栏禁 `sys.executable`/`subprocess` 回潮（§8.5）。
    细节见 verified-findings §19.2 第 1 条。
-2. **打包数据文件清单**（**←当前项**）——`rules/`、`cases/`、`*.cs` 源码必须 `--add-data`（漏一个不是降级而是**启动即崩**）；
-   `toolbridge.json` 本仓当前不存在（可选配置，缺失时走内置候选 + PATH）。顺手把冻结探针按改后的
-   in-process 代码复跑一遍（`_spike_pkg/run_probe.py`）。
-3. **子进程环境卫生**——`_MEIPASS` 会被塞进 PATH 头部并继承给 ffprobe/GARbro/csc →
-   `SetDllDirectoryW(None)` + 从 PATH 剥掉，写进 `toolbridge.py`。
+2. ~~**打包数据文件清单**~~ ✅：**`build_exe.py`**（清单唯一出处，`--check` 可单验）——
+   rules/、cases/、两个 `.cs`、**`_uia_item_rect.ps1`**（盘点新发现的必打包项）、可选 toolbridge.json；
+   无需 --hidden-import。`python build_exe.py` 冻结出 `_spike_pkg/dist/orchestrator/orchestrator.exe`。
+3. ~~**子进程环境卫生**~~ ✅：`_sanitize_env`/`_clear_dll_dir` 早已在 toolbridge 并覆盖全部 4 个
+   子进程出口（本次盘点确认），无需新代码。
 
-### ② 阶段 3 剩下
+**冻结实测（§19.2）**：真样本 `常識改変学園-製品版-` 上冻结 exe 全链 **rc=0（124.2s）**——
+dry-run 命中 rules+cases（case_path 在包内）、extract in-process **1585/1585 对账 0 差**、
+图片 719/0 失败、音频 866/0 失败、媒体 651.4 分钟、manifest ok=true。复跑：
+`python build_exe.py` → `python _spike_pkg/run_frozen_smoke.py [--full]`。
+
+### ② 阶段 3 剩下（**←当前项**）
 Inno Setup 打包 + 杀软误报应对文档 → GUI 最小壳（CLI + 拖目录出报告，管线稳了再做）。
 
 ### ③ 搁置（需用户配合交互，等指示）

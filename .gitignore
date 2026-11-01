@@ -27,3 +27,4 @@ banben/
 # 编辑器
 .vscode/
 .idea/
+_spike_pkg/orchestrator.spec
