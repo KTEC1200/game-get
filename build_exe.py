@@ -187,6 +187,29 @@ def installer(skip_build: bool = False, testmode: bool = False) -> int:
     return 0
 
 
+def portable() -> int:
+    """便携版 zip（杀软文档 §3 备用渠道）：dist 整目录 + README，不碰安装器的敏感写入。"""
+    if not EXE.is_file():
+        print(f"冻结包不存在：{EXE}\n先跑 python build_exe.py", file=sys.stderr)
+        return 1
+    readme = REPO / "README.md"
+    if readme.is_file():
+        shutil.copy2(readme, DIST / "orchestrator" / "README.md")
+    out = PACKAGING / "Output" / f"GalgameUnpacker-{APP_VERSION}-portable.zip"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    base = DIST.parent                                   # zip 里顶层是 orchestrator/
+    cmd = ["powershell", "-NoProfile", "-Command",
+           f"Compress-Archive -Path '{(DIST / 'orchestrator')}' "
+           f"-DestinationPath '{out}' -Force"]
+    r = subprocess.run(cmd)
+    if r.returncode != 0 or not out.is_file():
+        print("便携包打包失败", file=sys.stderr)
+        return 1
+    print(f"便携包：{out}（{out.stat().st_size / 1024 / 1024:.1f} MiB）")
+    print(f"  SHA256: {sha256(out)}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--check", action="store_true", help="只校验清单，不构建")
@@ -196,9 +219,13 @@ def main(argv: list[str] | None = None) -> int:
                     help="跳过冻结构建，直接用现有 dist 出安装包")
     ap.add_argument("--testmode", action="store_true",
                     help="配合 --installer：出 Uninstallable=no 的会话内验证构建")
+    ap.add_argument("--portable", action="store_true",
+                    help="出便携版 zip（现有 dist + README；杀软拦安装器时的备用渠道）")
     a = ap.parse_args(argv)
     if a.check:
         return check()
+    if a.portable:
+        return portable()
     if a.installer_only:
         return installer(skip_build=True, testmode=a.testmode)
     if a.installer:

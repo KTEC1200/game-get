@@ -266,6 +266,14 @@ dry-run 命中 rules+cases（case_path 在包内）、extract in-process **1585/
 
 > 2026-11-02 用户指示：**「不管加密 krkr 了……让我测试完再推进剩余队列」**——
 > 剩余队列全部挂起，先等真实使用反馈。
+>
+> **⭐ 实测反馈 #1（2026-11-02）**：安装包在用户桌面双击即报
+> 「Setup was unable to create the directory %TEMP%\is-*.tmp Error 5」——根因是
+> **本机火绒 + 深信服 EDR 按进程信誉拦未签名新程序的敏感写入**（修正了早前
+> 「代理会话产物」的误判；SAC/Defender RTP/AppLocker 全排除）。完整证据链与通道见
+> `antivirus-false-positives.md` §5。**给用户的通道：便携版 zip
+> （`python build_exe.py --portable`）**；预警：ExHIBIT/CatSystem2 首用现编 C# 可能
+> 同样被拦，遇到就在火绒/EDR 放行 csc 与程序目录。
 
 1. ~~加密 KiriKiri 剩余 ~7 部逐部跑~~ **划走（用户 2026-11-02：不管加密 krkr 了）**。
    样本仍在盘（温泉蒸汽人妻 3 包 / 教师催眠2 11 包 / aniyome 11 包 / Doinaka 9 包 /

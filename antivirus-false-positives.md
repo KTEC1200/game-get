@@ -44,16 +44,23 @@
 
 ## 5. 已知事实记录
 
-- 2026-11-02 首次构建（PyInstaller 6.22.3 + Inno Setup 6.7.3 安装器）。安装包 22.8 MiB
-  （onedir 66.3 MiB → lzma2/max），SHA256 见构建输出。
-- **2026-11-02 会话内端到端验证的实测发现（重要，勿误诊）**：在 ZCode 代理会话里跑
-  `GalgameUnpacker-*-setup.exe /SILENT`，184 个文件全部复制成功，但**两处「拒绝访问」**：
-  开始菜单 .lnk（`IPersistFile::Save 0x80070005`）与 HKCU 卸载键（`RegCreateKeyEx code 5`）。
-  排查结论：**这是代理执行环境对「未签名未知镜像」的敏感面写过滤（按进程镜像区分），
-  不是安装器缺陷**——证据链：① 同一 shell 里 `reg add` 直写同一 GUID 键**成功**；
-  ② PowerShell `WScript.Shell` 写同一 Start Menu 路径**成功**；③ csc 现编的无名小 exe
-  写同一个键**被拒**；④ 关掉沙盒重跑仍被拒；⑤ 本机只有 Windows Defender 且实时防护关闭。
-  **会话内验证不了卸载键与快捷方式这两步**——`build_exe.py --installer-only --testmode`
-  出 `Uninstallable=no` 的验证构建（配 `/NOICONS`），把能验的都验掉（Files/Icons/Run/[Code]，
-  安装出来的 exe dry-run rc=0）；完整安装（含卸载键）请在真实桌面会话双击验证。
+- 2026-11-02 首次构建（PyInstaller 6.22.3 + Inno Setup 6.7.3 安装器）。安装包 25.3 MiB
+  （onedir 77 MiB → lzma2/max），SHA256 见构建输出。
+- **⭐ 2026-11-02 实测根因（修正早前误判）：本机装有火绒（HipsDaemon/HipsTray）+ 深信服
+  EDR（Sangfor×4 进程），按「进程信誉」拦截未签名新程序的敏感面写入**。SAC=0、
+  Defender RTP=关、AppLocker=停——排除其它嫌疑。表象：
+  1) **用户真实桌面双击安装包**：第一步建 `%TEMP%\is-*.tmp` 就被拒（Error 5 拒绝访问）；
+  2) 代理会话里跑同一安装包：建 temp 成功、184 文件复制成功，但开始菜单 .lnk
+     （`IPersistFile::Save 0x80070005`）与 HKCU 卸载键（`RegCreateKeyEx code 5`）被拒 → rc=4 回滚；
+  3) `reg.exe` / `powershell.exe` 同样的写**放行**；csc 现编的无名小 exe 同样的写**被拒**。
+  → 结论：**终端防护按镜像放行白名单进程、拦未知进程**，不是安装器缺陷、不是 ACL 问题。
+  （此前的「代理会话产物」判断错误——用户桌面双击同样被拒，证据闭环。）
+- **对用户测试的影响与通道**：
+  - **便携版 zip（首选通道）**：`python build_exe.py --portable` →
+    `packaging/Output/GalgameUnpacker-<版本>-portable.zip`，解压即用，不碰安装器被拦的
+    那些写入（SHA256 以构建输出为准）。
+  - 安装版要装的话：把安装包加进**火绒信任区**（或让深信服管理员放行）后再双击。
+  - **预警：ExHIBIT / CatSystem2 链路首用会现编 C#（csc 落 exe 到 `_internal/`）**——
+    若 EDR 同样拦「未知 exe 写程序目录」，这两条链路会失败并如实报错；遇到就在
+    火绒/EDR 里放行 `csc.exe` 与本程序目录。
 - 参考先例：GameStringer（Tauri）维护了公开的 `docs/ANTIVIRUS.md` 主动说明页——若本项目未来公开分发，照此做一页并链接进 README。
