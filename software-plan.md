@@ -132,7 +132,7 @@ manifest.json 契约（对账与验收的唯一地面真相）:
 
 > **进度（2026-10-30）**：orchestrator 已从 2 条链路扩到 **6 条**（Ren'Py / KiriKiri /
 > **RPG Maker** / **Yu-Ris** / **AdvHD** / **ExHIBIT**），`IMPLEMENTED` 与 `EXTRACTORS` 双表对齐，
-> 测试 **414 passed / 7 skipped**。AdvHD 顺带把 postprocess 从「只会 .tlg」改成按扩展名分派
+> 测试 **425 passed / 7 skipped**。AdvHD 顺带把 postprocess 从「只会 .tlg」改成按扩展名分派
 > （`.pna` → `_pna_carve.carve()`，一个容器出多帧），`manifest.CONVERTIBLE` 成为待转格式的唯一出处。
 > 六条链都用真实样本跑过退出码 0、对账 0 差（详见下方第 3 条）。
 > **第 2 条（csc 工作流进 toolbridge）也已完成**——`_gyu_tool`/`_hg3_tool` 源码随包、
@@ -163,7 +163,11 @@ manifest.json 契约（对账与验收的唯一地面真相）:
    - CatSystem2（第 7 条链路，2026-10-30）：`stage_extract_cs2` 逐包 + 总计两层对账、
      `_cs2_postprocess` 按魔数归一扩展名 + HG-3→png/（`consumed` 按路径排除、raw 不动）；
      **真实样本验证到 4 包**（bgm/config/fes/image00 = 1351/1351 零失败，含最大单包 image00 1163 条），
-     **全量 51 包 / 53500 条仍待跑**（8.4 GB 产物 + 内存吃紧，等机器空闲再跑，别和别的重任务并发）。
+     **全量 51 包 / 53500 条已跑通**（2026-10-31）：`extract` 51 包 0 差、`postprocess` 4499 PNG
+      （大小写去重后撞车 3）、`verify` 图片 4499/4499、音频 23258/23259（1 个偶发 ffprobe 失败，
+      该文件直接探 rc=0 + 最后一页 CRC 通过）、视频 10/10，媒体 2290.8 分钟；重跑待拿绿色 manifest。
+      音频语料用**最后一个 Ogg 页 CRC** 全量校验过（23259/23259 通过，87.6% 的文件大小不是 8 的整数倍，
+      证明「尾部零头在归档里就是明文」这条实现是对的）。
 4. **案例库**：`cases/`（JSON per 样本：指纹、判定、耗时、失败与修复）——蓝图 2.7 自愈闭环的地基。
 
 > **⭐ 接链路的正确姿势（2026-10-30 沉淀，接剩下 3 个引擎时照做）**

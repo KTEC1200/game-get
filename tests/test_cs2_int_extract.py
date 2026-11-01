@@ -155,6 +155,25 @@ def test_hg3_expected_png_keeps_subdirs_apart(tmp_path: Path):
     assert exp["collisions"] == 0
 
 
+def test_hg3_expected_png_dedupes_case_insensitively(tmp_path: Path):
+    """★核心★ 只差大小写的两个目标在 NTFS 上是同一个文件 —— 必须只算一张。
+
+    真样本（甜蜜女友2+）实测：4502 个 HG-3 里有 3 组只差大小写（`J_WJNu17n_0h.hg3`
+    与 `j_wjnU17N_0H.ml3` 等），工具落盘 4499 张。按大小写敏感去重会算成 4501 张，
+    于是把一次完全正确的解包判成「产物不足」——护栏算错比不设护栏更坏。
+    """
+    _hg3(tmp_path / "J_WJNu17n_0h.hg3")
+    _hg3(tmp_path / "j_wjnU17N_0H.ml3")
+    _hg3(tmp_path / "plain.hg3")
+    exp = cs2.hg3_expected_png(tmp_path)
+
+    assert exp["count"] == 3
+    assert exp["png_count"] == 2, "两个只差大小写 → 同一张 PNG"
+    assert exp["collisions"] == 1
+    assert len({p.lower() for p in exp["png"]}) == exp["png_count"], \
+        "返回的路径里也不能有两个只差大小写的"
+
+
 # ---------------------------------------------------------------- write_manifest
 
 def test_write_manifest_records_ground_truth(tmp_path: Path):

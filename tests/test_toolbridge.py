@@ -457,6 +457,111 @@ def test_ffprobe_json_without_streams_is_none():
 
 
 # ---------------------------------------------------------------------------
+# ffprobe 失败原因 + 重试（`ffprobe 无结果` 不该是一句糊弄话）
+# ---------------------------------------------------------------------------
+#
+# 实测依据：甜蜜女友2+ 全量验收里 `pcm_DD/dd_02_ch08_019.OGG` 报过一次
+# 「ffprobe 无结果」，但同一份字节随后稳定探得 vorbis 流、Ogg 页 CRC 也对得上
+# ——是偶发（子进程没起来/被拖超时），不是文件坏。所以：①失败要重试一次
+# ②重试仍失败必须说清是哪种失败。
+
+_FFPROBE_OK = json.dumps({"streams": [_AUDIO], "format": {"duration": "12.5"}})
+
+
+class _ProbeRun:
+    """按顺序吐出预设结果，并记录调用次数（假的 tb.run）。"""
+
+    def __init__(self, *results):
+        self.results = list(results)
+        self.calls = 0
+
+    def __call__(self, key, argv=(), **kw):
+        self.calls += 1
+        return self.results[min(self.calls - 1, len(self.results) - 1)]
+
+
+class _R:
+    """够用的 ToolResult 替身。"""
+
+    def __init__(self, rc=0, out="", err="", timed_out=False):
+        self.returncode, self.stdout, self.stderr = rc, out, err
+        self.timed_out = timed_out
+        self.ok = rc == 0
+
+
+def test_ffprobe_ex_retries_transient_failure(tmp_path, monkeypatch):
+    """★核心★ 第一次没起来、第二次成功 → 算成功，别把偶发报成坏文件。"""
+    p = tmp_path / "a.ogg"
+    p.write_bytes(b"x")
+    r = _ProbeRun(_R(rc=-1, err="Failed to start"), _R(rc=0, out=_FFPROBE_OK))
+    monkeypatch.setattr(tb, "run", r)
+
+    info, why = tb.ffprobe_ex(p)
+
+    assert r.calls == 2, "失败后必须重试一次"
+    assert why == "ok"
+    assert info["codec"] == "vorbis" and info["dur"] == 12.5
+
+
+def test_ffprobe_ex_reports_rc_and_stderr_tail(tmp_path, monkeypatch):
+    """重试仍失败 → 说清 rc 与 stderr 末行（文件真坏长这样）。"""
+    p = tmp_path / "a.ogg"
+    p.write_bytes(b"x")
+    r = _ProbeRun(_R(rc=1, err="junk\nInvalid data found when processing input\n"))
+    monkeypatch.setattr(tb, "run", r)
+
+    info, why = tb.ffprobe_ex(p)
+
+    assert info is None
+    assert r.calls == 2
+    assert "rc=1" in why and "Invalid data found" in why
+    assert "重试 1 次仍失败" in why
+
+
+def test_ffprobe_ex_reports_timeout(tmp_path, monkeypatch):
+    p = tmp_path / "a.ogg"
+    p.write_bytes(b"x")
+    monkeypatch.setattr(tb, "run", _ProbeRun(_R(rc=None, timed_out=True)))
+    info, why = tb.ffprobe_ex(p, timeout=7)
+    assert info is None and "超时" in why and "7" in why
+
+
+def test_ffprobe_ex_reports_missing_streams(tmp_path, monkeypatch):
+    """rc=0 但 JSON 里没有可用流（只有封面）→ 也要说清，别只回一个 None。"""
+    p = tmp_path / "a.ogg"
+    p.write_bytes(b"x")
+    monkeypatch.setattr(tb, "run",
+                        _ProbeRun(_R(rc=0, out=json.dumps({"streams": [_COVER]}))))
+    info, why = tb.ffprobe_ex(p)
+    assert info is None and "没有任何音视频流" in why
+
+
+def test_ffprobe_ex_reports_json_error(tmp_path, monkeypatch):
+    p = tmp_path / "a.ogg"
+    p.write_bytes(b"x")
+    monkeypatch.setattr(tb, "run", _ProbeRun(_R(rc=0, out="not json at all")))
+    info, why = tb.ffprobe_ex(p)
+    assert info is None and "JSON 解析失败" in why
+
+
+def test_ffprobe_ex_non_media_extension_costs_no_subprocess(tmp_path, monkeypatch):
+    r = _ProbeRun()
+    monkeypatch.setattr(tb, "run", r)
+    info, why = tb.ffprobe_ex(tmp_path / "script.rpyc")
+    assert info is None and "白名单" in why and r.calls == 0
+
+
+def test_ffprobe_wrapper_still_returns_info_only(tmp_path, monkeypatch):
+    """`ffprobe()` 是老接口，行为不许变（只回信息）。"""
+    p = tmp_path / "a.ogg"
+    p.write_bytes(b"x")
+    monkeypatch.setattr(tb, "run", _ProbeRun(_R(rc=0, out=_FFPROBE_OK)))
+    assert tb.ffprobe(p)["kind"] == "audio"
+    monkeypatch.setattr(tb, "run", _ProbeRun(_R(rc=1, err="boom")))
+    assert tb.ffprobe(p) is None
+
+
+# ---------------------------------------------------------------------------
 # 阶段 2 第 2 条：自带 C# 工具「源码随包 + csc 现编」
 # ---------------------------------------------------------------------------
 # 假编译器用 python.exe 顶替：compiler 参数是**命令前缀列表**，所以

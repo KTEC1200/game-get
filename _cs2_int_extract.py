@@ -472,13 +472,22 @@ def hg3_expected_png(root, files=None) -> dict:
     两个 HG-3（如 `a.hg3` 与 `a.nm3`）会**互相覆盖**：解码成功数 ≠ PNG 成品数
     （历史实测正好是解 4502、交付 4499）。期望值必须按去重后的路径算，
     拿文件数当 `min_products` 会在有撞车时误判「产物不足」。
+
+    去重口径是**不区分大小写**：落盘走 NTFS，`X.png` 与 `x.png` 是同一个文件，
+    后写的覆盖先写的。甜蜜女友2+ 实测 4502 个 HG-3 里有 3 组只差大小写
+    （`J_WJNu17n_0h.hg3` vs `j_wjnU17N_0H.ml3` 等）：按大小写敏感去重会算成 4501 张，
+    于是工具老老实实落 4499 张却被判「产物不足」。**护栏自己算错比不设护栏更坏**
+    ——它会把一次完全正确的解包判成失败。
     """
     root = Path(root)
     files = hg3_files(root) if files is None else list(files)
-    rels = {p.relative_to(root).with_suffix('.png').as_posix() for p in files}
+    pngs: dict[str, str] = {}
+    for p in files:
+        rel = p.relative_to(root).with_suffix('.png').as_posix()
+        pngs.setdefault(rel.lower(), rel)          # 小写键去重，值留原始拼写
     return {'files': [str(p) for p in files], 'count': len(files),
-            'png': sorted(rels), 'png_count': len(rels),
-            'collisions': len(files) - len(rels)}
+            'png': sorted(pngs.values()), 'png_count': len(pngs),
+            'collisions': len(files) - len(pngs)}
 
 
 def _extract_one(data, name: str, out_root: str, main_key: int, no_names: bool,

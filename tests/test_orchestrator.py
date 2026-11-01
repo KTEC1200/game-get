@@ -284,10 +284,10 @@ def test_verify_uses_ffprobe_for_av_and_counts_minutes(tmp_path, monkeypatch):
 
     def fake_ffprobe(path, **_kw):
         if path.suffix.lower() == ".ogg":
-            return {"kind": "audio", "codec": "vorbis", "dur": 60.0}
-        return {"kind": "video", "codec": "h264", "dur": 30.0, "w": 640, "h": 480}
+            return {"kind": "audio", "codec": "vorbis", "dur": 60.0}, "ok"
+        return {"kind": "video", "codec": "h264", "dur": 30.0, "w": 640, "h": 480}, "ok"
 
-    monkeypatch.setattr(orch.tb, "ffprobe", fake_ffprobe)
+    monkeypatch.setattr(orch.tb, "ffprobe_ex", fake_ffprobe)
     st = orch.stage_verify(ctx)
     assert st.ok, st.detail
     assert st.data["audio_ok"] == 1 and st.data["video_ok"] == 1
@@ -295,12 +295,25 @@ def test_verify_uses_ffprobe_for_av_and_counts_minutes(tmp_path, monkeypatch):
 
 
 def test_verify_ffprobe_none_is_failure(tmp_path, monkeypatch):
+    """★核心★ 探不出来要判失败，**且把原因写进 fail_examples**。
+
+    `ffprobe 无结果` 一句话把「文件真坏」「子进程没起来/超时」「JSON 里没有
+    音视频流」混成同一件事——看日志的人无从判断该不该慌。实测依据：
+    `甜蜜女友2+` 全量验收里 `pcm_DD/dd_02_ch08_019.OGG` 报过一次无结果，
+    同一份字节随后稳定探得 vorbis 流（Ogg 页 CRC 也对得上），是偶发不是坏文件。
+    """
     ctx = _ctx(tmp_path)
     _write(ctx.raw_dir / "a.ogg", b"OggS" + b"0" * 100)
-    monkeypatch.setattr(orch.tb, "ffprobe", lambda p, **k: None)
+    monkeypatch.setattr(orch.tb, "ffprobe_ex",
+                        lambda p, **k: (None, "rc=1：Invalid data found（重试 1 次仍失败）"))
     st = orch.stage_verify(ctx)
     assert not st.ok
     assert st.data["audio_fail"] == 1
+    ex = st.data["fail_examples"]
+    assert len(ex) == 1
+    assert "ffprobe 无结果" in ex[0]
+    assert "Invalid data found" in ex[0], "原因必须带出来，否则这句话等于没说"
+    assert "重试 1 次仍失败" in ex[0]
 
 
 def test_verify_nonmedia_files_are_counted_not_failed(tmp_path):
@@ -1033,7 +1046,9 @@ def _fake_run_csharp(n_png: int, seen: list | None = None, raises: Exception | N
             raise raises
         dest = Path(kw.get("product_dir") or argv[1])
         _write_n(dest, n_png, ext=".png")
-        return _fake_tool_result(n_png > 0, n_png)
+        # 与 `toolbridge._run_exe` 同构：增量必须够 `min_products` 才算 ok
+        # （min_products=0 时 0 个新增也算成功——复跑场景就靠它）
+        return _fake_tool_result(n_png >= kw.get("min_products", 1), n_png)
     return _run
 
 
@@ -1118,17 +1133,29 @@ def _short_csharp(key, argv=(), **kw):
 
 
 def test_exhibit_extract_fails_on_count_mismatch(tmp_path, monkeypatch):
-    """工具**没报错**但少产出（1 张 vs 期望 2 张）→ 对账必须拦住。
+    """工具**没报错**但少产出 → 落盘对账必须拦住。
 
-    这是最危险的一类：退出码 0、工具自认成功，只有数产物才能发现。
+    这是最危险的一类：退出码 0、工具自认成功，只有**数产物**才能发现。
+    两条网各管一段：gyu 的产物数由 `run_csharp(min_products=张数)` 拦；
+    grp 的条目数只有落盘对账看得见（脚本 rc=0 却少切了几条）。
     """
+    game = _exhibit_game(tmp_path, gyu_n=2, ogg_n=2, encrypted_n=0)
+    monkeypatch.setattr(orch.tb, "run_csharp", _fake_run_csharp(2))
+    monkeypatch.setattr(orch.subprocess, "run", _fake_grp_run(1))    # 少切 1 条
+    st = orch.stage_extract_exhibit(_ctx(tmp_path, game_dir=game))
+    assert not st.ok
+    assert "对账失败" in st.detail
+    assert st.data["expected_total"] == 6
+
+
+def test_exhibit_extract_gyu_shortfall_is_caught_by_product_count(tmp_path, monkeypatch):
+    """gyu 少产出时由 `run_csharp` 的产物计数先拦（`min_products` = 期望张数）。"""
     game = _exhibit_game(tmp_path, gyu_n=2, ogg_n=2, encrypted_n=0)
     monkeypatch.setattr(orch.tb, "run_csharp", _fake_run_csharp(1))
     monkeypatch.setattr(orch.subprocess, "run", _fake_grp_run(2))
     st = orch.stage_extract_exhibit(_ctx(tmp_path, game_dir=game))
     assert not st.ok
-    assert "对账失败" in st.detail
-    assert st.data["expected_total"] == 6
+    assert "_gyu_tool 解码失败" in st.detail
 
 
 def test_exhibit_extract_reports_csharp_build_failure(tmp_path, monkeypatch):
@@ -1461,7 +1488,8 @@ def test_cs2_postprocess_converts_hg3_and_records_consumed(tmp_path, monkeypatch
     assert st.ok, st.detail
     assert seen[0]["key"] == "hg3"
     assert seen[0]["argv"] == [str(ctx.raw_dir), str(ctx.png_dir)]
-    assert seen[0]["kw"]["min_products"] == 1          # 去重后的张数，不是 2
+    assert seen[0]["kw"]["min_products"] == 0, \
+        "产物数由目录总量判，不能按增量判（复跑时增量天然是 0）"
     assert st.data["collisions"] == 1
     assert st.data["consumed"] == ["ch/a.hg3", "ch/a.nm3"]
     assert ctx.consumed == ["ch/a.hg3", "ch/a.nm3"]
@@ -1482,6 +1510,44 @@ def test_cs2_postprocess_fails_when_png_count_short(tmp_path, monkeypatch):
     assert not st.ok
     assert "产物数不符：期望 2 vs 落盘 1" in st.detail
     assert ctx.consumed == []          # 判失败就不认领交付口径
+
+
+def test_cs2_postprocess_rerun_with_existing_png_is_not_a_failure(tmp_path, monkeypatch):
+    """★核心★ 复跑（png/ 里已有上一轮成品、本轮增量 0）不能判失败。
+
+    真样本上撞到的坑：`--reuse-raw` 复跑时上一轮的 PNG 都还在，增量天然是 0；
+    按增量判会在一次**完全正确**的解包上报「产物不足」。交付口径是「png/ 里的成品数
+    等于去重后的期望数」，与「本轮新增了几个」无关。
+    """
+    ctx = _ctx(tmp_path, engine="CatSystem2")
+    _write(ctx.raw_dir / "a.hg3", b"HG-3" + b"\x00" * 8)
+    ctx.png_dir.mkdir(parents=True)
+    _write(ctx.png_dir / "a.png", b"\x89PNG\r\n\x1a\n")     # 上一轮的成品
+    seen: list = []
+    monkeypatch.setattr(orch.tb, "run_csharp", _fake_run_csharp(0, seen=seen))
+
+    st = orch.stage_postprocess(ctx)
+
+    assert st.ok, st.detail
+    assert seen[0]["kw"]["min_products"] == 0
+    assert st.data["new"] == 0              # 本轮没新增
+    assert st.data["ok"] == 1               # 但目录总量是够的
+    assert ctx.consumed == ["a.hg3"]        # 照样认领交付口径
+    assert "png/ 1 张" in st.detail
+
+
+def test_cs2_postprocess_case_only_collision_counts_once(tmp_path, monkeypatch):
+    """只差大小写的两个 HG-3 在 NTFS 上是同一张 PNG（真样本里正好有 3 组）。"""
+    ctx = _ctx(tmp_path, engine="CatSystem2")
+    _write(ctx.raw_dir / "J_WJNu17n_0h.hg3", b"HG-3" + b"\x00" * 8)
+    _write(ctx.raw_dir / "j_wjnU17N_0H.ml3", b"HG-3" + b"\x00" * 8)
+    monkeypatch.setattr(orch.tb, "run_csharp", _fake_run_csharp(1))
+
+    st = orch.stage_postprocess(ctx)
+
+    assert st.ok, st.detail
+    assert st.data["collisions"] == 1, "只差大小写 → 一张，不是两张"
+    assert "png/ 1 张" in st.detail
 
 
 def test_cs2_postprocess_reports_csharp_build_failure(tmp_path, monkeypatch):

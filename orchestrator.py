@@ -1098,9 +1098,13 @@ def _cs2_postprocess(ctx: Ctx) -> Stage:
         return st
 
     ctx.png_dir.mkdir(parents=True, exist_ok=True)
+    before = tb.count_products(ctx.png_dir).total     # --reuse-raw 复跑时 png/ 已有上一轮成品
     try:
+        # `min_products=0`：产物数一律由下面按「目录总量 vs 期望」判。
+        # 不能按**增量**判——复跑时上一轮的成品都还在，增量天然是 0，
+        # 会在一次完全正确的解包上报「产物不足」（甜蜜女友2+ 复跑实测撞上过）。
         res = tb.run_csharp("hg3", [str(ctx.raw_dir), str(ctx.png_dir)],
-                            product_dir=ctx.png_dir, min_products=hg3["png_count"])
+                            product_dir=ctx.png_dir, min_products=0)
     except Exception as exc:                     # 编译失败/找不到 csc 都得说清楚
         st.detail = f"自带 C# 工具 _hg3_tool 无法启用：{exc}"
         st.seconds = time.time() - t0
@@ -1110,21 +1114,22 @@ def _cs2_postprocess(ctx: Ctx) -> Stage:
         st.seconds = time.time() - t0
         return st
 
-    got = res.products.total
+    got = tb.count_products(ctx.png_dir).total        # 目录总量，不是本轮增量
     st.seconds = time.time() - t0
     if got != hg3["png_count"]:
         # rc=0、产物也不是 0，只是**比该有的少**（撞车之外的漏解）——最危险的一类，
         # 只有拿产出数跟期望数硬比才看得见。
         st.data = {"tool": "_hg3_tool", "in": hg3["count"], "ok": got, "fail": 0,
-                   "renamed": norm["renamed"], "expected_png": hg3["png_count"]}
+                   "renamed": norm["renamed"], "expected_png": hg3["png_count"],
+                   "new": got - before}
         st.detail = (f"_hg3_tool 产物数不符：期望 {hg3['png_count']} vs 落盘 {got}"
-                     f"（HG-3 文件 {hg3['count']} 个）")
+                     f"（HG-3 文件 {hg3['count']} 个；本轮新增 {got - before}）")
         return st
 
     ctx.consumed = [Path(p).relative_to(ctx.raw_dir).as_posix() for p in hg3["files"]]
     st.ok = True
     st.data = {"tool": "_hg3_tool", "in": hg3["count"], "ok": got, "fail": 0,
-               "frames_out": got, "renamed": norm["renamed"],
+               "frames_out": got, "renamed": norm["renamed"], "new": got - before,
                "collisions": hg3["collisions"], "consumed": ctx.consumed}
     st.detail = (f"扩展名按魔数归一 {norm['renamed']} 个；HG-3 {hg3['count']} 个 "
                  f"→ png/ {got} 张")
@@ -1282,10 +1287,12 @@ def stage_verify(ctx: Ctx) -> Stage:
                 img_fail += 1
                 fails.append(f"[image] {label} :: {type(exc).__name__}: {exc}")
         elif ext in AV_EXT:
-            info = tb.ffprobe(p)
+            info, why = tb.ffprobe_ex(p)
             if info is None:
                 audio_fail += 1
-                fails.append(f"[av] {label} :: ffprobe 无结果")
+                # 带上原因：`ffprobe 无结果` 把「文件真坏」「子进程没起来/超时」
+                # 「JSON 里没有音视频流」混成一句，看日志的人无从判断该不该慌。
+                fails.append(f"[av] {label} :: ffprobe 无结果——{why}")
             elif info["kind"] == "video":
                 video_ok += 1
                 if info.get("dur"):

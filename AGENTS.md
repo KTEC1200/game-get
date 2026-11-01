@@ -68,6 +68,10 @@
   库用法 `tb.run("garbro", ["-x", xp3], cwd=out, product_dir=out)`。
   工具路径按 override → `TOOLBRIDGE_<KEY>` 环境变量 → `toolbridge.json` → 内置候选 → PATH 解析，
   **不再硬编码**。成败一律看产物数，`returncode` 只进诊断字段。坑 4（AssetStudio 逗号/竖线）已做成参数级护栏。
+  **`ffprobe_ex()` 是验收口径的补强（2026-10-31）**：`ffprobe()` 原来把所有失败原因折叠成一个 `None`，`stage_verify` 只能报一句「ffprobe 无结果」——看日志的人分不清「文件真坏」和「子进程没起来/超时」。
+   `ffprobe_ex(path, timeout=120, retries=1) -> tuple[info|None, reason]` 失败时重试一次，并把原因串出来
+   （`超时（>120s）` / `rc=N：<stderr 末行>` / `没有任何音视频流` / `JSON 解析失败` / 非白名单）；`ffprobe()` 退化成取 `[0]` 的薄包装，老调用方行为不变。
+   `stage_verify` 把原因写进 `fail_examples`，格式 `[av] <路径> :: ffprobe 无结果——<原因>`。
 - **自带 C# 工具源码随包、首启现编**（阶段 2 第 2 条，2026-10-30）：`_gyu_tool` / `_hg3_tool`
   **只带 `.cs`**（exe 不入库）；`ensure_csharp("gyu")` / `run_csharp("gyu", argv, product_dir=…)`
   先确保 exe 在——仓库里已有且不比源码旧就直接复用，否则 `csc /nologo /target:exe /platform:X /out:…`
@@ -321,16 +325,17 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
 （含 `counts()` 两目录形态与 `counts_flat()` 落盘即成品形态）→ 4 个解包器全部接上 `--manifest` ✅
 → `rules/engines.json` 指纹外置 ✅（规则表 + 解释器，`rules/__init__.py`）→ `planner.py` ✅
 （`dispatch --plan` 输出「建议 extractor + 参数」）。
-**测试 414 passed / 7 skipped**；`python tests/make_golden.py --check` 零漂移。
+**测试 425 passed / 7 skipped**；`python tests/make_golden.py --check` 零漂移。
 **软件化四阶段（software-plan §3）里阶段 1 已完成**；**阶段 2 进行中**：
 - ✅ orchestrator 已接 **7 条链路**（Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD / ExHIBIT /
   **CatSystem2**）；前六条都用真实样本跑过退出码 0、对账 0 差，CatSystem2 验到 4 包
   （bgm/config/fes/image00 = 1351/1351 零失败，含最大单包 image00 的 1163 条）。
 - ✅ **csc 黑盒工作流产品化进 toolbridge**（阶段 2 第 2 条）：8 个工具、C# 源码随包现编、
   `check_all()` / `check_csharp()` 自检，19 项新测试 + 3 轮变异验证（真 csc 编 hello-world 并运行）。
-- 下一步：① **CatSystem2 全量 51 包 / 53500 条真样本跑通**（8.4 GB 产物，等机器空闲、内存充足再跑，
-  别和别的重任务并发）② 接剩下 2 个引擎（Unity / Tyrano-Electron；Tyrano 目前只有 `_fixtures/tyrano_game`，
-  没有真实样本，按「每个引擎至少一个样本全链」的验收口径它还过不了）③ `cases/` 案例库。
+- 下一步：① CatSystem2 **全量 51 包 / 53500 条已跑完**（extract 53500/0 差、postprocess 4499 PNG、
+  verify 只差 1 个偶发 ffprobe 失败 → 重跑一次拿绿色 manifest）② 接剩下 2 个引擎（Unity / Tyrano-Electron；
+  Tyrano 目前只有 `_fixtures/tyrano_game`，没有真实样本，按「每个引擎至少一个样本全链」的验收口径它还过不了）
+  ③ `cases/` 案例库。
 
 ## 引擎分支要点（实测）
 
@@ -425,6 +430,21 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
     → 期望张数要**去重后**算（历史解 4502、交付 4499），拿文件数当 `min_products` 会误判「产物不足」。
   - **内存**：最大的包 2.3 GB，`_cs2_int_extract.py` 已改成 **mmap + 32 MiB 分块解密**；
     进程被杀时不会再有「日志一行都没有」的情况（进度行 `flush=True`）。
+  - **尾部 `fsize % 8` 字节在归档里本来就是明文**（2026-10-31 用 Ogg 页 CRC 判明）：打包器只加密
+    整 8 字节块，落盘尾部的零头是原文，所以 `decipher_fast(bf, blob, fsize // 8 * 8)` + 尾部原样照抄是
+    **正确**实现——别改成「解填充块再截断」。判据是**最后一个 Ogg 页的 CRC**（页里存的 CRC 是编码器按
+    真实明文算的）：对 `pcm_DD/dd_02_ch08_019.OGG`（size 89899、`%8=3`）盘上变体算出 `0xfe9a5de8` 与
+    页里存的一致，「全解后截断」变体算出 `0xc45b0d83` 不一致。**全量 23259 个 `.ogg` 最后一页 CRC 全部
+    通过**（其中 20384 个 = 87.6% 大小不是 8 的整数倍）。→ 「最后一页 CRC」是 CS2 音频最廉价的地面真相
+    校验，比 ffprobe 更硬（FFmpeg 会「尽力解码」，CRC 一字节都不能错）。
+  - **护栏算错比不设护栏更坏**：HG-3 期望张数原来按**大小写敏感**去重算出 4501，而 `_hg3_tool` 落盘走
+    NTFS、`X.png` 与 `x.png` 是同一文件（后写覆盖先写），实际 4499 —— 一次**完全正确**的解包被自己的
+    护栏判成「产物不足」。判据必须按**平台语义**来。另：产物判定要看 **png/ 目录总量 == 期望**，
+    不是「本轮增量 ≥ 期望」（`--reuse-raw` 复跑时增量天然是 0，按增量判会二次误报）。
+  - **别用眼睛核对单行大字典**：orchestrator 把 75 键的 `by_ext` 挤在一行，我肉眼以为 `final` 里还有
+    `.hg3`；逐键 diff 后真相是 `ONLY IN RAW: ['.hg3']`、`ONLY IN FINAL: ['.png']`。大字典一律逐键 diff。
+  - **偶发 ffprobe 失败**：全量 verify 只在 `raw/pcm_DD/dd_02_ch08_019.OGG` 上失败一次，但该文件直接探
+    rc=0、连探 5 次全过、最后一页 CRC 也对 → 是偶发。`ffprobe_ex()` 的重试正好覆盖。
 
 ### ExHIBIT / Retouch（`夕凪荘` 实测，2026-10-26）
 - 判定：`ExHIBIT.JP`/`RESIDENT.JP` + `.gyu`（魔数 `GYU\x1a`）/ `.grp` / `.rld` + `moonstone.TTE`。

@@ -50,7 +50,7 @@ from typing import Callable, Iterable, Mapping, Sequence
 __all__ = [
     "ToolSpec", "Products", "ToolResult", "ToolNotFound",
     "TOOLS", "find_tool", "run", "count_products", "snapshot",
-    "garbro_list", "garbro_extract", "tlg2png", "ffprobe",
+    "garbro_list", "garbro_extract", "tlg2png", "ffprobe", "ffprobe_ex",
     "assetstudio_export", "krkr_inject", "check_all", "check_csharp",
     "CSharpSource", "CSHARP", "CSharpBuildError",
     "repo_root", "build_csharp", "ensure_csharp", "run_csharp",
@@ -847,24 +847,58 @@ def parse_ffprobe_json(j: dict) -> dict | None:
     }
 
 
+def ffprobe_ex(path: str | os.PathLike, *, timeout: float = 120,
+               retries: int = 1) -> tuple[dict | None, str]:
+    """探一个媒体文件，返回 `(信息, 原因)`；探得出来时原因恒为 `"ok"`。
+
+    **为什么要带原因**：原来 `ffprobe()` 把三种完全不同的失败折成同一个 `None`——
+    ①文件真坏 ②子进程没起来/超时 ③JSON 里压根没有音视频流，日志里一律写
+    「ffprobe 无结果」。全量验收里冒出这么一条时，看日志的人无法判断该不该慌
+    （实测：`甜蜜女友2+` 的 `pcm_DD/dd_02_ch08_019.OGG` 报无结果，但同一份字节
+    现在能稳定探出 vorbis 流、Ogg 页 CRC 也对得上——是偶发，不是文件坏）。
+
+    **为什么要重试**：偶发失败往往只差重跑一次（进程启动失败、机器吃紧时被拖超时）。
+    重试只花在失败路径上，正常路径没有额外开销。
+    """
+    p = Path(path)
+    if p.suffix.lower() not in AV_EXT:
+        return None, f"扩展名 {p.suffix or '(无)'} 不在 ffprobe 白名单"
+    why = "未知原因"
+    for attempt in range(retries + 1):
+        r = run("ffprobe", ["-v", "error", "-print_format", "json",
+                            "-show_format", "-show_streams", str(p)], timeout=timeout)
+        if r.timed_out:
+            why = f"超时（>{timeout:g}s）"
+        elif r.returncode != 0:
+            lines = [ln for ln in (r.stderr or "").splitlines() if ln.strip()]
+            why = f"rc={r.returncode}" + (f"：{lines[-1].strip()[:160]}"
+                                          if lines else "（stderr 为空）")
+        else:
+            try:
+                j = json.loads(r.stdout)
+            except Exception as exc:
+                why = f"JSON 解析失败：{exc}"
+            else:
+                info = parse_ffprobe_json(j)
+                if info is not None:
+                    return info, "ok"
+                why = "没有任何音视频流（只有封面，或流列表为空）"
+        if attempt >= retries:
+            break
+    if retries:
+        why += f"（重试 {retries} 次仍失败）"
+    return None, why
+
+
 def ffprobe(path: str | os.PathLike, *, timeout: float = 120) -> dict | None:
     """探一个媒体文件，返回规整后的信息 dict；不可解返回 None。
 
     非白名单扩展名直接返回 None（**不要**把 .rpyc/.otf 送去 ffprobe，
     只会得到 `Invalid data found` 把验收搅浑）。
+
+    只要结论、不要原因时用它；要判断「该不该慌」请用 `ffprobe_ex()`。
     """
-    p = Path(path)
-    if p.suffix.lower() not in AV_EXT:
-        return None
-    r = run("ffprobe", ["-v", "error", "-print_format", "json",
-                        "-show_format", "-show_streams", str(p)], timeout=timeout)
-    if r.returncode != 0:
-        return None
-    try:
-        j = json.loads(r.stdout)
-    except Exception:
-        return None
-    return parse_ffprobe_json(j)
+    return ffprobe_ex(path, timeout=timeout)[0]
 
 
 def assetstudio_export(
