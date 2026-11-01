@@ -28,6 +28,18 @@ kernel32 = ctypes.windll.kernel32
 user32.SetProcessDPIAware()  # 本机 200% 缩放：此后全部坐标为物理像素
 
 KRKR_TOOL = r"D:\K\galgame\krkr\krkr"
+
+
+def krkr_tool_dir() -> str:
+    """KrkrExtract 三件套所在目录：随包 bin/krkr（冻结包 build_exe.py 打进去的）优先，
+    缺了回退开发机的固定位置。三件套必须同目录（Lite.exe 加载旁边的 Core.dll）。"""
+    base = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) \
+        else os.path.dirname(os.path.abspath(__file__))
+    bundled = os.path.join(base, "bin", "krkr")
+    if os.path.isfile(os.path.join(bundled, "KrkrExtract.Lite.exe")):
+        return bundled
+    return KRKR_TOOL
+
 #: ASCII stage 根目录。**必须纯 ASCII**（verified-findings §17.2）：CJK 路径注入后游戏进程活着
 #: 但窗口不弹，只弹「ANSI 文字列を UNICODE 文字列に変換できません」。
 #: 放在项目目录下（2026-10-29 起主目录是 D:\K\deepseek），名字固定为 `_krkr_stage`，已被 .gitignore 排除。
@@ -285,7 +297,7 @@ def main(argv: list[str] | None = None) -> int:
         # 主程序固定为 game.exe（原 exe 已随上面复制，再覆盖一份确保存在）
         shutil.copy2(os.path.join(game_dir, exes[0]), os.path.join(stage, "game.exe"))
         for fn in ("KrkrExtract.Lite.exe", "KrkrExtract.Core.dll", "KrkrExtract.UI.Lite.dll"):
-            shutil.copy2(os.path.join(KRKR_TOOL, fn), os.path.join(stage, fn))
+            shutil.copy2(os.path.join(krkr_tool_dir(), fn), os.path.join(stage, fn))
         log("stage ready: %s" % stage)
 
     # ---- 2. inject（reuse-stage 只跳过文件搬运；游戏进程永远清干净重注入，

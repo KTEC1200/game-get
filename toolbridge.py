@@ -263,6 +263,17 @@ def _expand(p: str) -> str:
     return os.path.expandvars(os.path.expanduser(p))
 
 
+def _bin_root() -> Path | None:
+    """随包工具目录 `<应用根>/bin`（build_exe.py 把外部工具拷到冻结包这里）。
+
+    冻结态 = exe 旁；源码态 = 仓库根（一般不存在 → 返回 None，解析直接跳过这一档）。
+    独立成函数：测试好 monkeypatch（锁解析顺序用）。
+    """
+    base = Path(sys.executable).parent if getattr(sys, "frozen", False) else _REPO
+    p = base / "bin"
+    return p if p.is_dir() else None
+
+
 def _load_config() -> dict:
     """读 toolbridge.json。找不到/坏掉都静默返回 {}——配置是可选增强，不能拖垮主流程。"""
     here = Path(__file__).resolve().parent
@@ -308,6 +319,14 @@ def find_tool(key: str, override: str | os.PathLike | None = None) -> Path:
     cfg = _load_config().get("paths") or {}
     if isinstance(cfg, Mapping):
         hit = _try(cfg.get(key), f"config paths.{key}")
+        if hit:
+            return hit
+
+    # 随包工具（bin/<key>/<exe>）：冻结包 build_exe.py 打进去的副本，优先于内置候选
+    # ——装机即用、不依赖开发机的目录布局；仍让位给 override/env/config 显式配置。
+    bin_root = _bin_root()
+    if bin_root is not None:
+        hit = _try(bin_root / spec.key / spec.exe_name, f"bundled bin/{spec.key}")
         if hit:
             return hit
 

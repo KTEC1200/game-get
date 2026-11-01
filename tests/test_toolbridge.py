@@ -847,3 +847,31 @@ def test_check_csharp_ready_requires_compiler_or_fresh_exe(tmp_path, monkeypatch
 
 def test_cli_where_unknown_returns_nonzero(capsys):
     assert tb._main(["where", "no-such-tool"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# 随包工具解析（bin/<key>/<exe>，2026-11-02 用户要求外部工具随包集成）
+# ---------------------------------------------------------------------------
+
+def test_bundled_bin_wins_over_builtin_candidates(tmp_path, monkeypatch):
+    """随包 bin/<key>/<exe> 在内置候选**之前**命中——装机即用，不依赖开发机布局。"""
+    bundled = tmp_path / "bin" / "garbro"
+    bundled.mkdir(parents=True)
+    (bundled / "GARbro.Console.exe").write_bytes(b"fake")
+    monkeypatch.setattr(tb, "_bin_root", lambda: tmp_path / "bin")
+
+    assert tb.find_tool("garbro") == bundled / "GARbro.Console.exe"
+
+
+def test_bundled_bin_missing_falls_through_to_candidates(tmp_path, monkeypatch):
+    """bin 档没有 → 落到内置候选，不能抛、也不能返回 bin 下的坏路径。"""
+    monkeypatch.setattr(tb, "_bin_root", lambda: tmp_path / "emptybin")
+
+    hit = tb.find_tool("garbro")          # 本机内置候选存在；换机器找不到则 ToolNotFound
+    assert str(hit).lower() != str(tmp_path / "emptybin").lower()
+
+
+def test_bin_root_none_when_absent(tmp_path, monkeypatch):
+    """源码态仓库根没有 bin/ → 返回 None，解析顺序直接跳过这一档。"""
+    monkeypatch.setattr(tb, "_REPO", tmp_path)   # tmp 下没有 bin/
+    assert tb._bin_root() is None

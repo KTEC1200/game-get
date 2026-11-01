@@ -274,6 +274,18 @@ dry-run 命中 rules+cases（case_path 在包内）、extract in-process **1585/
 > `antivirus-false-positives.md` §5。**给用户的通道：便携版 zip
 > （`python build_exe.py --portable`）**；预警：ExHIBIT/CatSystem2 首用现编 C# 可能
 > 同样被拦，遇到就在火绒/EDR 放行 csc 与程序目录。
+>
+> **⭐ 实测反馈 #2（2026-11-02，用户要求）**：外部工具随包集成 + 运行环境写清。
+> ① toolbridge 解析顺序插「随包 bin」档：override → env → json → **bin/<key>/<exe>** →
+> 内置候选 → PATH（`_bin_root()` 独立函数好测）；② `build_exe.py` 默认按 `BUNDLE_TOOLS`
+> 打包 6 工具进 `bin/`（garbro 65/assetstudio 38/tlg2png 1/krkr 11/krkrz 2/ffprobe 159 MiB
+> ——共享构建连 av* DLL 一起），`NOTICE.txt` 记许可证状态（tlg2png/krkr/krkrz/ffprobe 构建
+> **未核实**，对外分发前必须补齐，蓝图 §5.2）；③ krkr_auto_extract 的 KRKR_TOOL 加随包回退。
+> **⚠️ 构建机特有坑**：`_spike_pkg\dist\orchestrator\` **这个目录里**随包 GARbro 的 .NET
+> 程序集加载被防护拦（同字节从 temp/部署位置跑全正常、无 ADS、哈希一致）——
+> **部署位置不受影响**（便携 zip 解压到新目录：随包 garbro -l 657 行正常 + frozen dry-run
+> rc=0）。在 dist 里直接调工具失败时**先换部署位置复测**，别急着改代码。
+> 产物：setup 101.4 MiB / 便携 141.4 MiB；本体约 350 MiB。
 
 1. ~~加密 KiriKiri 剩余 ~7 部逐部跑~~ **划走（用户 2026-11-02：不管加密 krkr 了）**。
    样本仍在盘（温泉蒸汽人妻 3 包 / 教师催眠2 11 包 / aniyome 11 包 / Doinaka 9 包 /

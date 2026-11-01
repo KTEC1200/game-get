@@ -279,3 +279,36 @@ def test_assetstudio_guard_rails_with_real_tool_present():
         tb.assetstudio_export("src", "out", types="Texture2D,AudioClip")
     with pytest.raises(ValueError):
         tb.assetstudio_export("src", "out", types="Texture2D|AudioClip")
+
+
+# ---------------------------------------------------------------------------
+# 7. 随包工具（bin/<key>）：真用一次「随包副本」跑 garbro_list，证明解析档位没白加
+# ---------------------------------------------------------------------------
+
+def test_bundled_garbro_list_uses_bundled_copy(tmp_path, monkeypatch):
+    """冻结包 bin/garbro 存在时，monkeypatch _bin_root 指过去真跑一次：
+    ToolResult.exe 必须是随包副本的路径（不是开发机 D:\K\galgame 的）。"""
+    dist_bin = Path(__file__).resolve().parent.parent / "_spike_pkg" / "dist" / "orchestrator" / "bin"
+    if not (dist_bin / "garbro" / "GARbro.Console.exe").is_file():
+        pytest.skip("dist 未打包随包工具（先跑 python build_exe.py）")
+    # 真实归档：从案例库样本地里找一个 xp3
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    import build_cases as bc
+    archive = ""
+    for _name, s in bc.SAMPLES.items():
+        d = Path(s["game_dir"])
+        if not d.is_dir():
+            continue
+        hits = sorted(d.rglob("*.xp3"))
+        if hits:
+            archive = str(hits[0])
+            break
+    if not archive:
+        pytest.skip("没有可用的 .xp3 样本")
+
+    monkeypatch.setattr(tb, "_bin_root", lambda: dist_bin)
+    ok, _entries, _out = tb.garbro_list(archive)
+    # garbro_list 返回 (ok, entries, out)，不带 exe 路径——用 find_tool 直接锁解析结果
+    hit = tb.find_tool("garbro")
+    assert hit.parent == dist_bin / "garbro", f"应解析到随包副本，实际 {hit}"
+    assert ok is not None

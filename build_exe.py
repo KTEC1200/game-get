@@ -89,7 +89,7 @@ def check() -> int:
     return 0
 
 
-def build() -> int:
+def build(no_bundle_tools: bool = False) -> int:
     args, missing = data_args()
     if missing:
         print("数据文件缺失，先补齐再构建：", ", ".join(missing), file=sys.stderr)
@@ -108,6 +108,10 @@ def build() -> int:
     if r.returncode != 0:
         print(f"PyInstaller 失败 rc={r.returncode}", file=sys.stderr)
         return r.returncode
+    if not no_bundle_tools:
+        print("\n== 随包外部工具 ==", flush=True)
+        for line in bundle_tools(DIST / "orchestrator"):
+            print(line, flush=True)
     n = sum(1 for p in DIST.joinpath("orchestrator").rglob("*") if p.is_file())
     size = sum(p.stat().st_size for p in DIST.joinpath("orchestrator").rglob("*") if p.is_file())
     print(f"\n产物：{EXE}\n  {n} 个文件，{size / 1024 / 1024:.1f} MiB")
@@ -210,6 +214,92 @@ def portable() -> int:
     return 0
 
 
+# ---------------------------------------------------------------- 外部工具随包
+
+#: 随包外部工具（用户 2026-11-02 要求「所需外部工具一并集成」）。
+#: key = toolbridge TOOLS 的 key（解析时找 `bin/<key>/<exe_name>`）；krkrz 不在
+#: toolbridge 注册表里（KrkrzExtract 是 KrkrExtract 报 Unknown chunk 时的手动兜底），
+#: 照 bin 子目录约定打进去即可。pattern: "*" 整目录；或 glob 列表
+#: （ffprobe 是共享构建，只带 exe + av* DLL，不带 ffmpeg.exe/ffplay.exe）。
+BUNDLE_TOOLS: list[tuple[str, str, str | list[str]]] = [
+    ("garbro", r"D:\K\galgame\GARbro", "*"),
+    ("assetstudio", r"D:\K\galgame\unity\AssetStudio", "*"),
+    ("tlg2png", r"D:\K\galgame\tlg2png", "*"),
+    ("krkr", r"D:\K\galgame\krkr\krkr", "*"),
+    ("krkrz", r"D:\K\galgame\krkr\krkrz", "*"),
+    ("ffprobe", r"D:\ffmpeg\bin",
+     ["ffprobe.exe", "avcodec-*.dll", "avdevice-*.dll", "avfilter-*.dll",
+      "avformat-*.dll", "avutil-*.dll", "swresample-*.dll", "swscale-*.dll"]),
+]
+
+#: 随包工具的许可证状态（蓝图 §5.2：聚合分发 ≠ 补许可证义务的豁免）。
+#: 「蓝图已核实」= galgame-ai-unpack-workflow-plan.md §3 的核对结论；
+#: 「未核实」= 别在对外分发前当它是有许可证的。
+TOOL_LICENSES: list[tuple[str, str, str]] = [
+    ("garbro", "MIT（蓝图已核实：morkt/GARbro）",
+     "https://github.com/morkt/GARbro"),
+    ("assetstudio", "MIT（上游 Perfare/AssetStudio 为 MIT；本 CLI 分支的具体 fork 未核实）",
+     "https://github.com/Perfare/AssetStudio"),
+    ("tlg2png", "未核实（分发前必须补）", ""),
+    ("krkr", "未核实（KrkrExtract，分发前必须补）", ""),
+    ("krkrz", "未核实（KrkrzExtract，分发前必须补）", ""),
+    ("ffprobe", "LGPL/GPL 视构建配置而定，本共享构建未核实；GPL 构建对外分发须提供对应源码（蓝图 §5.2）",
+     "https://ffmpeg.org"),
+]
+
+
+def _write_tool_notice(bin_root: Path) -> None:
+    lines = ["随包外部工具清单与许可证状态（生成于 build_exe.py，勿手改）", ""]
+    for key, lic, url in TOOL_LICENSES:
+        lines.append(f"* {key}")
+        lines.append(f"    许可证: {lic}")
+        if url:
+            lines.append(f"    上游:   {url}")
+    lines += [
+        "",
+        "注意:",
+        "  * 当前定位是个人自用，暂未对外分发；一旦对外分发，必须把每个工具的",
+        "    许可证全文放进本目录，并履行 GPL 组件（如 ffprobe GPL 构建）的源码义务。",
+        "  * 工具本体不修改、以独立进程调用（toolbridge argv 数组）——聚合而非衍生。",
+    ]
+    (bin_root / "NOTICE.txt").write_text("\n".join(lines), encoding="utf-8")
+
+
+def bundle_tools(dest_root: Path, entries: list[tuple[str, str, str | list[str]]] | None = None) -> list[str]:
+    """把外部工具拷进 `<dest_root>/bin/<key>/`，返回报告行。
+
+    缺来源**只警告不失败**——软件对缺失工具会如实报错（toolbridge 解析落到下一档），
+    不该让「打包机上少个工具」把整个构建炸掉。
+    """
+    reports: list[str] = []
+    bin_root = dest_root / "bin"
+    bin_root.mkdir(parents=True, exist_ok=True)
+    for key, src, pattern in (entries if entries is not None else BUNDLE_TOOLS):
+        s = Path(os.path.expandvars(src))
+        if not s.is_dir():
+            reports.append(f"[SKIP] {key}: 来源不存在 {s}")
+            continue
+        dst = bin_root / key
+        dst.mkdir(parents=True, exist_ok=True)
+        n = 0
+        if pattern == "*":
+            for p in s.rglob("*"):
+                if p.is_file():
+                    rel = p.relative_to(s)
+                    (dst / rel).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(p, dst / rel)
+                    n += 1
+        else:
+            for pat in pattern:
+                for p in s.glob(pat):
+                    shutil.copy2(p, dst / p.name)
+                    n += 1
+        size = sum(f.stat().st_size for f in dst.rglob("*") if f.is_file())
+        reports.append(f"[OK]   {key}: {n} 个文件，{size / 1048576:.1f} MiB ← {s}")
+    _write_tool_notice(bin_root)
+    return reports
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--check", action="store_true", help="只校验清单，不构建")
@@ -221,6 +311,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="配合 --installer：出 Uninstallable=no 的会话内验证构建")
     ap.add_argument("--portable", action="store_true",
                     help="出便携版 zip（现有 dist + README；杀软拦安装器时的备用渠道）")
+    ap.add_argument("--no-bundle-tools", action="store_true",
+                    help="跳过外部工具随包（默认按 BUNDLE_TOOLS 尽力打包，缺来源只警告）")
     a = ap.parse_args(argv)
     if a.check:
         return check()
@@ -230,7 +322,7 @@ def main(argv: list[str] | None = None) -> int:
         return installer(skip_build=True, testmode=a.testmode)
     if a.installer:
         return installer(testmode=a.testmode)
-    return build()
+    return build(no_bundle_tools=a.no_bundle_tools)
 
 
 if __name__ == "__main__":
