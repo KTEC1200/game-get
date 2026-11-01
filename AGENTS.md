@@ -223,7 +223,8 @@ Ren'Py 侧：`_rpa_stage` / `_rpa_patch_stage` / `_rpa_arch.txt` / `_rpa_patch.t
 > **「Tyrano 不做，先软件化」**。终局不变——可复用的 Windows 软件（路线 `software-plan.md`）。
 
 **基线**：12 个样本全部走完（判定→提取→验收→对账→回写，见上表）；orchestrator 8 条链路；cases/ 案例库建成并接入；
-PyInstaller 打包三条必修全部完成（2026-11-02，冻结 exe 真样本全链实证，见下 ①）。
+**软件 v0.1.0 成型（2026-11-02）**：冻结 exe（含 GUI 壳）+ 数据清单 + Inno Setup 安装包 + 杀软文档 + README，
+阶段 3 全部完成。
 
 ### ① 打包三条必修（§19.2）—— ✅ **三条全部完成（2026-11-02），冻结全链真样本实证通过**
 
@@ -242,26 +243,37 @@ dry-run 命中 rules+cases（case_path 在包内）、extract in-process **1585/
 图片 719/0 失败、音频 866/0 失败、媒体 651.4 分钟、manifest ok=true。复跑：
 `python build_exe.py` → `python _spike_pkg/run_frozen_smoke.py [--full]`。
 
-### ② 阶段 3 剩下
+### ② 阶段 3 —— ✅ **全部完成（2026-11-02）**
 
-1. ~~Inno Setup 打包~~ ✅ **已完成（2026-11-02）**：`packaging/installer.iss` +
-   `build_exe.py --installer`（ISCC 解析 env→候选→PATH；产物 22.8 MiB + SHA256）。
-   设计：`PrivilegesRequired=lowest`（不提权，装 `{localappdata}\Programs`，蓝图 §4.6）、
-   .NET 4.6+ 检测只提示不拦（§4.4）、无 PATH 修改/无自启、lzma2/max。
-   **会话内验证**：testmode 构建（`--installer-only --testmode`，`Uninstallable=no` 配
-   `/NOICONS`）静默安装 rc=0、安装出来的 exe 真样本 dry-run rc=0；**卸载键与开始菜单
-   快捷方式这两步在代理会话里装不了**（会话对未知镜像过滤敏感面写入，见
-   `antivirus-false-positives.md` §5）——完整安装要在真实桌面会话双击验证一次。
-2. ~~杀软误报应对文档~~ ✅ **已完成（2026-11-02）**：`antivirus-false-positives.md`
-   （社区实践非官方保证；含首次构建的实测发现）。
-3. ~~**GUI 最小壳**~~ ✅ **已完成（2026-11-02）**：`gui.py` + `orchestrator.py --gui`
-   （**单 exe 双模式**，不造第二个 66MB 运行时）。选目录/拖目录 → 工作线程跑
-   `orch.run(ctx)` → `root.after` 轮询队列回传日志 → 完了弹交付摘要（final 数、对账、
-   验收）+「打开输出目录」。拖拽 = tkinterdnd2 可选增强（没装退化为浏览+粘贴；
-   冻结包 `--collect-all tkinterdnd2`）。`--gui-smoke` = 冻结包 Tk 冒烟（建窗 600ms 自毁）。
-   纪律：**GUI 线程只碰 Tk，worker 只塞队列**（Tk 非线程安全）；`ctx.log` 用实例属性
-   遮蔽包一层做日志回流（文件 + GUI 两条消费路径）。tests/test_gui.py 6 条
-   （纯逻辑全锁 + Tk 构造冒烟，无显示自动 skip）。
+1. ~~打包三条必修（§19.2）~~ ✅：7 兄弟脚本 in-process（`_run_sibling` + 静态 import + AST 护栏）；
+   `build_exe.py` 数据清单唯一出处（rules/cases/两个 .cs/**_uia_item_rect.ps1**[新发现]/可选
+   toolbridge.json）；`_sanitize_env`/`_clear_dll_dir` 早已覆盖 toolbridge 全部子进程出口。
+   **冻结实测**：真样本全链 rc=0（1585 对账 0 差 + 验收 0 失败），细节 §19.2。
+2. ~~Inno Setup 安装包~~ ✅：`packaging/installer.iss`（lowest 提权 / .NET 4.6+ 提示 / lzma2；
+   README 随包分发）+ `build_exe.py --installer`（ISCC env→候选→PATH + SHA256）。
+   testmode（`Uninstallable=no` 配 `/NOICONS`）会话内端到端验证过：静默装 rc=0、安装态 exe
+   dry-run + `--gui-smoke` 双 rc=0；**卸载键/开始菜单快捷方式两步受会话写过滤限制**
+   （未知镜像被拒写，证据链 antivirus-false-positives.md §5）——真实桌面双击验证一次即可。
+3. ~~杀软误报文档~~ ✅：`antivirus-false-positives.md`（社区实践非官方；发布自检清单/申诉渠道）。
+4. ~~GUI 最小壳~~ ✅：`gui.py` + `orchestrator --gui`（**单 exe 双模式**）：拖/选目录 →
+   工作线程 `orch.run` → 队列回流日志 → 交付摘要弹窗。tkinterdnd2 可选增强（没装退化
+   浏览+粘贴）；`--gui-smoke` 冻结态 Tk 冒烟 rc=0；tests/test_gui.py 6 条（纯逻辑全锁 +
+   Tk 冒烟）。纪律：**GUI 线程只碰 Tk、worker 只塞队列**；`ctx.log` 实例属性遮蔽做日志回流。
+5. ~~README + requirements~~ ✅：`README.md`（安装/用法/引擎表/外部工具配置）随安装包分发。
+
+### ③ 下一步（当前）
+
+1. **加密 KiriKiri 剩余 ~7 部逐部跑**（工具现成，`krkr_auto_extract.py` 全自动；
+   2026-11-02 只读盘点全在盘：温泉蒸汽人妻 3 包 / 教师催眠2 11 包 / aniyome 11 包 /
+   Doinaka Kyoudai 9 包 / pork社另有 パート妻の情事・堕落妻子・昼下がり×2）。
+   ⚠️ **SendInput 真实拖拽 = 接管鼠标 ~40 分钟/部**（§17 机制）——要等桌面空闲、用户说跑才跑；
+   建议从最小的温泉蒸汽人妻开始，中断可 `--reuse-stage` 续传。
+2. **E-mote 搭车项**：2026-11-02 盘面扫描 0 命中（.pimg/.psb 都在未提取的 xp3 里）——
+   跑上面的样本时留意；见到就接 FreeMote（工具未装，需下载）。
+3. **远程上传待用户点头**：v0.1.0 已成型，按约定「成型才 push」——remote 尚未添加
+   （`git@github.com:KTEC1200/game-git.git`），等用户确认。
+4. 搁置不变（需用户配合）：夕凪荘 22 BGM 内存 dump、GUI 弹窗行为确认。
+5. 最后才考虑：AI 兜底（A1/A2/A3）。
 
 ### ③ 搁置（需用户配合交互，等指示）
 夕凪荘 22 个加密 BGM 的内存 dump（工具 `_bgm_dump2.py` 已备好，需玩到标题画面/播 BGM 时跑；静态进展见 §15.3）、
