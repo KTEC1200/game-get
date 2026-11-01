@@ -1043,3 +1043,32 @@ ExHIBIT 3、CatSystem2 2）。
 `build_cases.py`（`--from-manifests` / `--from-docs` / `--index` / `--validate`）+ `tests/test_cases.py`
 （21 个测试，锁纯函数 + 构建产物 + 诚实纪律）。测试 **453 passed / 8 skipped**，
 `python tests/make_golden.py --check` 零漂移。
+
+### 18.5 接入 orchestrator（2026-11-01）——查表只报告，不接管决策
+
+**做法**：`case_lib.py` 成为「签名 + 查表」的**唯一出处**（`build_cases.py` 与 `orchestrator.py` 都调它；
+两处各写一份签名算法必然漂移，而签名就是查表的钥匙，漂移等于查不到）。
+orchestrator 新增**阶段 1.5 `case-lookup`**，位于 `detect` 之后、`IMPLEMENTED` 链路检查**之前**——
+这样**未接链路的引擎也能看到历史案例**（SPITE 判成 Tyrano/Electron，退出码 2，但案例里记着
+`_spite_decrypt` 的 ChaCha20 路径与 4 条坑）。命中写进 `manifest.source.case_match`
+（与 `source.unsupported` 同理：读 manifest 的人读 `source`，不会去翻 `stages[*].data`）。
+
+**四条设计纪律**：
+
+1. **查表只报告，不接管决策**：案例的 `expected_total` **不参与对账**。对账的地面真相永远是编排器
+   自己从归档索引算出来的数（`_rpa` 索引 / `_grp` TOC / `_cs2` 头…）。案例里的数字是「上次解出多少」，
+   不是「这次应该解出多少」——拿它当判据，案例写错就会把一次正确解包判成失败（§16.6 护栏算错
+   比不设护栏更坏的翻版）。退出码、对账口径、manifest 顶层 schema 一律不动。
+2. **三种结局一律 `ok=True`**：命中 N 个 / 无匹配 / 案例库缺失或损坏。区别只在 `detail` 与 `data`。
+   把「看过案例库，没有」和「根本没有案例库」混成同一种空，等于**无声漏验**（`.mos` 教训的翻版）。
+3. **`--engine` 强制模式也要能查**：detect 没跑 → `fired_ids` 缺失 → 阶段自己补一次**只读** `gd.scan`
+   拿指纹；扫描失败也只是 `skipped`，绝不抛异常、绝不让解包失败。
+4. **同签名靠 `discriminator` 区分**：KiriKiri 三样本共享 `6519ddb81f58`，`lookup()` 必须**全部列出**
+   （按签名分组、不取第一个），人读的 `detail` 带 discriminator 标签，否则「命中」等于给了个错答案。
+
+**测试**：`tests/test_case_lookup.py` 41 个（40 passed / 1 skipped）。两条最值钱的断言：
+① **每个 case 文件都能反算回自己的 `signature` 与 `case_id`**——算法一改，所有既有 case 立刻对不上，
+   测试当场红（比断言某个魔法常量可靠，常量会跟着实现一起改）；
+② 真实目录上跑阶段：`兼职人妻` 命中 3 个 KiriKiri 变体、SPITE 命中 `4955589831f2-Tyrano-Electron`。
+全量 **493 passed / 9 skipped**，golden 零漂移。
+

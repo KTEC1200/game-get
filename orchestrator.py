@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""orchestrator.py —— detect → extract → postprocess → verify → manifest 一条命令跑完。
+"""orchestrator.py —— detect → case-lookup → extract → postprocess → verify → manifest 一条命令跑完。
+
+`case-lookup`（阶段 1.5）按指纹签名查 `cases/` 案例库，**只报告历史解法与坑，不接管决策**：
+对账的地面真相永远是编排器自己从归档索引算出来的数，案例里的 expected_total 不参与对账。
+命中写进 `manifest.source.case_match`；三种结局（命中/无匹配/案例库缺失）都是 ok=True。
 
 用法:
   python orchestrator.py <游戏目录> --out <输出目录> [选项]
@@ -44,6 +48,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import galgame_dispatch as gd          # noqa: E402
+import case_lib                        # noqa: E402  （案例库查表：签名算法唯一出处）
 import manifest                        # noqa: E402
 import rpa_tool                        # noqa: E402
 import toolbridge as tb                # noqa: E402
@@ -154,6 +159,9 @@ def stage_detect(ctx: Ctx) -> Stage:
         "score": best.score if best else 0,
         "above_threshold": bool(best and best.score >= gd.THRESHOLD),
         "guesses": [{"engine": g.engine, "score": g.score} for g in rep.guesses[:4]],
+        # 命中信号 id 集合：案例库指纹签名的原料（case_lib.signature）。
+        # 只放在这个 stage 的 data 里，**不进 rules 的 facts** —— 那会动 golden 基线。
+        "fired_ids": sorted(rep.fired_ids),
         "notes": rep.notes,
     }
     ctx.log("detect", json.dumps(st.data, ensure_ascii=False, indent=2))
@@ -163,6 +171,64 @@ def stage_detect(ctx: Ctx) -> Stage:
         return st
     st.ok = True
     st.detail = f"{best.engine} (score={best.score})"
+    return st
+
+
+# ---------------------------------------------------------------- 阶段 1.5: 案例库查表
+
+def stage_case_lookup(ctx: Ctx, detect_data: dict | None = None,
+                      cases_dir: Path | str | None = None) -> Stage:
+    """按指纹签名查 `cases/` 案例库 —— **只读报告层，永不让解包失败**。
+
+    案例库回答「这个引擎的这个变体上次怎么解出来的、踩过什么坑」，
+    不是「这次该怎么解」：提取计划仍由本编排器按归档索引自己算，
+    案例里的 `expected_total` **不参与对账**（编排器自己的索引才是地面真相）。
+
+    三种结局都 `ok=True`：命中 N 个 / 无匹配 / 案例库缺失或损坏。
+    区别只在 `detail` 与 `data`：把它们混成同一种「空」就等于把
+    「看过案例库，没有」和「根本没有案例库」说成同一件事。
+    """
+    st = Stage("case-lookup")
+    t0 = time.time()
+    root = Path(cases_dir) if cases_dir else case_lib.DEFAULT_CASES_DIR
+
+    engine = (detect_data or {}).get("engine")
+    signals = (detect_data or {}).get("fired_ids")
+    if engine is None or signals is None:
+        # `--engine` 强制模式没跑 detect：为查表补一次只读扫描（结论不参与判定）。
+        try:
+            rep = gd.scan(ctx.game_dir)
+        except Exception as exc:                            # noqa: BLE001
+            st.ok = True
+            st.skipped = True
+            st.detail = f"为案例查表做的指纹扫描失败：{type(exc).__name__}: {exc}"
+            st.data = {"index_present": case_lib.load_index(root) is not None,
+                       "signature": None, "candidates": []}
+            st.seconds = time.time() - t0
+            return st
+        best = rep.best
+        engine = (best.engine if best else None) or engine
+        signals = sorted(rep.fired_ids) if signals is None else signals
+
+    res = case_lib.lookup(engine, signals, root)
+    st.data = {**res, "engine": engine, "signals": sorted(signals or [])}
+    st.seconds = time.time() - t0
+    st.ok = True
+    if res["signature"] is None:
+        st.skipped = True
+        st.detail = "未判出引擎，算不出指纹签名，跳过案例查表"
+    elif not res["index_present"]:
+        st.skipped = True
+        st.detail = "cases/index.json 不存在或不可读，跳过案例查表"
+    elif not res["candidates"]:
+        st.detail = f"无匹配案例（签名 {res['signature']}）"
+    else:
+        names = "、".join(
+            f"{c['sample']}" + (f"（{c['discriminator']}）" if c.get("discriminator") else "")
+            for c in res["candidates"])
+        st.detail = (f"命中 {len(res['candidates'])} 个案例"
+                     f"（签名 {res['signature']}）：{names}")
+        ctx.log("case-lookup", json.dumps(res, ensure_ascii=False, indent=2))
     return st
 
 
@@ -1478,6 +1544,25 @@ def build_manifest(ctx: Ctx, stages: list[Stage], engine: str | None) -> dict:
     if unsupported:
         source["unsupported"] = unsupported
 
+    # 案例库命中也要进 source：跟 unsupported 同理 —— 读 manifest 的人看的是 source，
+    # 不会去翻 stages 里某一项的 data。**没命中就不写**，不给每条链路凭空加字段。
+    case_data = stage_data("case-lookup")
+    candidates = case_data.get("candidates") or []
+    if candidates:
+        source["case_match"] = {
+            "signature": case_data.get("signature"),
+            "candidates": [{
+                "case_id": c.get("case_id"),
+                "sample": c.get("sample"),
+                "engine_label": c.get("engine_label"),
+                "discriminator": c.get("discriminator"),
+                "provenance": c.get("provenance"),
+                "decision": c.get("decision"),
+                "failures": c.get("failures", 0),
+                **({"missing": True} if c.get("missing") else {}),
+            } for c in candidates],
+        }
+
     return manifest.build(
         tool="orchestrator.py",
         engine=engine,
@@ -1523,6 +1608,11 @@ def run(ctx: Ctx) -> tuple[int, dict]:
         engine = st.data.get("engine")
         if not st.ok:
             return 3, {"error": "detect-failed", "stages": [s.as_dict() for s in stages]}
+
+    # 1.5 案例库查表（只读报告层）
+    # 放在「引擎是否实现链路」检查**之前**：未接链路的引擎（如 Tyrano-Electron）
+    # 也能看到历史案例——SPITE 的 ChaCha20 路径与坑就记在案例里，退出码 2 也值得报出来。
+    stages.append(stage_case_lookup(ctx, st.data))
 
     # 引擎是否已实现链路
     ctx.engine = engine          # 后处理按引擎分派（CatSystem2 走魔数那条），必须回填
@@ -1619,8 +1709,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if a.dry_run:
         st = stage_detect(ctx)
-        print(json.dumps({"game_dir": str(game_dir), "out": str(out_dir),
-                          "detect": st.as_dict()}, ensure_ascii=False, indent=2))
+        payload = {"game_dir": str(game_dir), "out": str(out_dir),
+                   "detect": st.as_dict()}
+        if st.ok:
+            # dry-run 也把案例库查表带上：这正是「先看有没有现成解法」的场合
+            payload["case_lookup"] = stage_case_lookup(ctx, st.data).as_dict()
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0 if st.ok else 3
 
     out_dir.mkdir(parents=True, exist_ok=True)

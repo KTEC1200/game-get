@@ -37,7 +37,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 from datetime import datetime, timezone, timedelta
@@ -48,6 +47,7 @@ CASES = ROOT / "cases"
 sys.path.insert(0, str(ROOT))
 
 import galgame_dispatch as gd  # noqa: E402
+import case_lib                # noqa: E402
 
 SCHEMA_VERSION = "cases/1"
 THRESHOLD = gd.THRESHOLD  # 60
@@ -102,8 +102,8 @@ SAMPLES: dict[str, dict] = {
 EXCLUDED_MANIFEST_DIRS = {"甜蜜女友2+_试跑"}
 
 
-def _sha1(*parts: str) -> str:
-    return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
+def _sha1(*parts: str) -> str:              # 兼容旧调用；实现在 case_lib
+    return case_lib._sha1(*parts)
 
 
 def _now() -> str:
@@ -111,9 +111,8 @@ def _now() -> str:
     return datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%dT%H:%M:%S+08:00")
 
 
-def _slug(name: str) -> str:
-    """样本名 → 文件名安全的短标识（保留 CJK，去掉路径分隔符与空格）。"""
-    return name.replace("/", "-").replace("\\", "-").replace(" ", "-").strip("-")
+def _slug(name: str) -> str:                # 兼容旧调用；实现在 case_lib
+    return case_lib.slug(name)
 
 
 def _fingerprint(game_dir: Path) -> dict:
@@ -125,7 +124,8 @@ def _fingerprint(game_dir: Path) -> dict:
     rep = gd.scan(game_dir)
     best = rep.best
     signals = sorted(rep.fired_ids)
-    sig = _sha1(best.engine if best else "", ",".join(signals))[:12]
+    # 签名算法在 case_lib（与 orchestrator 查表共用同一份，改一处不会两边漂移）
+    sig = case_lib.signature(best.engine if best else None, signals)
     return {
         "signals": signals,
         "score": best.score if best else 0,
@@ -137,15 +137,12 @@ def _fingerprint(game_dir: Path) -> dict:
 
 
 def _case_id(engine: str, signals: list[str], sample: str, discriminator: str | None) -> str:
-    """case_id = sha1(engine + 信号集 + 样本 + discriminator)[:12]。
+    """case_id = sha1(engine + 信号集 + 样本 + discriminator)[:12]（实现在 case_lib）。
 
     纯指纹哈希在「兼职人妻 vs 高慢妻」这类同签名场景会撞车，
     所以把样本 slug 与 discriminator 一并入哈希，保证唯一且确定性。
     """
-    parts = [engine, ",".join(sorted(signals)), _slug(sample)]
-    if discriminator:
-        parts.append(discriminator)
-    return _sha1(*parts)[:12]
+    return case_lib.case_id(engine, signals, sample, discriminator)
 
 
 def _load_failures() -> dict:

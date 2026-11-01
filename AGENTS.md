@@ -96,6 +96,10 @@
   - `counts_flat(out_dir)` —— **落盘即成品形态**（`rpa_extract_organized.py` / `_rpgmv_decrypt.py` /
     `_ypf_extract.py`：转换做在落盘之前，磁盘上从不存在中间格式，故 raw == final、converted 为空；
     **不许伪造带 `.ycg`/`.rpgmvp` 的 raw 段，那是编数据**，转换明细进 `postprocess`）。
+- **案例库查表：`case_lib.py`**（2026-11-01，orchestrator 阶段 1.5）—— `cases/` 的**签名与查表唯一出处**：
+  `signature(engine, signals)`（= sha1("engine|逗号连接的排序信号 id")[:12]）、`case_id(...)`、
+  `load_index()` / `load_case()` / `lookup(engine, signals)`。命令行 `python case_lib.py <engine> <sig1,sig2>` 手工查。
+  查表**只报告不决策**：案例的 `expected_total` **不参与对账**（编排器自己的归档索引才是地面真相）。
 - Ren'Py：**`rpa_tool.py`**（`info`/`list`/`extract`）、**`rpa_extract_organized.py`**（一步分类解包，`--manifest PATH` 可选）、`_organize_rpa.py`（先解再分，留档）
 - Unity：**`_unity_extract.py`**（AssetStudio JSON 枚举 + Convert 导出，orchestrator 第 8 条链路）、**`unity_unpack.ps1`**（手工版）、`_as_audio_collect2.py`（FSB5 分组累积）、`_as_catalog.py`、`_as_summary.py`、`_scan_unity_video.py`
 - KiriKiri：`_tlg2png_all.ps1`、**`_krkr_tlg_convert.py`**（tlg2png 批量转换 Python 版，避开 CJK 路径坑）
@@ -337,7 +341,8 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
   ② ~~接 **Unity**~~ ✅ **已实现并全量跑通第 8 条链路（`_unity_extract.py`）**：JSON 枚举作地面真相、Convert 分批导出、FSB5 多轮累积。实测图片 777/777、音频 1168/1168、视频 0/0，媒体 123.2 分钟，全链 153.0s 退出码 0（Texture2D 有 5 个引用型资产缺口，已显式报出并对账通过）
   ③ 接剩下 1 个引擎（**Tyrano-Electron**；目前只有 `_fixtures/tyrano_game`，没有真实样本）—— 排在 cases/ 之后
   ④ ~~`cases/` 案例库~~ ✅ **已完成（2026-11-01）**：12 个 case + `index.json` + `build_cases.py` +
-  `tests/test_cases.py`，见下方专节。
+  `tests/test_cases.py`；并已**接入 orchestrator**（阶段 1.5 `case-lookup` + `case_lib.py` +
+  `manifest.source.case_match`），见下方专节。
 
 ## cases/ 案例库（已完成 2026-11-01）
 
@@ -368,7 +373,14 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
 - ✅ `build_cases.py`（构建器，含 `write_all` 清陈旧文件 + `validate_cases` 诚实校验）。
 - ✅ 生成 **12 个 case + `index.json`（9 个签名）**，`--validate` 全过。
 - ✅ `tests/test_cases.py`（21 个测试，锁纯函数 + 构建产物 + 诚实纪律）。
-- ✅ 测试 453 passed / 8 skipped；`python tests/make_golden.py --check` 零漂移。
+- ✅ **接入 orchestrator（2026-11-01，用户批准「报告命中」口径）**：新增 `case_lib.py`（签名/查表**唯一出处**，
+  `build_cases.py` 与 `orchestrator.py` 都调它，别各写一份）、`stage_case_lookup`（**阶段 1.5**，
+  在 detect 之后、`IMPLEMENTED` 链路检查**之前**——未接链路的引擎如 Tyrano-Electron 也能看到历史案例）、
+  `manifest.source.case_match`（仅命中时写）、`--dry-run` 的 payload 增 `case_lookup`。
+  **三种结局都 `ok=True`**：命中 N 个 / 无匹配 / 案例库缺失或损坏——区别只在 detail，
+  「看过案例库，没有」和「根本没有案例库」不能混成同一种空。
+  ✅ `tests/test_case_lookup.py`（41 个测试，含「签名/ case_id 可由每个 case 文件重算」锁定算法）。
+- ✅ 测试 **493 passed / 9 skipped**；`python tests/make_golden.py --check` 零漂移。
 
 **12 个 case 的来源分布**：5 个 `manifest`（My Wife / ラブラブ / 夕凪荘 / 甜蜜女友2+ ×2，其中
 甜蜜女友2+_试跑 是同款非独立样本已排除）+ 7 个 `docs-reconstructed`（兼职人妻 / My Best Deal /
