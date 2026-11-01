@@ -1,0 +1,85 @@
+{
+  "schema": "cases/1",
+  "case_id": "3f7607cd8585",
+  "engine": "KiriKiri",
+  "engine_label": "KiriKiri",
+  "sample": "兼职人妻",
+  "game_dir": "D:\\HY\\pork社\\兼职人妻",
+  "discriminator": "xp3-plain",
+  "fingerprint": {
+    "signals": [
+      "xp3",
+      "xp3_known_names"
+    ],
+    "score": 90,
+    "threshold": 60,
+    "signature": "6519ddb81f58",
+    "engine": "KiriKiri",
+    "reconstructed": false
+  },
+  "decision": {
+    "extractor": "garbro",
+    "archive_exts": [
+      ".xp3",
+      ".tlg"
+    ],
+    "archive_count": 1,
+    "expected_total": 2562,
+    "notes": "单主包 data.xp3（544.7 MB），GARbro.Console 可识别 2562 条、-x 8 秒解完；.tlg 需 tlg2png 后处理转 PNG。"
+  },
+  "timing": {
+    "detect": null,
+    "extract": null,
+    "postprocess": null,
+    "verify": null,
+    "manifest": null,
+    "total": null,
+    "note": "GARbro 提取 8 秒；507 tlg→png 73.8s"
+  },
+  "result": {
+    "ok": true,
+    "source": "docs",
+    "summary": {
+      "images": 902,
+      "audio": 1577,
+      "video": 0,
+      "total": null
+    },
+    "media_minutes": 217.7,
+    "counts": null,
+    "verify": null,
+    "reconcile": null
+  },
+  "failures": [
+    {
+      "stage": "detect",
+      "symptom": "按魔数全扫原包出现大量 FLV/MPEG-PS/JPEG 命中，一度得出「本作有视频」。",
+      "root_cause": "命中偏移落在归档条目内部（压缩数据里的巧合字节），并非条目起始。",
+      "fix": "用魔数命中偏移与 GARbro 条目表交叉定位：只有命中偏移 == 条目起始偏移才算真文件。",
+      "ref": "verified-findings §7.1；AGENTS.md 坑3"
+    },
+    {
+      "stage": "reconcile",
+      "symptom": "条目统计比实际少 1（.tlg 数成 506 实为 507、bgimage 数成 82 实为 83）。",
+      "root_cause": "用 Select-Object -Skip 1 吃掉首行；GARbro 列表输出无表头，首行就是第一个条目。",
+      "fix": "条目数一律用非空行数，任何格式都不减 1；计数差异对账到 0，不用「差不多」放过。",
+      "ref": "verified-findings §7.5"
+    },
+    {
+      "stage": "verify",
+      "symptom": "图片数一度记为 903/903，与索引口径自相矛盾。",
+      "root_cause": "同一节内表格未交叉对账：索引按扩展名是 395 png + 507 tlg = 902，无重名。",
+      "fix": "同一文档内部也要交叉对账；图片口径 = 395 png + 507 tlg = 902。",
+      "ref": "verified-findings §7.3"
+    }
+  ],
+  "provenance": {
+    "source": "docs-reconstructed",
+    "manifest_path": null,
+    "doc_refs": [
+      "AGENTS.md 样本表",
+      "verified-findings.md"
+    ],
+    "generated_at": "2026-11-01T17:33:45+08:00"
+  }
+}

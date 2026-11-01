@@ -1,0 +1,145 @@
+{
+  "schema": "cases/1",
+  "case_id": "1fc5ee3f9915",
+  "engine": "AdvHD",
+  "engine_label": "AdvHD",
+  "sample": "ラブラブお痴験バイト性活",
+  "game_dir": "D:\\HY\\tm\\ラブラブお痴験バイト性活",
+  "discriminator": null,
+  "fingerprint": {
+    "signals": [
+      "advhd_arc",
+      "advhd_exe",
+      "advhd_lang"
+    ],
+    "score": 105,
+    "threshold": 60,
+    "signature": "e0bde5633a1e",
+    "engine": "AdvHD",
+    "reconstructed": false
+  },
+  "decision": {
+    "extractor": "_advhd_run",
+    "archive_exts": [
+      ".arc",
+      ".dat",
+      ".pna"
+    ],
+    "archive_count": 18,
+    "expected_total": null,
+    "notes": "AdvHD.exe + AdvHDLang.dll；封包 .arc ×18（GARbro 原生可解），.dat=ASF/WMV，.pna=PNAP 多帧容器。"
+  },
+  "timing": {
+    "detect": 0.01,
+    "extract": 28.33,
+    "postprocess": 3.48,
+    "verify": 541.99,
+    "manifest": 4.98,
+    "total": 578.8
+  },
+  "result": {
+    "ok": true,
+    "source": "manifest",
+    "summary": {
+      "images": 4306,
+      "audio": 7031,
+      "video": 9,
+      "total": 11624
+    },
+    "media_minutes": 857.4,
+    "counts": {
+      "raw": {
+        "by_ext": {
+          ".csh": 3,
+          ".dat": 1,
+          ".fx": 52,
+          ".h": 1,
+          ".hlsl": 1,
+          ".inc": 1,
+          ".lua": 14,
+          ".mos": 677,
+          ".ogg": 7031,
+          ".pna": 48,
+          ".png": 989,
+          ".psh": 3,
+          ".vsh": 1,
+          ".wmv": 9,
+          ".ws2": 201
+        },
+        "total": 9032,
+        "bytes": 3136965239
+      },
+      "final": {
+        "by_ext": {
+          ".csh": 3,
+          ".dat": 1,
+          ".fx": 52,
+          ".h": 1,
+          ".hlsl": 1,
+          ".inc": 1,
+          ".lua": 14,
+          ".mos": 677,
+          ".ogg": 7031,
+          ".png": 3629,
+          ".psh": 3,
+          ".vsh": 1,
+          ".wmv": 9,
+          ".ws2": 201
+        },
+        "total": 11624,
+        "bytes": 3136816199
+      },
+      "converted": {
+        ".pna": 48
+      }
+    },
+    "verify": {
+      "verified": true,
+      "image_ok": 4306,
+      "image_fail": 0,
+      "audio_ok": 7031,
+      "audio_fail": 0,
+      "video_ok": 9,
+      "video_fail": 0,
+      "zero_byte": 0,
+      "media_minutes": 857.4
+    },
+    "reconcile": {
+      "expected": 9032,
+      "actual": 9032,
+      "diff": 0,
+      "method": "archive-index"
+    }
+  },
+  "failures": [
+    {
+      "stage": "reconcile",
+      "symptom": "按 len(lines)-1 统计 .arc 条目，每包差 1、全军见红，差点误判成提取缺漏。",
+      "root_cause": "误以为 .arc 列表有表头；实际 .arc 与 xp3 都无表头，首行就是第一个条目。",
+      "fix": "条目数 = 非空行数，任何格式都不减 1；跟包头魔数条目数对账，而不是跟自己的解析习惯对账。",
+      "ref": "verified-findings §13.1"
+    },
+    {
+      "stage": "postprocess",
+      "symptom": "产物里三类非 PNG 扩展名（.mos / .pna / shader）无法直接按图片验收。",
+      "root_cause": ".mos 内容实为 PNG，.pna 是 PNAP 多帧容器，.fx/.csh 等是 DX11 shader。",
+      "fix": "按魔数识别：.mos 按 PNG 验收，.pna 用 _pna_carve 逐帧 carve（48 个 → 2640 帧），shader 记录不处理。",
+      "ref": "verified-findings §13.2"
+    },
+    {
+      "stage": "verify",
+      "symptom": ".mos 没列进图片扩展名白名单时 677 张图被静默放过，verify 仍报「失败 0」。",
+      "root_cause": ".mos（真实大写 .MOS，全在 raw/<arc名>/ 子目录）内容就是 PNG，但不在 IMG_EXT 里会落进 nonmedia 分支。",
+      "fix": "把 .mos 列进 IMG_EXT 按 PNG 验收，清点用 rglob；否则交付清单凭空少验 677 张图。",
+      "ref": "verified-findings §13.2；AGENTS.md 引擎分支要点 AdvHD（.mos 口径漏洞）"
+    }
+  ],
+  "provenance": {
+    "source": "manifest",
+    "manifest_path": "_extracted/ラブラブお痴験バイト性活/manifest.json",
+    "doc_refs": [
+      "AGENTS.md 样本表"
+    ],
+    "generated_at": "2026-11-01T17:33:46+08:00"
+  }
+}

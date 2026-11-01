@@ -111,7 +111,8 @@
           "when": {
             "dir_exists": "{d}/StreamingAssets/aa"
           },
-          "detail": "`{d}/StreamingAssets/aa/` 存在（Addressables 资源包目录）"
+          "detail": "`{d}/StreamingAssets/aa/` 存在（Addressables 资源包目录）",
+          "id": "unity_addressables"
         },
         {
           "gate": "unity_data",
@@ -119,7 +120,8 @@
           "when": {
             "dir_exists": "{d}/il2cpp_data"
           },
-          "detail": "`{d}/il2cpp_data/` 存在 → IL2CPP"
+          "detail": "`{d}/il2cpp_data/` 存在 → IL2CPP",
+          "id": "unity_il2cpp"
         },
         {
           "gate": "unity_data",
@@ -127,7 +129,8 @@
           "when": {
             "dir_exists": "{d}/Managed"
           },
-          "detail": "`{d}/Managed/` 存在"
+          "detail": "`{d}/Managed/` 存在",
+          "id": "unity_managed"
         },
         {
           "gate": "unity_data",
@@ -135,14 +138,16 @@
           "when": {
             "file_exists": "{d}/globalgamemanagers"
           },
-          "detail": "`{d}/globalgamemanagers` 存在"
+          "detail": "`{d}/globalgamemanagers` 存在",
+          "id": "unity_globalgamemanagers"
         },
         {
           "weight": 15,
           "when": {
             "file_exists": "GameAssembly.dll"
           },
-          "detail": "`GameAssembly.dll` 存在（IL2CPP 特征）"
+          "detail": "`GameAssembly.dll` 存在（IL2CPP 特征）",
+          "id": "unity_gameassembly"
         },
         {
           "id": "unity_bundle",
@@ -164,7 +169,8 @@
               "limit": 20
             }
           },
-          "detail": "`.bundle` 头部为 `UnityFS`（已确认）"
+          "detail": "`.bundle` 头部为 `UnityFS`（已确认）",
+          "id": "unity_bundle_magic"
         }
       ]
     },
@@ -203,7 +209,8 @@
               ]
             }
           },
-          "detail": "其中 {known} 个是已知包名（data/event/bgimage…）"
+          "detail": "其中 {known} 个是已知包名（data/event/bgimage…）",
+          "id": "xp3_known_names"
         }
       ]
     },
@@ -217,14 +224,16 @@
               ".rpa"
             ]
           },
-          "detail": "发现 {n} 个 `.rpa` 文件"
+          "detail": "发现 {n} 个 `.rpa` 文件",
+          "id": "rpa"
         },
         {
           "weight": 20,
           "when": {
             "top_dir_name": "renpy"
           },
-          "detail": "存在 `renpy/` 目录"
+          "detail": "存在 `renpy/` 目录",
+          "id": "renpy_dir"
         },
         {
           "weight": 10,
@@ -234,7 +243,8 @@
               ".rpyc"
             ]
           },
-          "detail": "存在 `.rpy` / `.rpyc` 脚本"
+          "detail": "存在 `.rpy` / `.rpyc` 脚本",
+          "id": "rpy_scripts"
         }
       ]
     },
@@ -260,14 +270,16 @@
               "ext": ".asar"
             }
           },
-          "detail": "其中含 `app.asar`（Electron 典型结构）"
+          "detail": "其中含 `app.asar`（Electron 典型结构）",
+          "id": "asar_app"
         },
         {
           "weight": 25,
           "when": {
             "top_dir_name": "tyrano"
           },
-          "detail": "存在 `tyrano/` 目录（TyranoScript 特征）"
+          "detail": "存在 `tyrano/` 目录（TyranoScript 特征）",
+          "id": "tyrano_dir"
         }
       ]
     },
@@ -315,7 +327,8 @@
                 "rpgmaker_variant": "MV"
               }
             }
-          ]
+          ],
+          "id": "rpgmaker_variant"
         },
         {
           "gate": "rpgmaker_nwjs",
@@ -326,7 +339,8 @@
           "detail": "`www/data/System.json` 存在（加密 key 的来源）",
           "facts": {
             "rpgmaker_has_encryption_key_file": true
-          }
+          },
+          "id": "rpgmaker_keyfile"
         }
       ]
     },
@@ -347,7 +361,8 @@
           "when": {
             "file_exists": "AdvHDLang.dll"
           },
-          "detail": "`AdvHDLang.dll` 存在"
+          "detail": "`AdvHDLang.dll` 存在",
+          "id": "advhd_lang"
         },
         {
           "gate": "advhd_exe",
@@ -362,7 +377,8 @@
             "advhd_arc_count": {
               "count": ".arc"
             }
-          }
+          },
+          "id": "advhd_arc"
         },
         {
           "weight": 70,
@@ -383,7 +399,8 @@
               }
             ]
           },
-          "detail": "`AdvHDLang.dll` + {n} 个 `.arc` 封包"
+          "detail": "`AdvHDLang.dll` + {n} 个 `.arc` 封包",
+          "id": "advhd_arc_only"
         }
       ]
     },
@@ -411,7 +428,8 @@
               ".ypf"
             ]
           },
-          "detail": "发现 {n} 个 `.ypf` 封包"
+          "detail": "发现 {n} 个 `.ypf` 封包",
+          "id": "yuris_ypf"
         },
         {
           "gate": "yuris_cfg",
@@ -419,7 +437,8 @@
           "when": {
             "dir_exists": "pac"
           },
-          "detail": "`pac/` 目录存在"
+          "detail": "`pac/` 目录存在",
+          "id": "yuris_pac"
         },
         {
           "weight": 70,
@@ -444,7 +463,8 @@
             "yuris_ypf_count": {
               "count": ".ypf"
             }
-          }
+          },
+          "id": "yuris_ypf_magic"
         }
       ]
     },
@@ -475,7 +495,8 @@
               ".gyu"
             ]
           },
-          "detail": "发现 {n} 个 `.gyu` 图片"
+          "detail": "发现 {n} 个 `.gyu` 图片",
+          "id": "exhibit_gyu"
         },
         {
           "gate": "exhibit_marker",
@@ -483,7 +504,8 @@
           "when": {
             "file_exists": "resident.dll"
           },
-          "detail": "`resident.dll` 存在（主逻辑）"
+          "detail": "`resident.dll` 存在（主逻辑）",
+          "id": "exhibit_resident"
         },
         {
           "weight": 70,
@@ -511,7 +533,8 @@
             "exhibit_gyu_count": {
               "count": ".gyu"
             }
-          }
+          },
+          "id": "exhibit_gyu_magic"
         }
       ]
     },
@@ -552,7 +575,8 @@
               ".gf3"
             ]
           },
-          "detail": "发现 {n} 个 `.int`/`.dfn`/`.hg3` 文件"
+          "detail": "发现 {n} 个 `.int`/`.dfn`/`.hg3` 文件",
+          "id": "cs2_int"
         },
         {
           "weight": 70,
@@ -592,7 +616,8 @@
                 ".gf3"
               ]
             }
-          }
+          },
+          "id": "cs2_int_magic"
         }
       ]
     }

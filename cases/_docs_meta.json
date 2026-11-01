@@ -1,0 +1,19 @@
+{
+  "_comment": "纯文档样本（无 manifest.json）的产物摘要。数字摘自 AGENTS.md 样本表与 verified-findings.md，是文档口径而非逐文件清单——provenance.source 会标 docs-reconstructed。",
+  "兼职人妻": {"images": 902, "audio": 1577, "video": 0, "media_minutes": 217.7,
+               "timing_note": "GARbro 提取 8 秒；507 tlg→png 73.8s"},
+  "My Best Deal v4.7": {"images": 7804, "audio": 47, "video": 288, "media_minutes": 71.2,
+               "timing_note": "解包 31 秒（187 MB/s）"},
+  "SPITE": {"images": 128, "audio": 68, "video": 45, "media_minutes": 50.8,
+               "timing_note": null},
+  "Swipe Right for Sugar Mama Sensei": {"images": 326, "audio": 1541, "video": 0, "media_minutes": 187.6,
+               "timing_note": "rpa_tool 提取秒级"},
+  "常識改変学園-製品版-": {"images": 719, "audio": 866, "video": 0, "media_minutes": 651.0,
+               "timing_note": null},
+  "あまねぇ": {"images": 3484, "audio": 4522, "video": 0, "media_minutes": 527.7,
+               "timing_note": "自研 _ypf_extract 提取 2 分钟"},
+  "高慢妻陥落！！": {"images": 1301, "audio": 1396, "video": 0, "media_minutes": 148.8,
+               "timing_note": null},
+  "教师催眠1": {"images": 2009, "audio": 3600, "video": 2, "media_minutes": 556.8,
+               "timing_note": null}
+}

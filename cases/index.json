@@ -1,0 +1,198 @@
+{
+  "schema": "cases-index/1",
+  "generated_at": "2026-11-01T17:33:51+08:00",
+  "by_signature": {
+    "6519ddb81f58": [
+      {
+        "case_id": "3f7607cd8585",
+        "engine": "KiriKiri",
+        "engine_label": "KiriKiri",
+        "sample": "兼职人妻",
+        "discriminator": "xp3-plain",
+        "provenance": "docs-reconstructed"
+      },
+      {
+        "case_id": "6adbd459d021",
+        "engine": "KiriKiri",
+        "engine_label": "KiriKiri 加密",
+        "sample": "高慢妻陥落！！",
+        "discriminator": "xp3-encrypted",
+        "provenance": "docs-reconstructed"
+      },
+      {
+        "case_id": "69c521e192f0",
+        "engine": "KiriKiri",
+        "engine_label": "KiriKiri 加密（krkrZ）",
+        "sample": "教师催眠1",
+        "discriminator": "xp3-encrypted-krkrZ",
+        "provenance": "docs-reconstructed"
+      }
+    ],
+    "6807e46dcb04": [
+      {
+        "case_id": "eaa76f4a37f0",
+        "engine": "Unity",
+        "engine_label": "Unity",
+        "sample": "My Wife Wants to Be a Professional Cosplayer",
+        "discriminator": null,
+        "provenance": "manifest"
+      }
+    ],
+    "524eebf5ec1b": [
+      {
+        "case_id": "4955589831f2",
+        "engine": "Tyrano/Electron",
+        "engine_label": "Electron（自研引擎）",
+        "sample": "SPITE",
+        "discriminator": null,
+        "provenance": "docs-reconstructed"
+      }
+    ],
+    "20b90f43db7b": [
+      {
+        "case_id": "3a73db965b27",
+        "engine": "Ren'Py",
+        "engine_label": "Ren'Py",
+        "sample": "Swipe Right for Sugar Mama Sensei",
+        "discriminator": "rpa-python3-4pack",
+        "provenance": "docs-reconstructed"
+      }
+    ],
+    "989a414d3ce6": [
+      {
+        "case_id": "4728ebd0c0b5",
+        "engine": "RPG Maker",
+        "engine_label": "RPG Maker MV",
+        "sample": "常識改変学園-製品版-",
+        "discriminator": null,
+        "provenance": "docs-reconstructed"
+      }
+    ],
+    "e0bde5633a1e": [
+      {
+        "case_id": "1fc5ee3f9915",
+        "engine": "AdvHD",
+        "engine_label": "AdvHD",
+        "sample": "ラブラブお痴験バイト性活",
+        "discriminator": null,
+        "provenance": "manifest"
+      }
+    ],
+    "7c6e1abb20ae": [
+      {
+        "case_id": "9101a028fe2e",
+        "engine": "Yu-Ris",
+        "engine_label": "Yu-Ris",
+        "sample": "あまねぇ",
+        "discriminator": null,
+        "provenance": "docs-reconstructed"
+      }
+    ],
+    "5a37fb274ff1": [
+      {
+        "case_id": "a6915ed8106d",
+        "engine": "ExHIBIT",
+        "engine_label": "ExHIBIT",
+        "sample": "夕凪荘的S级的女朋友们",
+        "discriminator": null,
+        "provenance": "manifest"
+      }
+    ],
+    "26ea5c9bed83": [
+      {
+        "case_id": "3f543fe2825d",
+        "engine": "CatSystem2",
+        "engine_label": "CatSystem2",
+        "sample": "甜蜜女友2+",
+        "discriminator": null,
+        "provenance": "manifest"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "case_id": "3f7607cd8585",
+      "engine": "KiriKiri",
+      "sample": "兼职人妻",
+      "signature": "6519ddb81f58",
+      "provenance": "docs-reconstructed"
+    },
+    {
+      "case_id": "eaa76f4a37f0",
+      "engine": "Unity",
+      "sample": "My Wife Wants to Be a Professional Cosplayer",
+      "signature": "6807e46dcb04",
+      "provenance": "manifest"
+    },
+    {
+      "case_id": "0f0633bc8c63",
+      "engine": "Ren'Py",
+      "sample": "My Best Deal v4.7",
+      "signature": null,
+      "provenance": "docs-reconstructed"
+    },
+    {
+      "case_id": "4955589831f2",
+      "engine": "Tyrano/Electron",
+      "sample": "SPITE",
+      "signature": "524eebf5ec1b",
+      "provenance": "docs-reconstructed"
+    },
+    {
+      "case_id": "3a73db965b27",
+      "engine": "Ren'Py",
+      "sample": "Swipe Right for Sugar Mama Sensei",
+      "signature": "20b90f43db7b",
+      "provenance": "docs-reconstructed"
+    },
+    {
+      "case_id": "4728ebd0c0b5",
+      "engine": "RPG Maker",
+      "sample": "常識改変学園-製品版-",
+      "signature": "989a414d3ce6",
+      "provenance": "docs-reconstructed"
+    },
+    {
+      "case_id": "1fc5ee3f9915",
+      "engine": "AdvHD",
+      "sample": "ラブラブお痴験バイト性活",
+      "signature": "e0bde5633a1e",
+      "provenance": "manifest"
+    },
+    {
+      "case_id": "9101a028fe2e",
+      "engine": "Yu-Ris",
+      "sample": "あまねぇ",
+      "signature": "7c6e1abb20ae",
+      "provenance": "docs-reconstructed"
+    },
+    {
+      "case_id": "a6915ed8106d",
+      "engine": "ExHIBIT",
+      "sample": "夕凪荘的S级的女朋友们",
+      "signature": "5a37fb274ff1",
+      "provenance": "manifest"
+    },
+    {
+      "case_id": "3f543fe2825d",
+      "engine": "CatSystem2",
+      "sample": "甜蜜女友2+",
+      "signature": "26ea5c9bed83",
+      "provenance": "manifest"
+    },
+    {
+      "case_id": "6adbd459d021",
+      "engine": "KiriKiri",
+      "sample": "高慢妻陥落！！",
+      "signature": "6519ddb81f58",
+      "provenance": "docs-reconstructed"
+    },
+    {
+      "case_id": "69c521e192f0",
+      "engine": "KiriKiri",
+      "sample": "教师催眠1",
+      "signature": "6519ddb81f58",
+      "provenance": "docs-reconstructed"
+    }
+  ]
+}

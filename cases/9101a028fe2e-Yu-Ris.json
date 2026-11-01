@@ -1,0 +1,85 @@
+{
+  "schema": "cases/1",
+  "case_id": "9101a028fe2e",
+  "engine": "Yu-Ris",
+  "engine_label": "Yu-Ris",
+  "sample": "あまねぇ",
+  "game_dir": "D:\\HY\\あまねぇ -幼馴染お姉ちゃんとのえちえちあまやかされ同棲生活-",
+  "discriminator": null,
+  "fingerprint": {
+    "signals": [
+      "yuris_cfg",
+      "yuris_pac",
+      "yuris_ypf"
+    ],
+    "score": 105,
+    "threshold": 60,
+    "signature": "7c6e1abb20ae",
+    "engine": "Yu-Ris",
+    "reconstructed": false
+  },
+  "decision": {
+    "extractor": "_ypf_extract",
+    "archive_exts": [
+      ".ypf"
+    ],
+    "archive_count": 3,
+    "expected_total": 8201,
+    "notes": "pac/*.ypf（魔数 YPF\\0）；YPF = Yu-Ris System（不是 Yaneura）；GARbro 不支持，自研 _ypf_extract.py。cg/data/sound 三包 = 3484+4522+195。"
+  },
+  "timing": {
+    "detect": null,
+    "extract": null,
+    "postprocess": null,
+    "verify": null,
+    "manifest": null,
+    "total": null,
+    "note": "自研 _ypf_extract 提取 2 分钟"
+  },
+  "result": {
+    "ok": true,
+    "source": "docs",
+    "summary": {
+      "images": 3484,
+      "audio": 4522,
+      "video": 0,
+      "total": null
+    },
+    "media_minutes": 527.7,
+    "counts": null,
+    "verify": null,
+    "reconcile": null
+  },
+  "failures": [
+    {
+      "stage": "extract",
+      "symptom": "arc_unpacker --out DIR（空格形式）不生效，DIR 被当成又一个输入文件，cwd 被整个递归扫。",
+      "root_cause": "--out 必须等号形式；写成 --out . 时表现为大量 yst*.ybn: unknown input file 幻影任务。",
+      "fix": "一律用 --out=DIR；另注意大包（3484 条）疑似卡死 30+ 分钟零落盘，小包（195 条）9 秒可用。",
+      "ref": "verified-findings §14.2"
+    },
+    {
+      "stage": "detect",
+      "symptom": "一度误判为 Yaneura SDK（yscfg/YSSD 前缀迷惑）。",
+      "root_cause": "YS 前缀有迷惑性，实际 YPF = Yu-Ris System 封包。",
+      "fix": "检索确认引擎；GARbro 对 YPF 是真不支持（unknown format），不是假阴性。",
+      "ref": "verified-findings §14.1"
+    },
+    {
+      "stage": "postprocess",
+      "symptom": "YPF 表项名字 XOR 单字节 key、名长要查置换表，数据可选 zlib，自研解码器容易读错。",
+      "root_cause": "表项布局含名长置换（值 ^0xFF 查 4 张表）、名字 XOR key、extra 长度随版本变化。",
+      "fix": "用 entry[0].offset == table_size 与 entry[i].offset+size_comp == entry[i+1].offset 钉死布局，按 file_count 精确读 N 条（不要读到表尾）。",
+      "ref": "verified-findings §14.3"
+    }
+  ],
+  "provenance": {
+    "source": "docs-reconstructed",
+    "manifest_path": null,
+    "doc_refs": [
+      "AGENTS.md 样本表",
+      "verified-findings.md"
+    ],
+    "generated_at": "2026-11-01T17:33:46+08:00"
+  }
+}

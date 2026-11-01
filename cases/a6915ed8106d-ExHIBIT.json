@@ -1,0 +1,121 @@
+{
+  "schema": "cases/1",
+  "case_id": "a6915ed8106d",
+  "engine": "ExHIBIT",
+  "engine_label": "ExHIBIT",
+  "sample": "夕凪荘的S级的女朋友们",
+  "game_dir": "D:\\HY\\夕凪荘的S级的女朋友们",
+  "discriminator": null,
+  "fingerprint": {
+    "signals": [
+      "exhibit_gyu",
+      "exhibit_marker",
+      "exhibit_resident"
+    ],
+    "score": 100,
+    "threshold": 60,
+    "signature": "5a37fb274ff1",
+    "engine": "ExHIBIT",
+    "reconstructed": false
+  },
+  "decision": {
+    "extractor": "_gyu_tool",
+    "archive_exts": [
+      ".gyu",
+      ".grp"
+    ],
+    "archive_count": null,
+    "expected_total": 11476,
+    "notes": "ExHIBIT/Retouch；三条来源合一：.gyu 2184 + .grp 9185 + 散装 107 = 11476。图片用 _gyu_tool（C#），音频用 _grp_extract（AiFS TOC）。"
+  },
+  "timing": {
+    "detect": 0.42,
+    "extract": 93.66,
+    "postprocess": 1.29,
+    "verify": 828.57,
+    "manifest": 6.33,
+    "total": 930.3
+  },
+  "result": {
+    "ok": true,
+    "source": "manifest",
+    "summary": {
+      "images": 2184,
+      "audio": 9291,
+      "video": 1,
+      "total": 11476
+    },
+    "media_minutes": 1072.0,
+    "counts": {
+      "raw": {
+        "by_ext": {
+          ".ogg": 9185,
+          ".png": 2184,
+          ".wav": 106,
+          ".wmv": 1
+        },
+        "total": 11476,
+        "bytes": 5389251730
+      },
+      "final": {
+        "by_ext": {
+          ".ogg": 9185,
+          ".png": 2184,
+          ".wav": 106,
+          ".wmv": 1
+        },
+        "total": 11476,
+        "bytes": 5389251730
+      },
+      "converted": {}
+    },
+    "verify": {
+      "verified": true,
+      "image_ok": 2184,
+      "image_fail": 0,
+      "audio_ok": 9291,
+      "audio_fail": 0,
+      "video_ok": 1,
+      "video_fail": 0,
+      "zero_byte": 0,
+      "media_minutes": 1072.0
+    },
+    "reconcile": {
+      "expected": 11476,
+      "actual": 11476,
+      "diff": 0,
+      "method": "archive-index"
+    }
+  },
+  "failures": [
+    {
+      "stage": "postprocess",
+      "symptom": "自移植的 .gyu 解码器从第一个 token 就错位（首个回引距离荒谬）。",
+      "root_cause": "Gyu-LZ 的位流与字节流共享同一游标，自移植时拆成两个游标。",
+      "fix": "位流+字节流混读的格式，移植时必须共用一个游标对象。",
+      "ref": "verified-findings §15.1"
+    },
+    {
+      "stage": "extract",
+      "symptom": "BGM 22 个 ogg 只解出头两页（3853B）加密区，之后明文。",
+      "root_cause": "真正解密器挂在虚调用链后（loader 对象 this+0x70 的 vtable[0]），静态未追到；密钥材料疑在 cluu/GUID/DPMODE。",
+      "fix": "静态/内存 dump 路线；已明确排除置换类/两套 MT 键流/RC4/ROR 2^31 爆破；本任务搁置等用户配合。",
+      "ref": "verified-findings §15.3"
+    },
+    {
+      "stage": "manifest",
+      "symptom": "把 res2000.grp 的 AiFS TOC 当成一个数据包去解析，块数对不上。",
+      "root_cause": "TOC 就是同名小的 res2000.grp（魔数 AiFS），本身不是数据。",
+      "fix": "解析 .grp 时必须把 AiFS TOC 文件自己排除，再按 TOC 块数从 res2001/2002 切 ogg。",
+      "ref": "verified-findings §15.2"
+    }
+  ],
+  "provenance": {
+    "source": "manifest",
+    "manifest_path": "_extracted/夕凪荘的S级的女朋友们/manifest.json",
+    "doc_refs": [
+      "AGENTS.md 样本表"
+    ],
+    "generated_at": "2026-11-01T17:33:46+08:00"
+  }
+}

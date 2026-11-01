@@ -1,0 +1,132 @@
+{
+  "schema": "cases/1",
+  "case_id": "eaa76f4a37f0",
+  "engine": "Unity",
+  "engine_label": "Unity",
+  "sample": "My Wife Wants to Be a Professional Cosplayer",
+  "game_dir": "D:\\HY\\My Wife Wants to Be a Professional Cosplayer",
+  "discriminator": null,
+  "fingerprint": {
+    "signals": [
+      "unity_data",
+      "unity_globalgamemanagers",
+      "unity_managed"
+    ],
+    "score": 80,
+    "threshold": 60,
+    "signature": "6807e46dcb04",
+    "engine": "Unity",
+    "reconstructed": false
+  },
+  "decision": {
+    "extractor": "_unity_extract",
+    "archive_exts": [
+      ".assets",
+      ".resS",
+      ".resource"
+    ],
+    "archive_count": 3,
+    "expected_total": 2883,
+    "notes": "Unity 2022.3.62f2 / Mono 后端，资源在 resources.assets + resources.assets.resS + resources.resource；AssetStudio JSON 枚举 2883 条。"
+  },
+  "timing": {
+    "detect": 0.72,
+    "extract": 17.64,
+    "postprocess": 0.21,
+    "verify": 133.4,
+    "manifest": 0.96,
+    "total": 152.9
+  },
+  "result": {
+    "ok": true,
+    "source": "manifest",
+    "summary": {
+      "images": 777,
+      "audio": 1168,
+      "video": null,
+      "total": 1945
+    },
+    "media_minutes": 123.2,
+    "counts": {
+      "raw": {
+        "by_ext": {
+          ".png": 777,
+          ".wav": 1168
+        },
+        "total": 1945,
+        "bytes": 1671443456
+      },
+      "final": {
+        "by_ext": {
+          ".png": 777,
+          ".wav": 1168
+        },
+        "total": 1945,
+        "bytes": 1671443456
+      },
+      "converted": {}
+    },
+    "verify": {
+      "verified": true,
+      "image_ok": 777,
+      "image_fail": 0,
+      "audio_ok": 1168,
+      "audio_fail": 0,
+      "video_ok": 0,
+      "video_fail": 0,
+      "zero_byte": 0,
+      "media_minutes": 123.2
+    },
+    "reconcile": {
+      "expected": 1945,
+      "actual": 1945,
+      "diff": 0,
+      "method": "archive-index"
+    }
+  },
+  "failures": [
+    {
+      "stage": "extract",
+      "symptom": "--types AudioClip,Texture2D,Sprite 导出 0 个文件，但退出码仍是 0、日志只写 Nothing exported。",
+      "root_cause": "逗号被静默忽略（归零）；改成竖线则过滤器整体失效、退化成导出全部。",
+      "fix": "只用单类型 --types A，或干脆不写 --types；成功与否必须数产物文件，退出码 0 绝不可当判据。",
+      "ref": "verified-findings §8.1；AGENTS.md 坑4"
+    },
+    {
+      "stage": "extract",
+      "symptom": "Start-Process -ArgumentList 传含空格路径被按空格拆碎，stderr 报 Unrecognized command or argument 'Wants'，误判成「AssetStudio 导不出音频」。",
+      "root_cause": "Start-Process -ArgumentList 不给含空格参数自动加引号；只看了日志尾部就下结论。",
+      "fix": "PowerShell 调外部程序一律用调用符 &；先看日志开头（Found N files / Detected Unity version）再下结论。",
+      "ref": "verified-findings §8.2"
+    },
+    {
+      "stage": "extract",
+      "symptom": "一次性全量导出约 870 MB 时进程崩溃，退出码 0xC0000374（堆损坏），部分产物连日志都没有。",
+      "root_cause": "单次导出规模过大导致堆损坏。",
+      "fix": "按类型分批独立导出（每批独立目录、独立日志、各自校验），三批全部干净完成。",
+      "ref": "verified-findings §8.3"
+    },
+    {
+      "stage": "extract",
+      "symptom": "1183 个 AudioClip 单次 CLI 只落地 8 个，日志逐个打印 Exporting 却无任何 Warning/Error。",
+      "root_cause": "AudioClip 的 m_Source=resources.resource 是 FSB5(FMOD) 容器，AssetStudio 用同目录 fmod.dll 解但静默失败。",
+      "fix": "按名字正则分组多轮反复导出、按内容哈希累积，最后用 ^(A|B|C)$ 精确锚定清尾巴（实测 1168 = 100%）。",
+      "ref": "verified-findings §8.5"
+    },
+    {
+      "stage": "detect",
+      "symptom": "对 1372 MB 的 resS 魔数扫描出现 ftyp/mdat/moov 命中，疑似有视频。",
+      "root_cause": "命中全是压缩数据内部的巧合字节（1372 MB 里仅 1 个巧合 OggS）。",
+      "fix": "用 AssetStudio 枚举 VideoClip 数量（本作 0 就是真没有），配合交叉定位判假阳性。",
+      "ref": "verified-findings §8.6；AGENTS.md 坑3"
+    }
+  ],
+  "provenance": {
+    "source": "manifest",
+    "manifest_path": "_extracted/My Wife Wants to Be a Professional Cosplayer/manifest.json",
+    "doc_refs": [
+      "AGENTS.md 样本表"
+    ],
+    "generated_at": "2026-11-01T17:33:45+08:00"
+  }
+}

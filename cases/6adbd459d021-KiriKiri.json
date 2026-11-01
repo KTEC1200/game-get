@@ -1,0 +1,84 @@
+{
+  "schema": "cases/1",
+  "case_id": "6adbd459d021",
+  "engine": "KiriKiri",
+  "engine_label": "KiriKiri 加密",
+  "sample": "高慢妻陥落！！",
+  "game_dir": "D:\\HY\\pork社\\高慢妻陥落！！",
+  "discriminator": "xp3-encrypted",
+  "fingerprint": {
+    "signals": [
+      "xp3",
+      "xp3_known_names"
+    ],
+    "score": 90,
+    "threshold": 60,
+    "signature": "6519ddb81f58",
+    "engine": "KiriKiri",
+    "reconstructed": false
+  },
+  "decision": {
+    "extractor": "krkr_auto_extract",
+    "archive_exts": [
+      ".xp3",
+      ".tlg"
+    ],
+    "archive_count": 1,
+    "expected_total": 2838,
+    "notes": "data.xp3 692MB，Console 读不出；KrkrExtract 5.0.0.2 Lite.exe CLI 注入 + Explorer 真拖拽。2838/2838 零失败。"
+  },
+  "timing": {
+    "detect": null,
+    "extract": null,
+    "postprocess": null,
+    "verify": null,
+    "manifest": null,
+    "total": null
+  },
+  "result": {
+    "ok": true,
+    "source": "docs",
+    "summary": {
+      "images": 1301,
+      "audio": 1396,
+      "video": 0,
+      "total": null
+    },
+    "media_minutes": 148.8,
+    "counts": null,
+    "verify": null,
+    "reconcile": null
+  },
+  "failures": [
+    {
+      "stage": "extract",
+      "symptom": "CJK 路径下注入后游戏/工具窗口都不弹，只弹 #32770 错误框。",
+      "root_cause": "krkr2 引擎 ANSI→Wide 转换失败（本机 GBK 代码页），被 Core 钩子放大；首判「游戏没启动」是误诊。",
+      "fix": "建纯 ASCII stage 目录：xp3 用 os.link 硬链接（零拷贝）、主程序复制为 game.exe、plugin/*.tpm 与 *.cf 等其余文件全部复制。",
+      "ref": "verified-findings §17.2"
+    },
+    {
+      "stage": "extract",
+      "symptom": "跨进程合成 WM_DROPFILES / SHDoDragDrop / Core 命令通道全部失败。",
+      "root_cause": "GMEM_SHARE 在现代 Windows 是 no-op、OLE drop 不投递 WM_DROPFILES、命令通道需未开源的 ALPC+SessionKey IPC。",
+      "fix": "唯一通路 = Explorer 发起真实拖拽（UIA 取 item 矩形 + SendInput 按下-移动-松开）。",
+      "ref": "verified-findings §17.3"
+    },
+    {
+      "stage": "manifest",
+      "symptom": "加密 xp3 没有可用索引，条目对账没有锚点。",
+      "root_cause": "Console/GARbro 都读不出加密包。",
+      "fix": "用 Core 注入后自动 dump 的 data.xp3.index（解密后 TOC，384558 B、2838 个 File 条目）作对账地面真相。",
+      "ref": "verified-findings §17.5"
+    }
+  ],
+  "provenance": {
+    "source": "docs-reconstructed",
+    "manifest_path": null,
+    "doc_refs": [
+      "AGENTS.md 样本表",
+      "verified-findings.md"
+    ],
+    "generated_at": "2026-11-01T17:33:46+08:00"
+  }
+}

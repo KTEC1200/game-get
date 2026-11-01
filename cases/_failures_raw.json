@@ -1,0 +1,447 @@
+{
+  "兼职人妻": {
+    "engine": "KiriKiri",
+    "decision": {
+      "extractor": "garbro",
+      "archive_exts": [".xp3", ".tlg"],
+      "archive_count": 1,
+      "expected_total": 2562,
+      "notes": "单主包 data.xp3（544.7 MB），GARbro.Console 可识别 2562 条、-x 8 秒解完；.tlg 需 tlg2png 后处理转 PNG。"
+    },
+    "failures": [
+      {
+        "stage": "detect",
+        "symptom": "按魔数全扫原包出现大量 FLV/MPEG-PS/JPEG 命中，一度得出「本作有视频」。",
+        "root_cause": "命中偏移落在归档条目内部（压缩数据里的巧合字节），并非条目起始。",
+        "fix": "用魔数命中偏移与 GARbro 条目表交叉定位：只有命中偏移 == 条目起始偏移才算真文件。",
+        "ref": "verified-findings §7.1；AGENTS.md 坑3"
+      },
+      {
+        "stage": "reconcile",
+        "symptom": "条目统计比实际少 1（.tlg 数成 506 实为 507、bgimage 数成 82 实为 83）。",
+        "root_cause": "用 Select-Object -Skip 1 吃掉首行；GARbro 列表输出无表头，首行就是第一个条目。",
+        "fix": "条目数一律用非空行数，任何格式都不减 1；计数差异对账到 0，不用「差不多」放过。",
+        "ref": "verified-findings §7.5"
+      },
+      {
+        "stage": "verify",
+        "symptom": "图片数一度记为 903/903，与索引口径自相矛盾。",
+        "root_cause": "同一节内表格未交叉对账：索引按扩展名是 395 png + 507 tlg = 902，无重名。",
+        "fix": "同一文档内部也要交叉对账；图片口径 = 395 png + 507 tlg = 902。",
+        "ref": "verified-findings §7.3"
+      }
+    ]
+  },
+  "My Wife Wants to Be a Professional Cosplayer": {
+    "engine": "Unity",
+    "decision": {
+      "extractor": "_unity_extract",
+      "archive_exts": [".assets", ".resS", ".resource"],
+      "archive_count": 3,
+      "expected_total": 2883,
+      "notes": "Unity 2022.3.62f2 / Mono 后端，资源在 resources.assets + resources.assets.resS + resources.resource；AssetStudio JSON 枚举 2883 条。"
+    },
+    "failures": [
+      {
+        "stage": "extract",
+        "symptom": "--types AudioClip,Texture2D,Sprite 导出 0 个文件，但退出码仍是 0、日志只写 Nothing exported。",
+        "root_cause": "逗号被静默忽略（归零）；改成竖线则过滤器整体失效、退化成导出全部。",
+        "fix": "只用单类型 --types A，或干脆不写 --types；成功与否必须数产物文件，退出码 0 绝不可当判据。",
+        "ref": "verified-findings §8.1；AGENTS.md 坑4"
+      },
+      {
+        "stage": "extract",
+        "symptom": "Start-Process -ArgumentList 传含空格路径被按空格拆碎，stderr 报 Unrecognized command or argument 'Wants'，误判成「AssetStudio 导不出音频」。",
+        "root_cause": "Start-Process -ArgumentList 不给含空格参数自动加引号；只看了日志尾部就下结论。",
+        "fix": "PowerShell 调外部程序一律用调用符 &；先看日志开头（Found N files / Detected Unity version）再下结论。",
+        "ref": "verified-findings §8.2"
+      },
+      {
+        "stage": "extract",
+        "symptom": "一次性全量导出约 870 MB 时进程崩溃，退出码 0xC0000374（堆损坏），部分产物连日志都没有。",
+        "root_cause": "单次导出规模过大导致堆损坏。",
+        "fix": "按类型分批独立导出（每批独立目录、独立日志、各自校验），三批全部干净完成。",
+        "ref": "verified-findings §8.3"
+      },
+      {
+        "stage": "extract",
+        "symptom": "1183 个 AudioClip 单次 CLI 只落地 8 个，日志逐个打印 Exporting 却无任何 Warning/Error。",
+        "root_cause": "AudioClip 的 m_Source=resources.resource 是 FSB5(FMOD) 容器，AssetStudio 用同目录 fmod.dll 解但静默失败。",
+        "fix": "按名字正则分组多轮反复导出、按内容哈希累积，最后用 ^(A|B|C)$ 精确锚定清尾巴（实测 1168 = 100%）。",
+        "ref": "verified-findings §8.5"
+      },
+      {
+        "stage": "detect",
+        "symptom": "对 1372 MB 的 resS 魔数扫描出现 ftyp/mdat/moov 命中，疑似有视频。",
+        "root_cause": "命中全是压缩数据内部的巧合字节（1372 MB 里仅 1 个巧合 OggS）。",
+        "fix": "用 AssetStudio 枚举 VideoClip 数量（本作 0 就是真没有），配合交叉定位判假阳性。",
+        "ref": "verified-findings §8.6；AGENTS.md 坑3"
+      }
+    ]
+  },
+  "My Best Deal v4.7": {
+    "engine": "Ren'Py",
+    "decision": {
+      "extractor": "rpa_tool",
+      "archive_exts": [".rpa"],
+      "archive_count": 2,
+      "expected_total": 8349,
+      "notes": "Ren'Py / Python 2.7；archive.rpa 8248 条 + patch.rpa 101 条，第一个真有视频的样本。"
+    },
+    "failures": [
+      {
+        "stage": "extract",
+        "symptom": "解析 RPA-3.0 报 pickle.UnpicklingError: invalid load key, 'x'。",
+        "root_cause": "索引有两层包装：分隔空格被换成 '.'（本作）+ 索引偏移处是 zlib 压缩流（78 9C 开头）。",
+        "fix": "正则 ^RPA-3.0 ([0-9a-f]{16}) ([0-9a-f]{8}) 抓偏移与 key；先 zlib.decompress 再 pickle.loads；每个 offset/length 都 ^ key。",
+        "ref": "verified-findings §9.1"
+      },
+      {
+        "stage": "reconcile",
+        "symptom": "误以为 patch.rpa 会覆盖 archive.rpa，需要合并。",
+        "root_cause": "凭文件名相似度猜测 patch 语义，而不是求证。",
+        "fix": "两份索引求交集判断：本作 0 个重名 → 纯新增，无需合并覆盖。",
+        "ref": "verified-findings §9.2"
+      },
+      {
+        "stage": "manifest",
+        "symptom": "282 个 jpg 被错分进 Video_WebM（该类瞬间变成 396 个）。",
+        "root_cause": "只按目录 images/animations/ 分类，而该目录下同时存在 .avi(166)/.webm(115)/.jpg(283)。",
+        "fix": "先按扩展名认媒体本体再退回按目录分，tl/ 整体保留；分类错了就修逻辑从源归档重跑（31 秒），不写迁移脚本原地修。",
+        "ref": "verified-findings §9.4；AGENTS.md 坑5"
+      },
+      {
+        "stage": "verify",
+        "symptom": "验收报 108 项假失败：.rpyc/.otf/.txt 全被送 ffprobe 报 Invalid data found。",
+        "root_cause": "验收脚本把不在图片白名单里的文件一律送 ffprobe。",
+        "fix": "加 AV_EXT 白名单，只有真媒体才送 ffprobe，其余归 nonmedia 单独计数。",
+        "ref": "verified-findings §9.6"
+      },
+      {
+        "stage": "verify",
+        "symptom": "ffprobe 报 318 个视频流，而真实视频文件只有 288 个。",
+        "root_cause": "24 个 mp3/图片的内嵌封面被 ffprobe 报成 codec_type=video。",
+        "fix": "按文件扩展名数视频，不按 ffprobe 的 stream 数。",
+        "ref": "verified-findings §9.3"
+      }
+    ]
+  },
+  "SPITE": {
+    "engine": "Electron（自研引擎）",
+    "decision": {
+      "extractor": "_spite_decrypt",
+      "archive_exts": [".asar", ".dat"],
+      "archive_count": null,
+      "expected_total": 365,
+      "notes": "自研 Electron 引擎（pixi-vn + Ink + Spine + React）；app.asar 只装引擎代码，媒体在外部 data/ 且按路径派生 ChaCha20 密钥加密。路径恢复后覆盖 257/365 槽。"
+    },
+    "failures": [
+      {
+        "stage": "detect",
+        "symptom": "以为媒体都在 app.asar 里，实际 asar 只有引擎代码、媒体 0 个。",
+        "root_cause": "asar 只装 dist/ + node_modules，媒体在外部 data/ 目录且加密。",
+        "fix": "先解析 asar 索引看文件构成，加密的 .dat 另走解密链。",
+        "ref": "verified-findings §10.1"
+      },
+      {
+        "stage": "detect",
+        "symptom": ".dat 头部全为高熵随机字节、无任何魔数，无法直接解密。",
+        "root_cause": "密钥 = HKDF-SHA256(info=\"spite-media-chacha20:\"+原始路径)，密钥依赖原始路径，不知道路径就永远解不开。",
+        "fix": "先逆向 media-crypto.cjs 确定方案，再恢复路径映射（文件名 = sha256(路径).hex[:16]），然后按路径派生密钥解密。",
+        "ref": "verified-findings §10.2"
+      },
+      {
+        "stage": "extract",
+        "symptom": "路径恢复第一轮只拿到 222 条，大量 .dat 仍解不开。",
+        "root_cause": "路径分散在 asar 字面量、atlas 页、minified 混淆池里，单轮覆盖不足。",
+        "fix": "多轮反哺：字面量正则 → 解出的 .atlas 反哺 → 混淆池解码后枚举目录×名字×扩展名 → 角色前缀补漏，最终 257/365；未引用遗留资产天然不可恢复。",
+        "ref": "verified-findings §10.3"
+      },
+      {
+        "stage": "postprocess",
+        "symptom": "minified JS 文本里引号不配对，朴素正则提取整段错位且随扫描起点漂移。",
+        "root_cause": "正则字面量/单双引号/模板串混用。",
+        "fix": "用反向行走 + 平衡扫描 + 自写 tokenizer 状态机拿池，单双引号/模板串通吃。",
+        "ref": "verified-findings §10.6"
+      }
+    ]
+  },
+  "Swipe Right for Sugar Mama Sensei": {
+    "engine": "Ren'Py",
+    "decision": {
+      "extractor": "rpa_tool",
+      "archive_exts": [".rpa"],
+      "archive_count": 4,
+      "expected_total": 2156,
+      "notes": "Ren'Py / Python 3；四包按内容分工（archive/gui_resource/img_resource/sfx_resource），无 patch。"
+    },
+    "failures": [
+      {
+        "stage": "reconcile",
+        "symptom": "四包同为 RPA-3.0 / key 0x42424242，容易误判成同一作或误以为有 patch 要合并。",
+        "root_cause": "Ren'Py 包分工不止 archive+patch 一种；key 只是每作固定常量。",
+        "fix": "按实际文件名判断包职责；key 相同不代表同一作，别拿 key 当指纹。",
+        "ref": "verified-findings §11"
+      },
+      {
+        "stage": "verify",
+        "symptom": "ffprobe 报 End of file（2 个 se008.ogg），疑似解包 bug。",
+        "root_cause": "源包索引就声明这 2 条 length=0（同名占位音效）。",
+        "fix": "0 字节产物先对索引 length 逐条对账：索引非 0 却解出 0 才是 bug；源本身 0 长度如实记录即可。",
+        "ref": "verified-findings §11.2"
+      }
+    ]
+  },
+  "常識改変学園-製品版-": {
+    "engine": "RPG Maker MV",
+    "decision": {
+      "extractor": "_rpgmv_decrypt",
+      "archive_exts": [".rpgmvp", ".rpgmvo"],
+      "archive_count": null,
+      "expected_total": 1585,
+      "notes": "NW.js 壳 + www/；文件就地加密（假头 16B + 仅前 16B XOR），无封包；解密 1583 + 明文 2 = 1585。"
+    },
+    "failures": [
+      {
+        "stage": "extract",
+        "symptom": "RPG Maker 的 .rpgmvp/.rpgmvo 文件无法直接读取。",
+        "root_cause": "加密只是假头 16B（RPGMV/RPGMZ）+ 仅前 16 字节 XOR key，其余纯明文；key 在 System.json 的 encryptionKey。",
+        "fix": "按假头魔数判加密体，只对前 16B 做 XOR、其余原样照抄；十行 Python 即可，无需 RPGMakerDecrypter。",
+        "ref": "verified-findings §12.1"
+      },
+      {
+        "stage": "extract",
+        "symptom": "汉化组在每个目录塞的同名「免责声明请在使用前阅读我」被当成游戏资源。",
+        "root_cause": "这是分发者垃圾目录（www 下共 13 处、87 个文件），不是游戏资源。",
+        "fix": "按目录名前缀整体跳过，否则 15 张免责 jpg 会混进图片产物、污染对账。",
+        "ref": "verified-findings §12.3"
+      },
+      {
+        "stage": "verify",
+        "symptom": "866 个 ogg 里 19 个被 ffprobe 报为 video:mjpeg。",
+        "root_cause": "BGM ogg 带专辑封面，ffprobe 取流时 video 优先于 audio。",
+        "fix": "按扩展名兜底计数（847 audio + 19 video = 866，逐个核对全为 ogg 音频），不要用流数判视频。",
+        "ref": "verified-findings §12.4"
+      }
+    ]
+  },
+  "ラブラブお痴験バイト性活": {
+    "engine": "AdvHD",
+    "decision": {
+      "extractor": "_advhd_run",
+      "archive_exts": [".arc", ".dat", ".pna"],
+      "archive_count": 18,
+      "expected_total": null,
+      "notes": "AdvHD.exe + AdvHDLang.dll；封包 .arc ×18（GARbro 原生可解），.dat=ASF/WMV，.pna=PNAP 多帧容器。"
+    },
+    "failures": [
+      {
+        "stage": "reconcile",
+        "symptom": "按 len(lines)-1 统计 .arc 条目，每包差 1、全军见红，差点误判成提取缺漏。",
+        "root_cause": "误以为 .arc 列表有表头；实际 .arc 与 xp3 都无表头，首行就是第一个条目。",
+        "fix": "条目数 = 非空行数，任何格式都不减 1；跟包头魔数条目数对账，而不是跟自己的解析习惯对账。",
+        "ref": "verified-findings §13.1"
+      },
+      {
+        "stage": "postprocess",
+        "symptom": "产物里三类非 PNG 扩展名（.mos / .pna / shader）无法直接按图片验收。",
+        "root_cause": ".mos 内容实为 PNG，.pna 是 PNAP 多帧容器，.fx/.csh 等是 DX11 shader。",
+        "fix": "按魔数识别：.mos 按 PNG 验收，.pna 用 _pna_carve 逐帧 carve（48 个 → 2640 帧），shader 记录不处理。",
+        "ref": "verified-findings §13.2"
+      },
+      {
+        "stage": "verify",
+        "symptom": ".mos 没列进图片扩展名白名单时 677 张图被静默放过，verify 仍报「失败 0」。",
+        "root_cause": ".mos（真实大写 .MOS，全在 raw/<arc名>/ 子目录）内容就是 PNG，但不在 IMG_EXT 里会落进 nonmedia 分支。",
+        "fix": "把 .mos 列进 IMG_EXT 按 PNG 验收，清点用 rglob；否则交付清单凭空少验 677 张图。",
+        "ref": "verified-findings §13.2；AGENTS.md 引擎分支要点 AdvHD（.mos 口径漏洞）"
+      }
+    ]
+  },
+  "あまねぇ": {
+    "engine": "Yu-Ris",
+    "decision": {
+      "extractor": "_ypf_extract",
+      "archive_exts": [".ypf"],
+      "archive_count": 3,
+      "expected_total": 8201,
+      "notes": "pac/*.ypf（魔数 YPF\\0）；YPF = Yu-Ris System（不是 Yaneura）；GARbro 不支持，自研 _ypf_extract.py。cg/data/sound 三包 = 3484+4522+195。"
+    },
+    "failures": [
+      {
+        "stage": "extract",
+        "symptom": "arc_unpacker --out DIR（空格形式）不生效，DIR 被当成又一个输入文件，cwd 被整个递归扫。",
+        "root_cause": "--out 必须等号形式；写成 --out . 时表现为大量 yst*.ybn: unknown input file 幻影任务。",
+        "fix": "一律用 --out=DIR；另注意大包（3484 条）疑似卡死 30+ 分钟零落盘，小包（195 条）9 秒可用。",
+        "ref": "verified-findings §14.2"
+      },
+      {
+        "stage": "detect",
+        "symptom": "一度误判为 Yaneura SDK（yscfg/YSSD 前缀迷惑）。",
+        "root_cause": "YS 前缀有迷惑性，实际 YPF = Yu-Ris System 封包。",
+        "fix": "检索确认引擎；GARbro 对 YPF 是真不支持（unknown format），不是假阴性。",
+        "ref": "verified-findings §14.1"
+      },
+      {
+        "stage": "postprocess",
+        "symptom": "YPF 表项名字 XOR 单字节 key、名长要查置换表，数据可选 zlib，自研解码器容易读错。",
+        "root_cause": "表项布局含名长置换（值 ^0xFF 查 4 张表）、名字 XOR key、extra 长度随版本变化。",
+        "fix": "用 entry[0].offset == table_size 与 entry[i].offset+size_comp == entry[i+1].offset 钉死布局，按 file_count 精确读 N 条（不要读到表尾）。",
+        "ref": "verified-findings §14.3"
+      }
+    ]
+  },
+  "夕凪荘的S级的女朋友们": {
+    "engine": "ExHIBIT/Retouch",
+    "decision": {
+      "extractor": "_gyu_tool",
+      "archive_exts": [".gyu", ".grp"],
+      "archive_count": null,
+      "expected_total": 11476,
+      "notes": "ExHIBIT/Retouch；三条来源合一：.gyu 2184 + .grp 9185 + 散装 107 = 11476。图片用 _gyu_tool（C#），音频用 _grp_extract（AiFS TOC）。"
+    },
+    "failures": [
+      {
+        "stage": "postprocess",
+        "symptom": "自移植的 .gyu 解码器从第一个 token 就错位（首个回引距离荒谬）。",
+        "root_cause": "Gyu-LZ 的位流与字节流共享同一游标，自移植时拆成两个游标。",
+        "fix": "位流+字节流混读的格式，移植时必须共用一个游标对象。",
+        "ref": "verified-findings §15.1"
+      },
+      {
+        "stage": "extract",
+        "symptom": "BGM 22 个 ogg 只解出头两页（3853B）加密区，之后明文。",
+        "root_cause": "真正解密器挂在虚调用链后（loader 对象 this+0x70 的 vtable[0]），静态未追到；密钥材料疑在 cluu/GUID/DPMODE。",
+        "fix": "静态/内存 dump 路线；已明确排除置换类/两套 MT 键流/RC4/ROR 2^31 爆破；本任务搁置等用户配合。",
+        "ref": "verified-findings §15.3"
+      },
+      {
+        "stage": "manifest",
+        "symptom": "把 res2000.grp 的 AiFS TOC 当成一个数据包去解析，块数对不上。",
+        "root_cause": "TOC 就是同名小的 res2000.grp（魔数 AiFS），本身不是数据。",
+        "fix": "解析 .grp 时必须把 AiFS TOC 文件自己排除，再按 TOC 块数从 res2001/2002 切 ogg。",
+        "ref": "verified-findings §15.2"
+      }
+    ]
+  },
+  "甜蜜女友2+": {
+    "engine": "CatSystem2",
+    "decision": {
+      "extractor": "_cs2_int_extract",
+      "archive_exts": [".int"],
+      "archive_count": 51,
+      "expected_total": 53500,
+      "notes": "51 个 .int（魔数 KIF\\0），__key__.dat 种子；索引+数据 Blowfish-ECB，文件名 MT 轮换。53500/53500 零失败。"
+    },
+    "failures": [
+      {
+        "stage": "detect",
+        "symptom": "无口令时无法确定 main_key，文件名混淆解不开。",
+        "root_cause": "文件名 = MT(main_key+i) 的 52 字母表轮换，main_key 原取自 exe 的 V_CODE2 资源，而本作没有。",
+        "fix": "先逐条目穷举 k0（只有 256 种）反推，再用 entry_i 的 k0 做约束 C# 并行爆破 main_key（本作 0x212C5F31），伪命中用 pcm 包 .ogg 率甄别。",
+        "ref": "verified-findings §16.2"
+      },
+      {
+        "stage": "postprocess",
+        "symptom": "107 个 24bpp HG-3 变体解码时 Array.Copy 越界崩溃。",
+        "root_cause": "_hg3_tool.cs 的 DecodeFile flip 阶段硬编码 row=w*4，24bpp 时 px 只有 w*h*3 字节。",
+        "fix": "row = w*(bpp/8) + 按 bpp 选 Format24bppRgb；移植前先拉原版源码对拍语义，ApplyDelta 的 4 等分位转置对 24bpp 无需改。",
+        "ref": "verified-findings §16.5"
+      },
+      {
+        "stage": "reconcile",
+        "symptom": "一次完全正确的解包被自己的护栏判成「产物不足」，整条链 rc=1。",
+        "root_cause": "期望张数按大小写敏感去重算 4501，而 NTFS 上 X.png 与 x.png 是同一文件、实际 4499。",
+        "fix": "去重键按平台语义（Windows 不区分大小写）；产物判定看 png/ 目录总量 == 期望，不看本轮增量。",
+        "ref": "verified-findings §16.6"
+      },
+      {
+        "stage": "postprocess",
+        "symptom": "提取后 .ogg 只有 417 个，其余媒体散落在几十个随机扩展名上。",
+        "root_cause": "引擎对扩展名做二次混淆（OggS 共 10915 个，按文件轮换、转到 0 才露真名）。",
+        "fix": "按魔数统一归一扩展名后再验收；不归一则乱扩展名的媒体会落进 verify 的 nonmedia 被静默放过。",
+        "ref": "verified-findings §16.6"
+      },
+      {
+        "stage": "verify",
+        "symptom": "尾部 fsize % 8 字节看起来像漏解的密文。",
+        "root_cause": "打包器只加密整 8 字节块，落盘尾部零头本来就是明文。",
+        "fix": "只解整块（fsize//8*8）+ 尾部原样照抄是正确实现；用最后一个 Ogg 页 CRC 判明（23259 个全过，87.6% 大小非 8 倍数）。",
+        "ref": "verified-findings §16.6"
+      }
+    ]
+  },
+  "高慢妻陥落！！": {
+    "engine": "KiriKiri 加密",
+    "decision": {
+      "extractor": "krkr_auto_extract",
+      "archive_exts": [".xp3", ".tlg"],
+      "archive_count": 1,
+      "expected_total": 2838,
+      "notes": "data.xp3 692MB，Console 读不出；KrkrExtract 5.0.0.2 Lite.exe CLI 注入 + Explorer 真拖拽。2838/2838 零失败。"
+    },
+    "failures": [
+      {
+        "stage": "extract",
+        "symptom": "CJK 路径下注入后游戏/工具窗口都不弹，只弹 #32770 错误框。",
+        "root_cause": "krkr2 引擎 ANSI→Wide 转换失败（本机 GBK 代码页），被 Core 钩子放大；首判「游戏没启动」是误诊。",
+        "fix": "建纯 ASCII stage 目录：xp3 用 os.link 硬链接（零拷贝）、主程序复制为 game.exe、plugin/*.tpm 与 *.cf 等其余文件全部复制。",
+        "ref": "verified-findings §17.2"
+      },
+      {
+        "stage": "extract",
+        "symptom": "跨进程合成 WM_DROPFILES / SHDoDragDrop / Core 命令通道全部失败。",
+        "root_cause": "GMEM_SHARE 在现代 Windows 是 no-op、OLE drop 不投递 WM_DROPFILES、命令通道需未开源的 ALPC+SessionKey IPC。",
+        "fix": "唯一通路 = Explorer 发起真实拖拽（UIA 取 item 矩形 + SendInput 按下-移动-松开）。",
+        "ref": "verified-findings §17.3"
+      },
+      {
+        "stage": "manifest",
+        "symptom": "加密 xp3 没有可用索引，条目对账没有锚点。",
+        "root_cause": "Console/GARbro 都读不出加密包。",
+        "fix": "用 Core 注入后自动 dump 的 data.xp3.index（解密后 TOC，384558 B、2838 个 File 条目）作对账地面真相。",
+        "ref": "verified-findings §17.5"
+      }
+    ]
+  },
+  "教师催眠1": {
+    "engine": "KiriKiri 加密（krkrZ）",
+    "decision": {
+      "extractor": "krkr_auto_extract",
+      "archive_exts": [".xp3"],
+      "archive_count": 10,
+      "expected_total": 5724,
+      "notes": "xksaimin.exe（krkrZ）+ 10 个 xp3 共 1.9GB；krkr_auto_extract 全自动 + 断点续传，5724/5724 零失败（含 movie.xp3 Lock 破解）。"
+    },
+    "failures": [
+      {
+        "stage": "extract",
+        "symptom": "stage 缺 plugin/*.tpm 时引擎起不来。",
+        "root_cause": "stage 目录只复制了 xp3，漏掉了插件等必需文件。",
+        "fix": "stage 现复制除 xp3 外的全部文件（plugin/*.tpm 必带）。",
+        "ref": "verified-findings §17.6"
+      },
+      {
+        "stage": "extract",
+        "symptom": "上次失败残留的游戏进程叠了一个旧 UI 窗口，遮住新窗口。",
+        "root_cause": "reuse-stage 没有杀净旧进程就重新注入。",
+        "fix": "reuse-stage 也要杀干净全部 game.exe 再重新注入。",
+        "ref": "verified-findings §17.6"
+      },
+      {
+        "stage": "extract",
+        "symptom": "用户开着的 Chrome 盖住 Explorer item，拖拽起点点空。",
+        "root_cause": "窗口遮挡导致坐标/命中点错位。",
+        "fix": "拖拽前用 WindowFromPoint 校验起点与落点，前置窗口后重试（工具提供 --only/--reuse-stage 断点续传）。",
+        "ref": "verified-findings §17.6"
+      },
+      {
+        "stage": "extract",
+        "symptom": "movie.xp3 拖给 KrkrExtract 与 KrkrzExtract 都是 0 文件（拖放被接受、任务静默结束）。",
+        "root_cause": "TOC 的 segm 偏移/大小字段被混淆（offset==size 是强特征），数据本身其实未加密。",
+        "fix": "用 MPEG-PS 包链扫描（00 00 01 BA 起始码、2048B 扇区）/明文 ASF 头自行定位切出 logo.mpg + pv_movie.wmv。",
+        "ref": "verified-findings §17.7"
+      }
+    ]
+  }
+}

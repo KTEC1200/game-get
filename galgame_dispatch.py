@@ -250,6 +250,10 @@ class Report:
     # 拼命令行用的原料，两者生命周期与稳定性要求不同，混在一起会让
     # 每次新增一条计划就冲掉 golden。
     archives: dict[str, list[Path]] = field(default_factory=dict)
+    # 命中信号 id 集合（去重）。**格式签名**的稳定来源：渲染后的证据文案带游戏
+    # 专属计数（"发现 12 个 .xp3"），跨游戏不可比；信号 id 才是「哪些格式特征
+    # 被认出」的可比口径。cases/ 案例库用它算指纹签名（见 build_cases.py）。
+    fired_ids: set[str] = field(default_factory=set)
 
     @property
     def best(self) -> Guess | None:
@@ -431,6 +435,7 @@ def scan(game_dir: Path, max_files: int = 200_000, deep: bool = False,
         cur.score += weight
         cur.evidence.append(f"+{weight} {detail}")
     rep.guesses = sorted(g.values(), key=lambda x: -x.score)
+    rep.fired_ids = set(res.fired_ids)
 
     for key, val in res.facts.items():
         rep.facts.setdefault(key, val)

@@ -1,0 +1,90 @@
+{
+  "schema": "cases/1",
+  "case_id": "69c521e192f0",
+  "engine": "KiriKiri",
+  "engine_label": "KiriKiri 加密（krkrZ）",
+  "sample": "教师催眠1",
+  "game_dir": "D:\\HY\\教师催眠1",
+  "discriminator": "xp3-encrypted-krkrZ",
+  "fingerprint": {
+    "signals": [
+      "xp3",
+      "xp3_known_names"
+    ],
+    "score": 90,
+    "threshold": 60,
+    "signature": "6519ddb81f58",
+    "engine": "KiriKiri",
+    "reconstructed": false
+  },
+  "decision": {
+    "extractor": "krkr_auto_extract",
+    "archive_exts": [
+      ".xp3"
+    ],
+    "archive_count": 10,
+    "expected_total": 5724,
+    "notes": "xksaimin.exe（krkrZ）+ 10 个 xp3 共 1.9GB；krkr_auto_extract 全自动 + 断点续传，5724/5724 零失败（含 movie.xp3 Lock 破解）。"
+  },
+  "timing": {
+    "detect": null,
+    "extract": null,
+    "postprocess": null,
+    "verify": null,
+    "manifest": null,
+    "total": null
+  },
+  "result": {
+    "ok": true,
+    "source": "docs",
+    "summary": {
+      "images": 2009,
+      "audio": 3600,
+      "video": 2,
+      "total": null
+    },
+    "media_minutes": 556.8,
+    "counts": null,
+    "verify": null,
+    "reconcile": null
+  },
+  "failures": [
+    {
+      "stage": "extract",
+      "symptom": "stage 缺 plugin/*.tpm 时引擎起不来。",
+      "root_cause": "stage 目录只复制了 xp3，漏掉了插件等必需文件。",
+      "fix": "stage 现复制除 xp3 外的全部文件（plugin/*.tpm 必带）。",
+      "ref": "verified-findings §17.6"
+    },
+    {
+      "stage": "extract",
+      "symptom": "上次失败残留的游戏进程叠了一个旧 UI 窗口，遮住新窗口。",
+      "root_cause": "reuse-stage 没有杀净旧进程就重新注入。",
+      "fix": "reuse-stage 也要杀干净全部 game.exe 再重新注入。",
+      "ref": "verified-findings §17.6"
+    },
+    {
+      "stage": "extract",
+      "symptom": "用户开着的 Chrome 盖住 Explorer item，拖拽起点点空。",
+      "root_cause": "窗口遮挡导致坐标/命中点错位。",
+      "fix": "拖拽前用 WindowFromPoint 校验起点与落点，前置窗口后重试（工具提供 --only/--reuse-stage 断点续传）。",
+      "ref": "verified-findings §17.6"
+    },
+    {
+      "stage": "extract",
+      "symptom": "movie.xp3 拖给 KrkrExtract 与 KrkrzExtract 都是 0 文件（拖放被接受、任务静默结束）。",
+      "root_cause": "TOC 的 segm 偏移/大小字段被混淆（offset==size 是强特征），数据本身其实未加密。",
+      "fix": "用 MPEG-PS 包链扫描（00 00 01 BA 起始码、2048B 扇区）/明文 ASF 头自行定位切出 logo.mpg + pv_movie.wmv。",
+      "ref": "verified-findings §17.7"
+    }
+  ],
+  "provenance": {
+    "source": "docs-reconstructed",
+    "manifest_path": null,
+    "doc_refs": [
+      "AGENTS.md 样本表",
+      "verified-findings.md"
+    ],
+    "generated_at": "2026-11-01T17:33:47+08:00"
+  }
+}

@@ -334,9 +334,56 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
   `check_all()` / `check_csharp()` 自检，19 项新测试 + 3 轮变异验证（真 csc 编 hello-world 并运行）。
 - 下一步：① ~~CatSystem2 **全量 51 包 / 53500 条**~~ ✅ **已跑通并拿到绿色 manifest**（2026-11-01：extract 53500/0 差、postprocess 4499 PNG、
   verify 图片 4499/4499、音频 23259/23259、视频 10/10、失败 0，媒体 2291.0 分钟，全链 2261.6s 退出码 0）
-  ② ~~接 **Unity**~~ ✅ **已实现第 8 条链路（`_unity_extract.py`）**：JSON 枚举作地面真相、Convert 分批导出、FSB5 多轮累积（正在跑全量）
-  ③ 接剩下 1 个引擎（**Tyrano-Electron**；目前只有 `_fixtures/tyrano_game`，没有真实样本）
-  ④ `cases/` 案例库。
+  ② ~~接 **Unity**~~ ✅ **已实现并全量跑通第 8 条链路（`_unity_extract.py`）**：JSON 枚举作地面真相、Convert 分批导出、FSB5 多轮累积。实测图片 777/777、音频 1168/1168、视频 0/0，媒体 123.2 分钟，全链 153.0s 退出码 0（Texture2D 有 5 个引用型资产缺口，已显式报出并对账通过）
+  ③ 接剩下 1 个引擎（**Tyrano-Electron**；目前只有 `_fixtures/tyrano_game`，没有真实样本）—— 排在 cases/ 之后
+  ④ ~~`cases/` 案例库~~ ✅ **已完成（2026-11-01）**：12 个 case + `index.json` + `build_cases.py` +
+  `tests/test_cases.py`，见下方专节。
+
+## cases/ 案例库（已完成 2026-11-01）
+
+**目的**（蓝图 §2.7 自愈闭环）：拿到新游戏先算 (格式签名哈希, 目录特征)，命中案例库就直接套用
+已验证的 (decoder, plugin/key, 备注)，跳过 LLM 推理（L0）。这是终局软件「决策树 + 已验证工具 +
+实测证据」三件套里的第三件。
+
+**设计**（2026-11-01 用户批准）：每个样本一个 JSON（`cases/<case_id>-<engine>.json`），字段
+`case_id`（= sha1(engine + 命中信号 id 集合 + 样本 slug + discriminator)[:12]）、`engine`（**规范名**，
+与 `fingerprint.engine` 一致）、`engine_label`（人读的描述名，如「KiriKiri 加密」）、`sample`、
+`game_dir`、`discriminator`、`fingerprint`（signals/score/threshold/signature/reconstructed）、
+`decision`（extractor/archive_exts/archive_count/expected_total/notes）、`timing`（各阶段秒）、
+`result`（counts/verify/reconcile/ok/source/summary）、`failures[]`（stage/symptom/root_cause/fix/ref）、
+`provenance`（source/manifest_path/doc_refs/generated_at）。
+`cases/index.json`：指纹签名 → case_id 列表（同签名对应多 case，靠 `discriminator` 区分）。
+`build_cases.py`：`--from-manifests`（从 `_extracted/*/manifest.json` 机械重建）/ `--from-docs`
+（从文档提炼）/ `--index`（重建索引）/ `--validate`（校验 schema + provenance 诚实）。
+**诚实纪律**：docs 重建案例 `provenance.source = "docs-reconstructed"`、`manifest_path = null`、
+`result.counts/verify/reconcile = null`（不许伪造 manifest 口径的数字）；`failures[]` 只写有出处的。
+
+**已完成**（2026-11-01）：
+- ✅ `rules/__init__.py` + `galgame_dispatch.py` 加 `fired_ids`（命中信号 id 集合）——指纹签名的
+  稳定来源；不改 facts，golden 零漂移。
+- ✅ `cases/_failures_raw.json`（43 条 failure，12 样本齐全，ref 全部核验）。
+- ✅ `engines.json` 缺 id 的信号补语义 id（Unity 6、KiriKiri 1、Ren'Py 3、Tyrano 2、RPG Maker 2、
+  AdvHD 3、Yu-Ris 3、ExHIBIT 3、CatSystem2 2，共 25 个）——Ren'Py 的 fired_ids 不再是空集。
+- ✅ `cases/_docs_meta.json`（8 个纯文档样本的图片/音频/视频/媒体分钟数，文档口径）。
+- ✅ `build_cases.py`（构建器，含 `write_all` 清陈旧文件 + `validate_cases` 诚实校验）。
+- ✅ 生成 **12 个 case + `index.json`（9 个签名）**，`--validate` 全过。
+- ✅ `tests/test_cases.py`（21 个测试，锁纯函数 + 构建产物 + 诚实纪律）。
+- ✅ 测试 453 passed / 8 skipped；`python tests/make_golden.py --check` 零漂移。
+
+**12 个 case 的来源分布**：5 个 `manifest`（My Wife / ラブラブ / 夕凪荘 / 甜蜜女友2+ ×2，其中
+甜蜜女友2+_试跑 是同款非独立样本已排除）+ 7 个 `docs-reconstructed`（兼职人妻 / My Best Deal /
+SPITE / Swipe Right / 常識改変学園 / あまねぇ / 高慢妻陥落！！ / 教师催眠1——实际 8 个纯文档，
+My Best Deal 目录已删、指纹 reconstructed）。
+
+**已知坑**：
+- 兼职人妻（GARbro 可解）与高慢妻陥落！！（必须动态注入）**指纹完全相同**（都只有
+  `xp3`/`xp3_known_names` 信号，规则无「加密 xp3」信号）→ 案例库必须靠 `discriminator`
+  字段区分（`xp3-plain` / `xp3-encrypted` / `xp3-encrypted-krkrZ`），不能只靠签名。
+- `engine` 字段曾误用 `_failures_raw.json` 的描述性标签（如「KiriKiri 加密」）导致与
+  `fingerprint.engine` 不一致、按指纹查会错位——已改为以 `gd.scan` 的规范名为准，描述性标签
+  另存 `engine_label`。
+- `write_all` 必须清陈旧 case 文件：case_id 随 engine 规范化会变，不清的话旧文件残留、
+  案例库越攒越脏（实测踩过：SPITE 早期被映射成 Tyrano/Electron 的残留文件）。
 
 ## 引擎分支要点（实测）
 
@@ -365,7 +412,7 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
   作地面真相（唯一出处）、Convert 分批导出（按 Texture2D/Sprite/AudioClip 三类）、FSB5 容器音频
   多轮累积（`_as_audio_collect2.py`，单次只出 ~30%）。侦察实测：Texture2D JSON 460 / Convert 455
   （差 5 个引用型资产）、Sprite 322/322 完美、AudioClip JSON 1168 / 单次 Convert 377（32%，需多轮）。
-  全量跑进行中（raw 已有 1437 个文件 = 777 png + 660 wav）。
+  全量已跑通：raw 1945 文件（png 777 + wav 1168），图片 777/777、音频 1168/1168、视频 0/0，失败 0。Texture2D JSON 枚举 460 vs Convert 455 的 5 个缺口是引用型资产，AssetStudio 固有行为，已用 texture2d_gap 调整 expected_total 并在 detail 显式报出。
 - 主流程脚本：**`unity_unpack.ps1`**（分批导出 + 引擎判定，已内置坑 4 的注释）
 - 版本/后端判定：正则读 `globalgamemanagers` 拿版本；存在 `il2cpp_data/` 或 `GameAssembly.dll` 即 IL2CPP。
   Unity 6000 系改用 AssetStudioNext；IL2CPP 需先 Il2CppDumper。

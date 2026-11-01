@@ -1,0 +1,78 @@
+{
+  "schema": "cases/1",
+  "case_id": "3a73db965b27",
+  "engine": "Ren'Py",
+  "engine_label": "Ren'Py",
+  "sample": "Swipe Right for Sugar Mama Sensei",
+  "game_dir": "D:\\HY\\Swipe Right for Sugar Mama Sensei",
+  "discriminator": "rpa-python3-4pack",
+  "fingerprint": {
+    "signals": [
+      "renpy_dir",
+      "rpa",
+      "rpy_scripts"
+    ],
+    "score": 100,
+    "threshold": 60,
+    "signature": "20b90f43db7b",
+    "engine": "Ren'Py",
+    "reconstructed": false
+  },
+  "decision": {
+    "extractor": "rpa_tool",
+    "archive_exts": [
+      ".rpa"
+    ],
+    "archive_count": 4,
+    "expected_total": 2156,
+    "notes": "Ren'Py / Python 3；四包按内容分工（archive/gui_resource/img_resource/sfx_resource），无 patch。"
+  },
+  "timing": {
+    "detect": null,
+    "extract": null,
+    "postprocess": null,
+    "verify": null,
+    "manifest": null,
+    "total": null,
+    "note": "rpa_tool 提取秒级"
+  },
+  "result": {
+    "ok": true,
+    "source": "docs",
+    "summary": {
+      "images": 326,
+      "audio": 1541,
+      "video": 0,
+      "total": null
+    },
+    "media_minutes": 187.6,
+    "counts": null,
+    "verify": null,
+    "reconcile": null
+  },
+  "failures": [
+    {
+      "stage": "reconcile",
+      "symptom": "四包同为 RPA-3.0 / key 0x42424242，容易误判成同一作或误以为有 patch 要合并。",
+      "root_cause": "Ren'Py 包分工不止 archive+patch 一种；key 只是每作固定常量。",
+      "fix": "按实际文件名判断包职责；key 相同不代表同一作，别拿 key 当指纹。",
+      "ref": "verified-findings §11"
+    },
+    {
+      "stage": "verify",
+      "symptom": "ffprobe 报 End of file（2 个 se008.ogg），疑似解包 bug。",
+      "root_cause": "源包索引就声明这 2 条 length=0（同名占位音效）。",
+      "fix": "0 字节产物先对索引 length 逐条对账：索引非 0 却解出 0 才是 bug；源本身 0 长度如实记录即可。",
+      "ref": "verified-findings §11.2"
+    }
+  ],
+  "provenance": {
+    "source": "docs-reconstructed",
+    "manifest_path": null,
+    "doc_refs": [
+      "AGENTS.md 样本表",
+      "verified-findings.md"
+    ],
+    "generated_at": "2026-11-01T17:33:46+08:00"
+  }
+}

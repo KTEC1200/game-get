@@ -1,0 +1,91 @@
+{
+  "schema": "cases/1",
+  "case_id": "4955589831f2",
+  "engine": "Tyrano/Electron",
+  "engine_label": "Electron（自研引擎）",
+  "sample": "SPITE",
+  "game_dir": "D:\\HY\\SPITE",
+  "discriminator": null,
+  "fingerprint": {
+    "signals": [
+      "asar",
+      "asar_app"
+    ],
+    "score": 90,
+    "threshold": 60,
+    "signature": "524eebf5ec1b",
+    "engine": "Tyrano/Electron",
+    "reconstructed": false
+  },
+  "decision": {
+    "extractor": "_spite_decrypt",
+    "archive_exts": [
+      ".asar",
+      ".dat"
+    ],
+    "archive_count": null,
+    "expected_total": 365,
+    "notes": "自研 Electron 引擎（pixi-vn + Ink + Spine + React）；app.asar 只装引擎代码，媒体在外部 data/ 且按路径派生 ChaCha20 密钥加密。路径恢复后覆盖 257/365 槽。"
+  },
+  "timing": {
+    "detect": null,
+    "extract": null,
+    "postprocess": null,
+    "verify": null,
+    "manifest": null,
+    "total": null
+  },
+  "result": {
+    "ok": true,
+    "source": "docs",
+    "summary": {
+      "images": 128,
+      "audio": 68,
+      "video": 45,
+      "total": null
+    },
+    "media_minutes": 50.8,
+    "counts": null,
+    "verify": null,
+    "reconcile": null
+  },
+  "failures": [
+    {
+      "stage": "detect",
+      "symptom": "以为媒体都在 app.asar 里，实际 asar 只有引擎代码、媒体 0 个。",
+      "root_cause": "asar 只装 dist/ + node_modules，媒体在外部 data/ 目录且加密。",
+      "fix": "先解析 asar 索引看文件构成，加密的 .dat 另走解密链。",
+      "ref": "verified-findings §10.1"
+    },
+    {
+      "stage": "detect",
+      "symptom": ".dat 头部全为高熵随机字节、无任何魔数，无法直接解密。",
+      "root_cause": "密钥 = HKDF-SHA256(info=\"spite-media-chacha20:\"+原始路径)，密钥依赖原始路径，不知道路径就永远解不开。",
+      "fix": "先逆向 media-crypto.cjs 确定方案，再恢复路径映射（文件名 = sha256(路径).hex[:16]），然后按路径派生密钥解密。",
+      "ref": "verified-findings §10.2"
+    },
+    {
+      "stage": "extract",
+      "symptom": "路径恢复第一轮只拿到 222 条，大量 .dat 仍解不开。",
+      "root_cause": "路径分散在 asar 字面量、atlas 页、minified 混淆池里，单轮覆盖不足。",
+      "fix": "多轮反哺：字面量正则 → 解出的 .atlas 反哺 → 混淆池解码后枚举目录×名字×扩展名 → 角色前缀补漏，最终 257/365；未引用遗留资产天然不可恢复。",
+      "ref": "verified-findings §10.3"
+    },
+    {
+      "stage": "postprocess",
+      "symptom": "minified JS 文本里引号不配对，朴素正则提取整段错位且随扫描起点漂移。",
+      "root_cause": "正则字面量/单双引号/模板串混用。",
+      "fix": "用反向行走 + 平衡扫描 + 自写 tokenizer 状态机拿池，单双引号/模板串通吃。",
+      "ref": "verified-findings §10.6"
+    }
+  ],
+  "provenance": {
+    "source": "docs-reconstructed",
+    "manifest_path": null,
+    "doc_refs": [
+      "AGENTS.md 样本表",
+      "verified-findings.md"
+    ],
+    "generated_at": "2026-11-01T17:33:45+08:00"
+  }
+}

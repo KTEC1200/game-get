@@ -1,0 +1,95 @@
+{
+  "schema": "cases/1",
+  "case_id": "0f0633bc8c63",
+  "engine": "Ren'Py",
+  "engine_label": "Ren'Py",
+  "sample": "My Best Deal v4.7",
+  "game_dir": "D:\\HY\\最佳的交易\\My_Best_Deal_v4.7-pc",
+  "discriminator": "rpa-python2",
+  "fingerprint": {
+    "signals": [],
+    "score": 0,
+    "threshold": 60,
+    "signature": null,
+    "reconstructed": true,
+    "note": "游戏目录不存在：D:\\HY\\最佳的交易\\My_Best_Deal_v4.7-pc"
+  },
+  "decision": {
+    "extractor": "rpa_tool",
+    "archive_exts": [
+      ".rpa"
+    ],
+    "archive_count": 2,
+    "expected_total": 8349,
+    "notes": "Ren'Py / Python 2.7；archive.rpa 8248 条 + patch.rpa 101 条，第一个真有视频的样本。"
+  },
+  "timing": {
+    "detect": null,
+    "extract": null,
+    "postprocess": null,
+    "verify": null,
+    "manifest": null,
+    "total": null,
+    "note": "解包 31 秒（187 MB/s）"
+  },
+  "result": {
+    "ok": true,
+    "source": "docs",
+    "summary": {
+      "images": 7804,
+      "audio": 47,
+      "video": 288,
+      "total": null
+    },
+    "media_minutes": 71.2,
+    "counts": null,
+    "verify": null,
+    "reconcile": null
+  },
+  "failures": [
+    {
+      "stage": "extract",
+      "symptom": "解析 RPA-3.0 报 pickle.UnpicklingError: invalid load key, 'x'。",
+      "root_cause": "索引有两层包装：分隔空格被换成 '.'（本作）+ 索引偏移处是 zlib 压缩流（78 9C 开头）。",
+      "fix": "正则 ^RPA-3.0 ([0-9a-f]{16}) ([0-9a-f]{8}) 抓偏移与 key；先 zlib.decompress 再 pickle.loads；每个 offset/length 都 ^ key。",
+      "ref": "verified-findings §9.1"
+    },
+    {
+      "stage": "reconcile",
+      "symptom": "误以为 patch.rpa 会覆盖 archive.rpa，需要合并。",
+      "root_cause": "凭文件名相似度猜测 patch 语义，而不是求证。",
+      "fix": "两份索引求交集判断：本作 0 个重名 → 纯新增，无需合并覆盖。",
+      "ref": "verified-findings §9.2"
+    },
+    {
+      "stage": "manifest",
+      "symptom": "282 个 jpg 被错分进 Video_WebM（该类瞬间变成 396 个）。",
+      "root_cause": "只按目录 images/animations/ 分类，而该目录下同时存在 .avi(166)/.webm(115)/.jpg(283)。",
+      "fix": "先按扩展名认媒体本体再退回按目录分，tl/ 整体保留；分类错了就修逻辑从源归档重跑（31 秒），不写迁移脚本原地修。",
+      "ref": "verified-findings §9.4；AGENTS.md 坑5"
+    },
+    {
+      "stage": "verify",
+      "symptom": "验收报 108 项假失败：.rpyc/.otf/.txt 全被送 ffprobe 报 Invalid data found。",
+      "root_cause": "验收脚本把不在图片白名单里的文件一律送 ffprobe。",
+      "fix": "加 AV_EXT 白名单，只有真媒体才送 ffprobe，其余归 nonmedia 单独计数。",
+      "ref": "verified-findings §9.6"
+    },
+    {
+      "stage": "verify",
+      "symptom": "ffprobe 报 318 个视频流，而真实视频文件只有 288 个。",
+      "root_cause": "24 个 mp3/图片的内嵌封面被 ffprobe 报成 codec_type=video。",
+      "fix": "按文件扩展名数视频，不按 ffprobe 的 stream 数。",
+      "ref": "verified-findings §9.3"
+    }
+  ],
+  "provenance": {
+    "source": "docs-reconstructed",
+    "manifest_path": null,
+    "doc_refs": [
+      "AGENTS.md 样本表",
+      "verified-findings.md"
+    ],
+    "generated_at": "2026-11-01T17:33:45+08:00"
+  }
+}

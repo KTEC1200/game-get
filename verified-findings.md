@@ -988,3 +988,58 @@ Remote 模式启动（实测无监听端口）。逐项证伪的替代通路：
   [--only a.xp3,b.xp3] [--reuse-stage]`。
 - `_uia_item_rect.ps1` —— UIA 取元素物理矩形（DPI 自检 + 换算）。
 - `_krkr_tlg_convert.py` —— tlg2png 批量转换 + PNG 魔数校验（Python 版，替代 ps1 以避开 CJK 路径）。
+
+## 18. `cases/` 案例库（2026-11-01）——指纹签名 → 已验证解法，跳过 LLM
+
+蓝图 §2.7 的「自愈闭环」要求：新游戏进来先算 (格式签名哈希, 目录特征) 查案例库，命中就直接套用
+已验证的 (decoder, plugin/key, 备注)，跳过 LLM 推理（L0）。这是终局软件「决策树 + 已验证工具 +
+实测证据」三件套里的第三件。
+
+### 18.1 指纹签名机制
+
+**`fired_ids` 是签名的稳定来源**：`rules/__init__.py` 的 `Result` 加 `fired_ids: set[str]`，
+`evaluate()` 末尾 `res.fired_ids = set(fired)`；`galgame_dispatch.py` 的 `Report` 加同名字段，
+`scan()` 里 `rep.fired_ids = set(res.fired_ids)`。**不改 `facts`**，所以 `golden_detect.json`
+（锁 engine/score/evidence/facts）零漂移。
+
+签名 = `sha1(engine + 命中信号 id 集合)[:12]`。信号 id 必须给全——2026-11-01 前 Ren'Py 的 3 个信号
+都没 id，指纹退化成空集（Swipe Right 实测 fired=[]），签名根本算不出来。给 9 个引擎共补了
+**25 个语义 id**（Unity 6、KiriKiri 1、Ren'Py 3、Tyrano 2、RPG Maker 2、AdvHD 3、Yu-Ris 3、
+ExHIBIT 3、CatSystem2 2）。
+
+### 18.2 case schema 与两类来源
+
+每个样本一个 JSON（`cases/<case_id>-<engine>.json`），核心字段：
+`case_id`（= sha1(engine + 信号集 + 样本 slug + discriminator)[:12]）、`engine`（**规范名**，
+与 `fingerprint.engine` 一致）、`engine_label`（人读的描述名）、`discriminator`、
+`fingerprint`、`decision`（extractor/archive_exts/archive_count/expected_total）、`timing`、
+`result`（counts/verify/reconcile/ok/source/summary）、`failures[]`（stage/symptom/root_cause/fix/ref）、
+`provenance`（source/manifest_path/doc_refs）。
+
+**两类来源，两种可信度**：
+- `manifest` —— 从 `_extracted/*/manifest.json` 机械重建，counts/verify/reconcile/timing 逐字取，
+  不手填不估算。这是**地面真相**。
+- `docs-reconstructed` —— 从 AGENTS.md 样本表 + verified-findings.md 提炼。产物目录已不存在
+  （或从未跑过 orchestrator），所以 counts 是**文档记载的摘要**。**诚实纪律**：`manifest_path`
+  必须 null、`result.counts/verify/reconcile` 必须 null（不许伪造 manifest 口径的数字）、
+  `failures[]` 每条必须有 `ref`。
+
+### 18.3 三个真实坑（都花过代价）
+
+1. **同签名不同解法**：兼职人妻（GARbro 直接解）与高慢妻陥落！！（必须 KrkrExtract 动态注入）
+   **指纹完全相同**（都只有 `xp3`/`xp3_known_names`，规则无「加密 xp3」信号）。案例库必须靠
+   `discriminator` 字段区分（`xp3-plain`/`xp3-encrypted`/`xp3-encrypted-krkrZ`），不能只靠签名。
+   → 规则表的判别力上限就在这里，案例库的 discriminator 是第二道判别。
+
+2. **`engine` 字段误用描述性标签**：早期用 `_failures_raw.json` 里的「KiriKiri 加密」当 engine，
+   与 `fingerprint.engine`（规范名「KiriKiri」）不一致，按指纹查会错位。已改为以 `gd.scan` 的
+   规范名为准，描述性标签另存 `engine_label`。
+
+3. **`write_all` 不清陈旧文件**：case_id 随 engine 规范化会变，不清的话旧文件残留（实测踩过：
+   SPITE 早期被映射成 Tyrano/Electron 的残留 case 文件）。build 时先删非保留 json 再写。
+
+### 18.4 构建器与测试
+
+`build_cases.py`（`--from-manifests` / `--from-docs` / `--index` / `--validate`）+ `tests/test_cases.py`
+（21 个测试，锁纯函数 + 构建产物 + 诚实纪律）。测试 **453 passed / 8 skipped**，
+`python tests/make_golden.py --check` 零漂移。

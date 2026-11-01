@@ -359,6 +359,10 @@ class Result:
     hits: list[tuple[str, int, str]] = field(default_factory=list)
     facts: dict = field(default_factory=dict)
     engines_hit: set[str] = field(default_factory=set)
+    # 命中信号 id 集合（去重）。**格式签名**的稳定来源：渲染后的 detail 文案带
+    # 游戏专属计数（"发现 12 个 .xp3"），跨游戏不可比；信号 id 才是「哪些格式
+    # 特征被认出」的可比口径。cases/ 案例库用它算指纹签名。
+    fired_ids: set[str] = field(default_factory=set)
 
 
 def evaluate(inv: Inventory, probes: dict[str, Probe] | None = None,
@@ -394,6 +398,7 @@ def evaluate(inv: Inventory, probes: dict[str, Probe] | None = None,
                 _run_signal(sig, _clone(env), fired, res.hits, res.facts)
 
     res.engines_hit = {e for e, _, _ in res.hits}
+    res.fired_ids = set(fired)
     return res
 
 
