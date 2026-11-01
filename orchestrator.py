@@ -52,6 +52,7 @@ import _ypf_extract as ypf             # noqa: E402  （复用它的表解析，
 import _pna_carve as pna               # noqa: E402  （复用它的 carve()，别抄第二份）
 import _grp_extract as grp             # noqa: E402  （复用它的 TOC 解析，别抄第二份）
 import _cs2_int_extract as cs2         # noqa: E402  （复用它的地面真相/魔数识别，别抄第二份）
+import _unity_extract as unity         # noqa: E402  （复用它的 JSON 枚举/Convert 导出，别抄第二份）
 
 if sys.platform == "win32":
     for _s in (sys.stdout, sys.stderr):
@@ -79,7 +80,7 @@ AV_EXT = {".mp4", ".mkv", ".avi", ".webm", ".mov", ".wmv", ".flv", ".mpg", ".mpe
 
 #: 已实现完整链路的引擎（其余判得出来但没链路 → 退出码 2）
 IMPLEMENTED = ("Ren'Py", "KiriKiri", "RPG Maker", "Yu-Ris", "AdvHD", "ExHIBIT",
-               "CatSystem2")
+               "CatSystem2", "Unity")
 
 
 # ---------------------------------------------------------------- 结构
@@ -1010,6 +1011,107 @@ def stage_extract_cs2(ctx: Ctx) -> Stage:
     return st
 
 
+# ---------------------------------------------------------------- Unity
+
+def _unity_data_dir(game_dir: Path) -> Path | None:
+    """找 Unity 的 `<游戏名>_Data` 目录。
+
+    找不到返回 None（不像其他引擎那样直接 SystemExit）。
+    """
+    for p in game_dir.iterdir():
+        if p.is_dir() and p.name.endswith("_Data"):
+            return p
+    return None
+
+
+def stage_extract_unity(ctx: Ctx) -> Stage:
+    """Unity AssetStudio Convert 导出：图片 + 音频。
+
+    地面真相 = AssetStudio JSON 枚举计数（`_unity_extract.expected_counts()`，唯一出处）。
+    对每种类型跑一次 Convert 导出，复制产物到 `raw/<category>/`，对账。
+
+    AudioClip 若是 FSB5 容器，单次 Convert 只能导出约 30%，
+    需要多轮 `--names` 分组累积（`_as_audio_collect2.py`）。
+    """
+    st = Stage("extract")
+    t0 = time.time()
+    data_dir = _unity_data_dir(ctx.game_dir)
+    if data_dir is None:
+        st.detail = "没找到 <游戏名>_Data 目录"
+        return st
+
+    as_exe = tb.find_tool("assetstudio")
+    exp = unity.expected_counts(data_dir, as_exe)
+    if exp["total"] == 0:
+        st.detail = "AssetStudio JSON 枚举到 0 个资产"
+        return st
+
+    expected_total = exp["total"]
+    archives: list[dict] = []
+
+    if ctx.reuse_raw is None:
+        got = unity.extract_all(data_dir, ctx.raw_dir, as_exe)
+        archives = got.get("archives", [])
+
+        # Audio multi-round
+        audio_got = got["by_type"].get("AudioClip", 0)
+        audio_exp = exp["by_type"].get("AudioClip", 0)
+        if audio_exp > 0 and audio_got < audio_exp * 0.5:
+            ctx.log("extract", f"音频单次导出 {audio_got}/{audio_exp}（<50%），跑多轮分组累积...")
+            audio_dir = ctx.raw_dir / "Audio"
+            script = Path(__file__).parent / "_as_audio_collect2.py"
+            if script.exists():
+                proc = subprocess.run(
+                    [sys.executable, str(script), str(data_dir), str(audio_dir)],
+                    capture_output=True, timeout=3600)
+                if proc.returncode == 0:
+                    audio_files = list(audio_dir.rglob("*.wav"))
+                    got["by_type"]["AudioClip"] = len(audio_files)
+                    got["total"] = sum(got["by_type"].values())
+                    ctx.log("extract", f"音频多轮累积后：{len(audio_files)} 个 wav")
+                else:
+                    ctx.log("extract", f"_as_audio_collect2.py 失败（rc={proc.returncode}）")
+            else:
+                ctx.log("extract", "[WARN] _as_audio_collect2.py 不存在，跳过音频多轮累积")
+
+        # 更新 archives
+        archives = [{"name": t, "entries": got["by_type"][t]} for t in unity.UNITY_TYPES]
+        actual_total = got["total"]
+    else:
+        # --reuse-raw：不跑 Convert，但仍算地面真相并对账
+        actual_total = _count(ctx.raw_dir).total
+        archives = [{"name": t, "entries": None} for t in unity.UNITY_TYPES]
+
+    # Texture2D 已知缺口：AssetStudio 的 JSON 枚举会列出所有资产（含引用型），
+    # 但 Convert 只导出可直接使用的资产。本作实测 5 个（460 枚举 / 455 导出）。
+    # 这不是 bug，是 AssetStudio 的行为——ground truth 是 JSON 枚举，但交付口径
+    # 是 Convert 导出。缺口必须显式算出来并对账，不能静默放过。
+    texture2d_exp = exp["by_type"].get("Texture2D", 0)
+    texture2d_actual = len(list((ctx.raw_dir / "Image_Texture2D").rglob("*"))) if (ctx.raw_dir / "Image_Texture2D").is_dir() else 0
+    texture2d_gap = texture2d_exp - texture2d_actual
+    adjusted_expected = expected_total - texture2d_gap
+
+    st.data["json_total"] = expected_total
+    st.data["expected_total"] = adjusted_expected
+    st.data["actual_total"] = actual_total
+    st.data["archives"] = archives
+    st.data["json_counts"] = exp["by_type"]
+    st.data["texture2d_gap"] = texture2d_gap
+
+    if actual_total != adjusted_expected:
+        st.ok = False
+        st.detail = (f"对账失败：期望 {adjusted_expected}（JSON {expected_total} − Texture2D 缺口 {texture2d_gap}）"
+                     f" vs 落盘 {actual_total}"
+                     f"（JSON 枚举 {exp['by_type']}）")
+    else:
+        st.ok = True
+        gap_note = f"，Texture2D 已知缺口 {texture2d_gap}" if texture2d_gap > 0 else ""
+        st.detail = (f"JSON 枚举 {expected_total} 个资产，Convert 导出 {actual_total} 个文件"
+                     f"{gap_note}，对账 0 差")
+    st.seconds = time.time() - t0
+    return st
+
+
 # ---------------------------------------------------------------- 阶段 3: postprocess
 
 EXTRACTORS = {
@@ -1020,6 +1122,7 @@ EXTRACTORS = {
     "AdvHD": "stage_extract_advhd",
     "ExHIBIT": "stage_extract_exhibit",
     "CatSystem2": "stage_extract_cs2",
+    "Unity": "stage_extract_unity",
 }
 
 def _carve_pna(src: Path, out_dir: Path) -> int:

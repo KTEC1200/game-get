@@ -40,7 +40,7 @@
 - **编排器：`orchestrator.py`**（2026-10-29，软件化第 3 步，**主入口**）—— 一条命令跑完
   `detect → extract → postprocess → verify → manifest`：
   `python orchestrator.py <游戏目录> --out <输出目录> [--allow-gui] [--reuse-raw DIR] [--no-verify] [--dry-run]`。
-  已接 **Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD / ExHIBIT / CatSystem2 七条链路**（其余引擎判得出就退出码 2，不假装成功）。
+  已接 **Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD / ExHIBIT / CatSystem2 / Unity 八条链路**（其余引擎判得出就退出码 2，不假装成功）。
   退出码：`0` 全通过 / `1` 阶段失败或对账有差 / `2` 引擎判出但无链路 / `3` 未命中。
   输出 `raw/`（原始）+ `png/`（tlg/pna 转出的成品）+ `manifest.json`（counts 分 raw/final/converted 三段）
   + `_work/*.log`。**对账一律以索引为地面真相，diff≠0 即失败**；`--reuse-raw` 跳解包但不跳对账。
@@ -97,7 +97,7 @@
     `_ypf_extract.py`：转换做在落盘之前，磁盘上从不存在中间格式，故 raw == final、converted 为空；
     **不许伪造带 `.ycg`/`.rpgmvp` 的 raw 段，那是编数据**，转换明细进 `postprocess`）。
 - Ren'Py：**`rpa_tool.py`**（`info`/`list`/`extract`）、**`rpa_extract_organized.py`**（一步分类解包，`--manifest PATH` 可选）、`_organize_rpa.py`（先解再分，留档）
-- Unity：**`unity_unpack.ps1`**、`_as_audio_collect2.py`（FSB5 分组累积）、`_as_catalog.py`、`_as_summary.py`、`_scan_unity_video.py`
+- Unity：**`_unity_extract.py`**（AssetStudio JSON 枚举 + Convert 导出，orchestrator 第 8 条链路）、**`unity_unpack.ps1`**（手工版）、`_as_audio_collect2.py`（FSB5 分组累积）、`_as_catalog.py`、`_as_summary.py`、`_scan_unity_video.py`
 - KiriKiri：`_tlg2png_all.ps1`、**`_krkr_tlg_convert.py`**（tlg2png 批量转换 Python 版，避开 CJK 路径坑）
 - **KiriKiri 加密动态提取：`krkr_auto_extract.py`**（ASCII stage 硬链接 → Lite.exe CLI 注入 →
   Explorer 拖拽逐包提取 → 完成判定 → 移产物；`<游戏目录> [--out DIR] [--keep-stage]`；
@@ -325,17 +325,18 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
 （含 `counts()` 两目录形态与 `counts_flat()` 落盘即成品形态）→ 4 个解包器全部接上 `--manifest` ✅
 → `rules/engines.json` 指纹外置 ✅（规则表 + 解释器，`rules/__init__.py`）→ `planner.py` ✅
 （`dispatch --plan` 输出「建议 extractor + 参数」）。
-**测试 425 passed / 7 skipped**；`python tests/make_golden.py --check` 零漂移。
+**测试 432 passed / 8 skipped**；`python tests/make_golden.py --check` 零漂移。
 **软件化四阶段（software-plan §3）里阶段 1 已完成**；**阶段 2 进行中**：
-- ✅ orchestrator 已接 **7 条链路**（Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD / ExHIBIT /
-  **CatSystem2**）；前六条都用真实样本跑过退出码 0、对账 0 差，CatSystem2 验到 4 包
-  （bgm/config/fes/image00 = 1351/1351 零失败，含最大单包 image00 的 1163 条）。
+- ✅ orchestrator 已接 **8 条链路**（Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD / ExHIBIT /
+  CatSystem2 / **Unity**）；前七条都用真实样本跑过退出码 0、对账 0 差，CatSystem2 验到 4 包
+  （bgm/config/fes/image00 = 1351/1351 零失败，含最大单包 image00 的 1163 条），Unity 已全量跑通（图片 777/777、音频 1168/1168、视频 0/0，媒体 123.2 分钟，全链 153.0s 退出码 0）。
 - ✅ **csc 黑盒工作流产品化进 toolbridge**（阶段 2 第 2 条）：8 个工具、C# 源码随包现编、
   `check_all()` / `check_csharp()` 自检，19 项新测试 + 3 轮变异验证（真 csc 编 hello-world 并运行）。
 - 下一步：① ~~CatSystem2 **全量 51 包 / 53500 条**~~ ✅ **已跑通并拿到绿色 manifest**（2026-11-01：extract 53500/0 差、postprocess 4499 PNG、
-  verify 图片 4499/4499、音频 23259/23259、视频 10/10、失败 0，媒体 2291.0 分钟，全链 2261.6s 退出码 0）② 接剩下 2 个引擎（Unity / Tyrano-Electron；
-  Tyrano 目前只有 `_fixtures/tyrano_game`，没有真实样本，按「每个引擎至少一个样本全链」的验收口径它还过不了）
-  ③ `cases/` 案例库。
+  verify 图片 4499/4499、音频 23259/23259、视频 10/10、失败 0，媒体 2291.0 分钟，全链 2261.6s 退出码 0）
+  ② ~~接 **Unity**~~ ✅ **已实现第 8 条链路（`_unity_extract.py`）**：JSON 枚举作地面真相、Convert 分批导出、FSB5 多轮累积（正在跑全量）
+  ③ 接剩下 1 个引擎（**Tyrano-Electron**；目前只有 `_fixtures/tyrano_game`，没有真实样本）
+  ④ `cases/` 案例库。
 
 ## 引擎分支要点（实测）
 
@@ -360,6 +361,11 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
 - 视频常见 `mpeg4/.avi`（体积大、无音轨）与 `vp9/.webm`（含 Opus）；**数视频要按文件扩展名，不要用 ffprobe 的 stream 数**（内嵌封面会被算成视频流）。
 
 ### Unity（AssetStudio）
+- **orchestrator 链路（2026-11-01 接入，第 8 条）**：`_unity_extract.py` 用 AssetStudio JSON 枚举
+  作地面真相（唯一出处）、Convert 分批导出（按 Texture2D/Sprite/AudioClip 三类）、FSB5 容器音频
+  多轮累积（`_as_audio_collect2.py`，单次只出 ~30%）。侦察实测：Texture2D JSON 460 / Convert 455
+  （差 5 个引用型资产）、Sprite 322/322 完美、AudioClip JSON 1168 / 单次 Convert 377（32%，需多轮）。
+  全量跑进行中（raw 已有 1437 个文件 = 777 png + 660 wav）。
 - 主流程脚本：**`unity_unpack.ps1`**（分批导出 + 引擎判定，已内置坑 4 的注释）
 - 版本/后端判定：正则读 `globalgamemanagers` 拿版本；存在 `il2cpp_data/` 或 `GameAssembly.dll` 即 IL2CPP。
   Unity 6000 系改用 AssetStudioNext；IL2CPP 需先 Il2CppDumper。

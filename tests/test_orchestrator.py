@@ -486,11 +486,11 @@ def test_kirikiri_reuse_raw_leaves_expected_none_when_unlistable(tmp_path, monke
 
 def test_run_rc2_when_engine_has_no_chain(tmp_path):
     """引擎判得出但没实现链路 → rc=2（不是 0，也不是 1）。"""
-    ctx = _ctx(tmp_path, engine="Unity")
+    ctx = _ctx(tmp_path, engine="Tyrano/Electron")
     rc, res = orch.run(ctx)
     assert rc == 2
     assert res["error"] == "chain-not-implemented"
-    assert res["engine"] == "Unity"
+    assert res["engine"] == "Tyrano/Electron"
 
 
 def test_run_rc3_when_detect_fails(tmp_path):
@@ -1624,4 +1624,145 @@ def test_final_files_excludes_consumed(tmp_path):
     ctx.consumed = ["a.hg3"]
     labels = [lab for _, lab in orch._final_files(ctx)]
     assert labels == ["raw/a.ogg", "png/a.png"]
+
+
+# ==========================================================================
+# 第 12 节：Unity 链路
+# ==========================================================================
+
+def test_unity_data_dir_finds_data_subdir(tmp_path):
+    """`<游戏名>_Data` 目录是 Unity 的标志。"""
+    game = tmp_path / "My Game"
+    game.mkdir()
+    data = game / "My Game_Data"
+    data.mkdir()
+    assert orch._unity_data_dir(game) == data
+
+
+def test_unity_data_dir_returns_none_without_data(tmp_path):
+    game = tmp_path / "NotUnity"
+    game.mkdir()
+    assert orch._unity_data_dir(game) is None
+
+
+def test_unity_extract_reconciles_json_vs_convert(tmp_path, monkeypatch):
+    """Unity 链路：JSON 枚举计数 vs Convert 导出文件数。"""
+    # 造 _Data 目录
+    game = tmp_path / "My Game"
+    game.mkdir()
+    data = game / "My Game_Data"
+    data.mkdir()
+    ctx = _ctx(tmp_path, game_dir=game)
+
+    # Mock subprocess.run to create output dirs
+    calls = []
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        # JSON export: create json files
+        if "--export_type" in cmd and "JSON" in cmd:
+            for f in cmd:
+                if "json" in str(f) and Path(f).is_dir():
+                    for t in orch.unity.UNITY_TYPES:
+                        pass
+                    # Create some json files
+                    json_dir = Path(cmd[2])
+                    json_dir.mkdir(parents=True, exist_ok=True)
+                    # Create 2 json files per type
+                    for i in range(2):
+                        (json_dir / f"asset_{i}.json").write_text("{}")
+                    break
+        # Convert export: create png/wav files
+        if "--export_type" in cmd and "Convert" in cmd:
+            conv_dir = Path(cmd[2])
+            conv_dir.mkdir(parents=True, exist_ok=True)
+            sub = conv_dir / cmd[5]  # --types value
+            sub.mkdir(parents=True, exist_ok=True)
+            for i in range(2):
+                (sub / f"asset_{i}.png").write_text("x")
+        import subprocess
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    # Mock tb.find_tool to return a fake path
+    monkeypatch.setattr(orch.tb, "find_tool", lambda key: Path("/fake/assetstudio.exe"))
+
+    st = orch.stage_extract_unity(ctx)
+    assert st.ok is True
+    assert st.data["expected_total"] == 6  # 3 types × 2
+    assert st.data["actual_total"] == 6
+    assert "对账 0 差" in st.detail
+
+
+def test_unity_extract_fails_on_mismatch(tmp_path, monkeypatch):
+    """JSON 枚举到但 Convert 没导出 → 对账失败。"""
+    game = tmp_path / "My Game"
+    game.mkdir()
+    data = game / "My Game_Data"
+    data.mkdir()
+    ctx = _ctx(tmp_path, game_dir=game)
+
+    def fake_run(cmd, **kw):
+        import subprocess
+        if "--export_type" in cmd and "JSON" in cmd:
+            json_dir = Path(cmd[2])
+            json_dir.mkdir(parents=True, exist_ok=True)
+            for i in range(2):
+                (json_dir / f"asset_{i}.json").write_text("{}")
+        elif "--export_type" in cmd and "Convert" in cmd:
+            conv_dir = Path(cmd[2])
+            conv_dir.mkdir(parents=True, exist_ok=True)
+            sub = conv_dir / cmd[5]
+            sub.mkdir(parents=True, exist_ok=True)
+            # Only 1 file instead of 2
+            (sub / "asset_0.png").write_text("x")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr(orch.tb, "find_tool", lambda key: Path("/fake/assetstudio.exe"))
+
+    st = orch.stage_extract_unity(ctx)
+    assert st.ok is False
+    assert "对账失败" in st.detail
+
+
+def test_unity_extract_fails_without_data_dir(tmp_path):
+    game = tmp_path / "NotUnity"
+    game.mkdir()
+    ctx = _ctx(tmp_path, game_dir=game)
+    st = orch.stage_extract_unity(ctx)
+    assert st.ok is False
+    assert "没找到" in st.detail
+
+
+def test_unity_extract_reuse_raw_still_reconciles(tmp_path, monkeypatch):
+    """--reuse-raw：跳过 Convert，但仍算地面真相并对账。"""
+    game = tmp_path / "My Game"
+    game.mkdir()
+    data = game / "My Game_Data"
+    data.mkdir()
+    ctx = _ctx(tmp_path, game_dir=game, reuse_raw=data)
+
+    # Create some files in raw (in the right subdirectory)
+    tex_dir = ctx.raw_dir / "Image_Texture2D"
+    tex_dir.mkdir(parents=True, exist_ok=True)
+    _write(tex_dir / "a.png")
+    _write(tex_dir / "b.png")
+
+    def fake_run(cmd, **kw):
+        import subprocess
+        if "--export_type" in cmd and "JSON" in cmd:
+            json_dir = Path(cmd[2])
+            json_dir.mkdir(parents=True, exist_ok=True)
+            for i in range(2):
+                (json_dir / f"asset_{i}.json").write_text("{}")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr(orch.tb, "find_tool", lambda key: Path("/fake/assetstudio.exe"))
+
+    st = orch.stage_extract_unity(ctx)
+    assert st.data["expected_total"] == 6
+    assert st.data["actual_total"] == 2
+    assert st.ok is False
+    assert "对账失败" in st.detail
 

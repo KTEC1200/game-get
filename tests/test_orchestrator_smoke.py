@@ -41,6 +41,7 @@ SAMPLES: list[tuple[str, Path, str]] = [
     ("常識改変学園", HY / "常識改変学園-製品版-", "RPG Maker"),
     ("あまねぇ", HY / "あまねぇ -幼馴染お姉ちゃんとのえちえちあまやかされ同棲生活-", "Yu-Ris"),
     ("夕凪荘", HY / "夕凪荘的S级的女朋友们", "ExHIBIT"),
+    ("My Wife", HY / "My Wife Wants to Be a Professional Cosplayer", "Unity"),
 ]
 
 FULL = os.environ.get("ORCH_SMOKE_FULL") == "1"

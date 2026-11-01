@@ -278,7 +278,7 @@ def test_render_none_is_empty() -> None:
 
 
 def test_render_marks_unimplemented() -> None:
-    plan = planner.build(_FakeRep("Unity"))
+    plan = planner.build(_FakeRep("Tyrano/Electron"))
     assert plan is not None
     text = planner.render(plan)
     assert "orchestrator 未接" in text

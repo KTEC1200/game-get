@@ -103,7 +103,7 @@ def _repo_root() -> Path:
 # `--help`/docstring/源码）。凭想象写参数等于给用户一条必然失败的命令。
 
 IMPLEMENTED_CHAINS = ("Ren'Py", "KiriKiri", "RPG Maker", "Yu-Ris", "AdvHD", "ExHIBIT",
-                      "CatSystem2")
+                      "CatSystem2", "Unity")
 
 
 def build(rep: Any) -> Plan | None:
@@ -199,21 +199,18 @@ def _kirikiri(engine: str, game: Path, archives: dict, out: Path) -> Plan:
 
 
 def _unity(engine: str, game: Path, archives: dict, out: Path) -> Plan:
-    argv = ["pwsh", "-NoProfile", "-File", str(_repo_root() / "unity_unpack.ps1"),
-            "-GameDir", str(game), "-OutDir", str(out)]
-    return Plan(
-        engine=engine,
-        extractor="unity_unpack.ps1",
-        argv=argv,
-        kind="whole_dir",
-        implemented=False,
-        reason="按类型分批导出（一次性全导 800MB+ 会堆损坏 0xC0000374）",
-        notes=[
-            "**不要用逗号分隔 --types**：`--types A,B,C` 会静默归零且退出码仍是 0（坑 4）",
-            "音频若是 FSB5(FMOD) 容器，CLI 单次只出极少数且静默失败 → 用 _as_audio_collect2.py 多轮累积",
-            "数产物才算成功，退出码 0 毫无意义",
-        ],
-    )
+    p = _plan_orchestrator(engine, game, archives, out,
+                           "_unity_extract.py",
+                           _py("_unity_extract.py") + [str(game), str(out / "raw")],
+                           "单工具兜底：只想单独导出 AssetStudio 资产时的命令")
+    p.notes.extend([
+        "**不要用逗号分隔 --types**：`--types A,B,C` 会静默归零且退出码仍是 0（坑 4）",
+        "音频若是 FSB5(FMOD) 容器，CLI 单次只出极少数且静默失败 → 用 _as_audio_collect2.py 多轮累积",
+        "数产物才算成功，退出码 0 毫无意义",
+        "Unity 6000 系改过 Shader 序列化，若报 EndOfStreamException 请改用 AssetStudioNext",
+        "IL2CPP 后端需要先跑 Il2CppDumper（GameAssembly.dll + il2cpp_data/global-metadata.dat）",
+    ])
+    return p
 
 
 def _electron(engine: str, game: Path, archives: dict, out: Path) -> Plan:

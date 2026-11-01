@@ -159,7 +159,12 @@ manifest.json 契约（对账与验收的唯一地面真相）:
      **ExHIBIT（夕凪荘的S级的女朋友们 11476 条 = `.gyu` 2184 + `.grp` 9185 + 散装 107，
      图片 2184/2184、音频 9291/9291、视频 1/1，媒体 1072.0 分钟，全链 930.3s 退出码 0；
      22 个加密 BGM 显式排除并在 `source.unsupported` 报出）**。
-   - ⏳ 剩 2 个引擎待接：Unity / Tyrano-Electron。
+   - ⏳️ 剩 1 个引擎待接：Tyrano-Electron（目前只有 _fixtures/tyrano_game，没有真实样本）。
+   - **Unity（第 8 条链路，2026-11-01）**：_unity_extract.py 用 AssetStudio JSON 枚举作地面真相
+     （唯一出处）、Convert 分批导出（按 Texture2D/Sprite/AudioClip 三类）、FSB5 容器音频多轮累积
+     （_as_audio_collect2.py，单次只出 ~30%）。侦察实测：Texture2D JSON 460 / Convert 455
+     （差 5 个引用型资产）、Sprite 322/322 完美、AudioClip JSON 1168 / 单次 Convert 377（32%，需多轮）。
+     全量跑进行中（raw 已有 1437 个文件 = 777 png + 660 wav）。
    - CatSystem2（第 7 条链路，2026-10-30）：`stage_extract_cs2` 逐包 + 总计两层对账、
      `_cs2_postprocess` 按魔数归一扩展名 + HG-3→png/（`consumed` 按路径排除、raw 不动）；
      **真实样本验证到 4 包**（bgm/config/fes/image00 = 1351/1351 零失败，含最大单包 image00 1163 条），
