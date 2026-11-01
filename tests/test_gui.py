@@ -41,7 +41,8 @@ def test_default_out_dir_follows_extracted_convention():
 
 
 def test_main_dispatches_gui_before_argparse(monkeypatch):
-    """--gui / --gui-smoke 在 argparse 前分流（GUI 模式没有 <game_dir> 位置参数）。"""
+    """--gui / --gui-smoke / **无参数（双击 exe）** 都在 argparse 前分流进 GUI
+    ——桌面工具第一眼不该是「argparse 报缺参数」闪退。"""
     seen: list[list[str]] = []
 
     def fake_launch(argv):
@@ -51,7 +52,8 @@ def test_main_dispatches_gui_before_argparse(monkeypatch):
     monkeypatch.setattr(orch, "_launch_gui", fake_launch)
     assert orch.main(["--gui"]) == 7
     assert orch.main(["--gui-smoke"]) == 7
-    assert seen == [["--gui"], ["--gui-smoke"]]
+    assert orch.main([]) == 7
+    assert seen == [["--gui"], ["--gui-smoke"], []]
 
 
 def _fake_manifest() -> dict:

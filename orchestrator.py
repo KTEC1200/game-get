@@ -1694,8 +1694,9 @@ def _launch_gui(argv: list[str]) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    # --gui / --gui-smoke 在 argparse 之前分流：GUI 模式不带 <game_dir> 位置参数
-    if "--gui" in argv or "--gui-smoke" in argv:
+    # GUI 分流在 argparse 之前：--gui/--gui-smoke 显式进 GUI；**无参数（双击 exe）也进 GUI**
+    # ——桌面工具的第一眼体验不该是「argparse 报缺参数」闪退（2026-11-02 用户实测踩到）。
+    if "--gui" in argv or "--gui-smoke" in argv or not argv:
         return _launch_gui(argv)
     ap = argparse.ArgumentParser(
         description="galgame 解包编排器：detect → extract → postprocess → verify → manifest")
