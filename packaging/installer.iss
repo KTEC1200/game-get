@@ -49,6 +49,8 @@ Uninstallable=no
 [Files]
 Source: "{#DIST}\*"; DestDir: "{app}"; \
     Flags: recursesubdirs createallsubdirs ignoreversion
+; 随包说明（用 GUI/CLI 的第一眼文档）
+Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\Galgame Unpacker"; Filename: "{app}\orchestrator.exe"

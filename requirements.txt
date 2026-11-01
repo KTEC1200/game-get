@@ -1,0 +1,7 @@
+# 运行时依赖（从源码跑 / 构建都够用）
+Pillow
+pycryptodome
+# GUI 拖拽增强（可选；缺了 gui.py 自动退化为「浏览 + 粘贴路径」）
+tkinterdnd2
+# 构建（python build_exe.py --installer）
+pyinstaller
