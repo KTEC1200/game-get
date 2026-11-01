@@ -13,10 +13,11 @@
 > 本项目**所有新产出**（解包产物、清单、报告、新脚本、文档更新）一律放在 `D:\K\deepseek` 里。
 > 外部工具（GARbro / AssetStudio 等）在 `D:\K\galgame\`，位置见下方「环境」。
 >
-> **📦 版本控制（2026-10-29 建立）**：`D:\K\deepseek` 已是本地 git 仓库（基线提交 `55135af`）。
-> **远程仓库：`git@github.com:KTEC1200/game-git.git`** —— 用户 2026-10-29 指定，
-> **但约定「等软件第一版成型了才上传」**，在那之前**不要 push**、不要加 remote。
-> 期间照常在本地提交，保持历史干净。`.gitignore` 已排除 `_extracted/` 等大产物。
+> **📦 版本控制（2026-10-29 建立；2026-11-02 已上传）**：`D:\K\deepseek` 是本地 git 仓库。
+> **远程仓库：`git@github.com:KTEC1200/game-get.git`**（注意拼写是 **game-get**，不是 game-git——
+> GitHub 实际仓库名如此，旧地址靠重定向也能用但别用）。2026-11-02 用户点头后**首次 push**
+> （master 全历史至 `2d64bac`），remote 已建、tracking 已设。
+> `.gitignore` 已排除 `_extracted/`、`packaging/Output/`、`_spike_pkg/dist|build/` 等大产物。
 
 > **🚀 接手顺序（新会话只做这三步）**
 > ① 读本文档「状态 / 下一步 / ⚠️ 五个坑」；
@@ -261,19 +262,22 @@ dry-run 命中 rules+cases（case_path 在包内）、extract in-process **1585/
    Tk 冒烟）。纪律：**GUI 线程只碰 Tk、worker 只塞队列**；`ctx.log` 实例属性遮蔽做日志回流。
 5. ~~README + requirements~~ ✅：`README.md`（安装/用法/引擎表/外部工具配置）随安装包分发。
 
-### ③ 下一步（当前）
+### ③ 下一步（当前：**等用户实测 v0.1.0 的反馈再推进**）
 
-1. **加密 KiriKiri 剩余 ~7 部逐部跑**（工具现成，`krkr_auto_extract.py` 全自动；
-   2026-11-02 只读盘点全在盘：温泉蒸汽人妻 3 包 / 教师催眠2 11 包 / aniyome 11 包 /
-   Doinaka Kyoudai 9 包 / pork社另有 パート妻の情事・堕落妻子・昼下がり×2）。
-   ⚠️ **SendInput 真实拖拽 = 接管鼠标 ~40 分钟/部**（§17 机制）——要等桌面空闲、用户说跑才跑；
-   建议从最小的温泉蒸汽人妻开始，中断可 `--reuse-stage` 续传。
-2. **E-mote 搭车项**：2026-11-02 盘面扫描 0 命中（.pimg/.psb 都在未提取的 xp3 里）——
-   跑上面的样本时留意；见到就接 FreeMote（工具未装，需下载）。
-3. **远程上传待用户点头**：v0.1.0 已成型，按约定「成型才 push」——remote 尚未添加
-   （`git@github.com:KTEC1200/game-git.git`），等用户确认。
+> 2026-11-02 用户指示：**「不管加密 krkr 了……让我测试完再推进剩余队列」**——
+> 剩余队列全部挂起，先等真实使用反馈。
+
+1. ~~加密 KiriKiri 剩余 ~7 部逐部跑~~ **划走（用户 2026-11-02：不管加密 krkr 了）**。
+   样本仍在盘（温泉蒸汽人妻 3 包 / 教师催眠2 11 包 / aniyome 11 包 / Doinaka 9 包 /
+   pork社另有 パート妻の情事・堕落妻子・昼下がり×2），将来想跑随时说。
+2. ~~E-mote 搭车项~~ **跟着挂起**（盘面 0 命中；将来跑 KiriKiri 样本时留意 .pimg/.psb）。
+3. ~~远程上传~~ ✅ **已完成（2026-11-02）**：master 全历史 → `KTEC1200/game-get`。
 4. 搁置不变（需用户配合）：夕凪荘 22 BGM 内存 dump、GUI 弹窗行为确认。
 5. 最后才考虑：AI 兜底（A1/A2/A3）。
+
+**用户测试时的入口**：安装包 `packaging/Output/GalgameUnpacker-0.1.0-setup.exe`（免管理员），
+GUI：`orchestrator.exe --gui`；CLI 用法见随包 `README.md`。测试反馈回来后的修法照旧纪律：
+改逻辑 + 回写文档 + 提交 push。
 
 ### ③ 搁置（需用户配合交互，等指示）
 夕凪荘 22 个加密 BGM 的内存 dump（工具 `_bgm_dump2.py` 已备好，需玩到标题画面/播 BGM 时跑；静态进展见 §15.3）、
