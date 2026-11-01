@@ -1153,3 +1153,23 @@ python -u _spike_pkg/run_probe.py
 
 **教训**：`--add-data` 的相对路径**相对 spec 目录**解析（不是 cwd），必须用绝对路径或先 cd 到 spec 目录——
 否则报 `Unable to find ...\_spike_pkg\rules`。
+
+### 19.4 安装器（Inno Setup 6.7.3，2026-11-02）
+
+- **构建**：`build_exe.py --installer` → `packaging/Output/GalgameUnpacker-0.1.0-setup.exe`
+  **22.8 MiB**（onedir 66.3 MiB → lzma2/max solid），SHA256 打进输出。ISCC 解析顺序与
+  toolbridge 同构：`TOOLBRIDGE_ISCC` → 内置候选（`%LocalAppData%\Programs` 与 Program Files
+  的 Inno Setup 6/7，winget 用户级装在 LocalAppData）→ PATH。
+- **设计**（蓝图 §4.2/4.4/4.6）：`PrivilegesRequired=lowest`（不提权、装
+  `{localappdata}\Programs`）；.NET Framework 4.6+ 注册表检测（`Release >= 393295`）**只提示
+  不拦**——纯 Python 链路没有 .NET 也能跑，GARbro/csc 链路需要；无 PATH 修改、无自启；
+  `{cm:OpenExplore}` 不是内置消息（编译期才报）——自定义文案一律写字面量。
+- **会话内验证（testmode）**：`--installer-only --testmode` 出 `Uninstallable=no` 构建配
+  `/NOICONS` → `/SILENT` 安装 rc=0、184 文件全落位（orchestrator.exe + `_internal\rules\`
+  + `_internal\cases\`）、**安装出来的 exe 对真样本 dry-run rc=0**。
+- **为什么需要 testmode**：本代理会话对「未签名未知镜像」过滤敏感面写入——正式构建在
+  会话里跑 `/SILENT` 时 184 文件复制全成功，但开始菜单 .lnk（`IPersistFile::Save
+  0x80070005`）与 HKCU 卸载键（`RegCreateKeyEx code 5`）被拒 → 回滚 rc=4。证据链与
+  排查过程见 `antivirus-false-positives.md` §5；**卸载键/快捷方式两步要真实桌面会话验证**。
+- **Git Bash 旗标改写坑**：`/SILENT` 会被 MSYS 路径转换改成 `C:/Program Files/Git/SILENT`
+  → 安装器变交互模式（弹窗）。给原生 exe 传旗标一律 `MSYS_NO_PATHCONV=1`。

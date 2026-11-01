@@ -221,8 +221,10 @@ manifest.json 契约（对账与验收的唯一地面真相）:
 1. ~~PyInstaller onedir 冒烟：冻结 + subprocess 调外部 exe~~ ✅ **已完成（2026-11-01，见 §19）**。
 2. ~~兄弟脚本 in-process~~ ✅ **已完成（2026-11-02，见 §19.2 第 1 条）**。
 3. ~~打包数据文件清单 + 子进程环境卫生~~ ✅ **已完成（2026-11-02，见 §19.2 第 2、3 条）**；
-   `build_exe.py` 可复跑，冻结全链真样本实证通过。
-4. Inno Setup 打包；杀软误报应对文档（蓝图 §4.5，社区实践非官方结论）。
+   `build_exe.py` 可复跑，冻结全链真样本实证通过。4. ~~Inno Setup 打包；杀软误报应对文档~~ ✅ **已完成（2026-11-02）**：`packaging/installer.iss` +
+   `build_exe.py --installer`（22.8 MiB + SHA256；lowest 提权 / .NET 4.6+ 提示 / lzma2/max）；
+   会话内 testmode 端到端验证通过（卸载键/快捷方式两步受会话写过滤限制，待真实桌面验证一次）；
+   应对文档 `antivirus-false-positives.md`（社区实践非官方保证）。
 5. GUI 最小化：先 CLI + 简单托盘/表单（拖一个目录进去 → 出 manifest 报告），不抢在管线稳之前。
 
 ### 阶段 4：AI 兜底（M3 后，按蓝图 §2.4 阶梯）

@@ -44,8 +44,12 @@
 - `rules/` —— 引擎指纹**规则表**（`engines.json` + 解释器 `rules/__init__.py`，含命中信号 `fired_ids`）
 - `tests/` —— 全量测试 + `golden_detect.json` 基线（`make_golden.py --check` 查漂移）
 - **`build_exe.py`**（2026-11-02，软件化阶段 3）—— 冻结构建 + **数据文件清单唯一出处**：
-  `python build_exe.py --check` 单验清单；`python build_exe.py` 冻结出 onedir exe。
+  `python build_exe.py --check` 单验清单；`--installer` 出 Inno Setup 单文件安装包；
+  `--installer-only --testmode` 出会话内可验证的 `Uninstallable=no` 构建。
   新增「代码要读的数据文件」必须同步改它的 `DATA_FILES`（漏一个启动即崩）。
+- `packaging/` —— `installer.iss`（安装器脚本，由 build_exe.py 以 /DVERSION 驱动，**别手填版本**）；
+  `Output/` 已 .gitignore
+- `antivirus-false-positives.md` —— 杀软误报应对（发布前自检清单、申诉渠道、会话写过滤实测）
 - `_spike_pkg/` —— PyInstaller 探针（`probe.py` / `run_probe.py`；`run_frozen_smoke.py` 冻结包
   真样本验证驱动，`--full` 跑全链）；`dist/`、`build/` 已进 .gitignore
 - `OUT/`（空占位）、`_unused/`（旧日志）、`banben/`（历史空目录）、`_extracted/`（解包产物，已 .gitignore）
@@ -239,7 +243,18 @@ dry-run 命中 rules+cases（case_path 在包内）、extract in-process **1585/
 `python build_exe.py` → `python _spike_pkg/run_frozen_smoke.py [--full]`。
 
 ### ② 阶段 3 剩下（**←当前项**）
-Inno Setup 打包 + 杀软误报应对文档 → GUI 最小壳（CLI + 拖目录出报告，管线稳了再做）。
+
+1. ~~Inno Setup 打包~~ ✅ **已完成（2026-11-02）**：`packaging/installer.iss` +
+   `build_exe.py --installer`（ISCC 解析 env→候选→PATH；产物 22.8 MiB + SHA256）。
+   设计：`PrivilegesRequired=lowest`（不提权，装 `{localappdata}\Programs`，蓝图 §4.6）、
+   .NET 4.6+ 检测只提示不拦（§4.4）、无 PATH 修改/无自启、lzma2/max。
+   **会话内验证**：testmode 构建（`--installer-only --testmode`，`Uninstallable=no` 配
+   `/NOICONS`）静默安装 rc=0、安装出来的 exe 真样本 dry-run rc=0；**卸载键与开始菜单
+   快捷方式这两步在代理会话里装不了**（会话对未知镜像过滤敏感面写入，见
+   `antivirus-false-positives.md` §5）——完整安装要在真实桌面会话双击验证一次。
+2. ~~杀软误报应对文档~~ ✅ **已完成（2026-11-02）**：`antivirus-false-positives.md`
+   （社区实践非官方保证；含首次构建的实测发现）。
+3. **GUI 最小壳**（管线稳了再做）：CLI + 拖目录出报告。
 
 ### ③ 搁置（需用户配合交互，等指示）
 夕凪荘 22 个加密 BGM 的内存 dump（工具 `_bgm_dump2.py` 已备好，需玩到标题画面/播 BGM 时跑；静态进展见 §15.3）、
@@ -549,3 +564,13 @@ SPITE / Swipe Right / 常識改変学園 / あまねぇ / 高慢妻陥落！！ 
 | AsarKit | `D:\K\galgame\asar\AsarKit.exe` |
 | ffmpeg / ffprobe | `D:\ffmpeg\bin\`（`_verify_media.py`、`_verify_audio.py` 硬编码此路径） |
 | 其他（FModel / umodel / quickbms / SpineViewer） | `D:\K\galgame\UE\` |
+| Inno Setup 6.7.3 | `%LocalAppData%\Programs\Inno Setup 6\ISCC.exe`（2026-11-02 winget 用户级安装；`build_exe.py` 按 `TOOLBRIDGE_ISCC` → 内置候选（含 LocalAppData/Program Files 6 与 7）→ PATH 解析） |
+
+- **⚠️ 本代理会话对「未签名未知镜像」做敏感面写过滤**（2026-11-02 实测）：csc 现编的无名 exe
+  写 HKCU 卸载键 / 开始菜单 .lnk 会被「拒绝访问」，而 reg.exe、powershell.exe 同样操作放行；
+  与沙盒开关无关、机器上只有 Defender 且实时防护关闭。**含义**：安装器的卸载键/快捷方式
+  无法在会话内验证（用 `build_exe.py --installer-only --testmode` + `/NOICONS` 验其余段），
+  别把这类拒绝误诊成产品 bug 或 ACL 问题（完整证据链见 `antivirus-false-positives.md` §5）。
+- **Git Bash 会把 `/FLAG` 形式的参数改写成 `C:/Program Files/Git/FLAG`**（MSYS 路径转换，
+  2026-11-02 把 Inno Setup 的 `/SILENT` 吃掉过，导致安装器弹了交互窗口）→ 给原生 exe 传
+  旗标一律加 `MSYS_NO_PATHCONV=1` 前缀。

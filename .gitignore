@@ -28,3 +28,5 @@ banben/
 .vscode/
 .idea/
 _spike_pkg/orchestrator.spec
+# 安装器产物（可重建，不入库）
+packaging/Output/
