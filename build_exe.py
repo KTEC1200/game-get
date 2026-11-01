@@ -98,6 +98,11 @@ def build() -> int:
            "--onedir", "--name", "orchestrator",
            "--distpath", str(DIST), "--workpath", str(BUILD), "--specpath", str(SPEC),
            *args, str(REPO / "orchestrator.py")]
+    # GUI 壳（--gui）的拖拽增强：tkinterdnd2 带原生 tkdnd 二进制，必须 collect-all；
+    # 没装也能构建（gui.py 探测后退化成浏览+粘贴）。
+    import importlib.util
+    if importlib.util.find_spec("tkinterdnd2") is not None:
+        cmd += ["--collect-all", "tkinterdnd2"]
     print("$", " ".join(cmd), flush=True)
     r = subprocess.run(cmd)
     if r.returncode != 0:

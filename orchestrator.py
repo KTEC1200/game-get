@@ -1685,7 +1685,18 @@ def run(ctx: Ctx) -> tuple[int, dict]:
     return rc, man
 
 
+def _launch_gui(argv: list[str]) -> int:
+    """GUI 壳入口（--gui / --gui-smoke）。函数内 import：PyInstaller 静态扫描看得见，
+    CLI 路径不为 Tk 多付启动成本；gui.py 里 TkinterDnD 是可选增强。"""
+    import gui
+    return gui.main(argv)
+
+
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    # --gui / --gui-smoke 在 argparse 之前分流：GUI 模式不带 <game_dir> 位置参数
+    if "--gui" in argv or "--gui-smoke" in argv:
+        return _launch_gui(argv)
     ap = argparse.ArgumentParser(
         description="galgame 解包编排器：detect → extract → postprocess → verify → manifest")
     ap.add_argument("game_dir")

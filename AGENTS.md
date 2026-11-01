@@ -242,7 +242,7 @@ dry-run 命中 rules+cases（case_path 在包内）、extract in-process **1585/
 图片 719/0 失败、音频 866/0 失败、媒体 651.4 分钟、manifest ok=true。复跑：
 `python build_exe.py` → `python _spike_pkg/run_frozen_smoke.py [--full]`。
 
-### ② 阶段 3 剩下（**←当前项**）
+### ② 阶段 3 剩下
 
 1. ~~Inno Setup 打包~~ ✅ **已完成（2026-11-02）**：`packaging/installer.iss` +
    `build_exe.py --installer`（ISCC 解析 env→候选→PATH；产物 22.8 MiB + SHA256）。
@@ -254,7 +254,14 @@ dry-run 命中 rules+cases（case_path 在包内）、extract in-process **1585/
    `antivirus-false-positives.md` §5）——完整安装要在真实桌面会话双击验证一次。
 2. ~~杀软误报应对文档~~ ✅ **已完成（2026-11-02）**：`antivirus-false-positives.md`
    （社区实践非官方保证；含首次构建的实测发现）。
-3. **GUI 最小壳**（管线稳了再做）：CLI + 拖目录出报告。
+3. ~~**GUI 最小壳**~~ ✅ **已完成（2026-11-02）**：`gui.py` + `orchestrator.py --gui`
+   （**单 exe 双模式**，不造第二个 66MB 运行时）。选目录/拖目录 → 工作线程跑
+   `orch.run(ctx)` → `root.after` 轮询队列回传日志 → 完了弹交付摘要（final 数、对账、
+   验收）+「打开输出目录」。拖拽 = tkinterdnd2 可选增强（没装退化为浏览+粘贴；
+   冻结包 `--collect-all tkinterdnd2`）。`--gui-smoke` = 冻结包 Tk 冒烟（建窗 600ms 自毁）。
+   纪律：**GUI 线程只碰 Tk，worker 只塞队列**（Tk 非线程安全）；`ctx.log` 用实例属性
+   遮蔽包一层做日志回流（文件 + GUI 两条消费路径）。tests/test_gui.py 6 条
+   （纯逻辑全锁 + Tk 构造冒烟，无显示自动 skip）。
 
 ### ③ 搁置（需用户配合交互，等指示）
 夕凪荘 22 个加密 BGM 的内存 dump（工具 `_bgm_dump2.py` 已备好，需玩到标题画面/播 BGM 时跑；静态进展见 §15.3）、
