@@ -340,9 +340,16 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
   verify 图片 4499/4499、音频 23259/23259、视频 10/10、失败 0，媒体 2291.0 分钟，全链 2261.6s 退出码 0）
   ② ~~接 **Unity**~~ ✅ **已实现并全量跑通第 8 条链路（`_unity_extract.py`）**：JSON 枚举作地面真相、Convert 分批导出、FSB5 多轮累积。实测图片 777/777、音频 1168/1168、视频 0/0，媒体 123.2 分钟，全链 153.0s 退出码 0（Texture2D 有 5 个引用型资产缺口，已显式报出并对账通过）
   ③ 接剩下 1 个引擎（**Tyrano-Electron**；目前只有 `_fixtures/tyrano_game`，没有真实样本）—— 排在 cases/ 之后
+     **2026-11-01 用户决定：Tyrano 暂不做**（无真实样本，收益低），软件化优先。
   ④ ~~`cases/` 案例库~~ ✅ **已完成（2026-11-01）**：12 个 case + `index.json` + `build_cases.py` +
   `tests/test_cases.py`；并已**接入 orchestrator**（阶段 1.5 `case-lookup` + `case_lib.py` +
   `manifest.source.case_match`），见下方专节。
+- **阶段 3 第 1 条（PyInstaller 冻结冒烟）已完成（2026-11-01）**，结论见 `verified-findings.md` §19、
+  路线更新见 `software-plan.md` §3 阶段 3。一句话：**冻结可行，但必须先改三处**——
+  ① 7 处 `[sys.executable, "<脚本>.py"]` 兄弟脚本调用改 **in-process**（冻结后必坏，已实测）；
+  ② 数据文件（`rules/engines.json` / `cases/` / `*.cs` / `toolbridge.json`）必须显式 `--add-data`（漏了就启动即崩）；
+  ③ 子进程环境清理（`_MEIPASS` 被塞进 PATH，会继承给 ffprobe/GARbro/csc）。
+  实测可用：原生/.NET 外部 exe 正常、CJK 路径正常、Pillow/numpy/pycryptodome 均进包、onedir 66.3 MiB / 冷启动 0.67s。
 
 ## cases/ 案例库（已完成 2026-11-01）
 

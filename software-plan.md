@@ -199,9 +199,23 @@ manifest.json 契约（对账与验收的唯一地面真相）:
 
 
 ### 阶段 3：Windows 软件壳（M2 → M3）
-1. PyInstaller onedir 冒烟：**先验证「冻结 + subprocess 调外部 exe」**（蓝图 §4.3 官方坑，阶段 1
-   未验证完的高风险项在此收口）。
-2. `SetDllDirectoryW(None)` + PATH 清理写进 toolbridge。
+
+> **进度（2026-11-01）：第 1 条冒烟已跑完，结论全在 `verified-findings.md` §19。**
+> 环境 Python 3.14.6 + PyInstaller 6.22.3，onedir **66.3 MiB / 182 文件 / 冷启动 0.67s**。
+> **能用的**：冻结后调原生 exe（ffprobe）与 .NET exe（GARbro 2562 条）都正常；CJK 路径正常；
+> Pillow / numpy / pycryptodome 都进包可用；业务代码 in-process 直接调函数可行（`iter_candidates` 1585 条）。
+> **必须改的（三条，按优先级）**：
+> ① **7 处 `subprocess.run([sys.executable, "<脚本>.py"])` 必须改 in-process**——冻结后 `sys.executable`
+>    是冻结点自己，实测 rc=2 `unknown mode: orchestrator.py`。改法已实证：14/14 兄弟模块可 import。
+>    不选「随包带私有 python.exe」：多一份运行时、还要管 stdlib 路径。
+> ② **数据文件必须显式 `--add-data`**（`rules/engines.json`、`cases/*.json`、`*.cs` 源码、`toolbridge.json`）——
+>    漏一个不是降级而是**启动即崩**（实测 `FileNotFoundError: ...\\_internal\\rules\\engines.json`）。
+> ③ 子进程环境：`_MEIPASS` 被塞进 PATH 头部，会继承给 ffprobe/GARbro/csc → 第 2 条清理**实测必要**。
+> 附带：动态 `importlib.import_module` 的模块 PyInstaller 静态分析看不到，要 `--hidden-import` 或静态 import。
+
+1. ~~PyInstaller onedir 冒烟：冻结 + subprocess 调外部 exe~~ ✅ **已完成（2026-11-01，见 §19）**。
+   下一步是据此改代码：先做 ①（兄弟脚本 in-process），再落 ② 打包清单、③ 环境卫生。
+2. `SetDllDirectoryW(None)` + PATH 清理写进 toolbridge（**§19.2 第 3 条已实测证实必要**）。
 3. Inno Setup 打包；杀软误报应对文档（蓝图 §4.5，社区实践非官方结论）。
 4. GUI 最小化：先 CLI + 简单托盘/表单（拖一个目录进去 → 出 manifest 报告），不抢在管线稳之前。
 

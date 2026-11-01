@@ -1072,3 +1072,52 @@ orchestrator 新增**阶段 1.5 `case-lookup`**，位于 `detect` 之后、`IMPL
 ② 真实目录上跑阶段：`兼职人妻` 命中 3 个 KiriKiri 变体、SPITE 命中 `4955589831f2-Tyrano-Electron`。
 全量 **493 passed / 9 skipped**，golden 零漂移。
 
+---
+
+## 19. Windows 打包可行性（PyInstaller 冻结实测，2026-11-01）
+
+**探针**：`_spike_pkg/probe.py` + `_spike_pkg/run_probe.py`（可重跑；`dist/`、`build/` 用完即删）。
+环境：**Python 3.14.6 + PyInstaller 6.22.3，onedir**，产物 **66.3 MiB / 182 个文件，冷启动 0.67s**。
+
+### 19.1 结论表
+
+| 问题 | 实测结果 |
+|---|---|
+| 冻结后调**原生 exe**（ffprobe） | ✅ 正常，`ffprobe_ex` 返回 reason='ok' |
+| 冻结后调 **.NET exe**（GARbro） | ✅ 正常，`garbro_list` 2562 条 / 1.42s |
+| **CJK 路径**（`D:\HY\pork社\兼职人妻`） | ✅ 正常，scan 判出 KiriKiri(90) 并命中 3 个案例 |
+| Pillow / numpy / pycryptodome 在包内 | ✅ 全部可 import（12.3.0 / 2.5.3 / 4.0.0） |
+| 业务代码 in-process 跑 | ✅ 冻结包里 `_rpgmv_decrypt.iter_candidates()` 返回 **1585 条**（与文档口径一致） |
+| **数据文件自动打包** | ❌ **不会**——`rules/engines.json` 缺失直接 `FileNotFoundError` 崩 |
+| **`sys.executable` 拉兄弟脚本** | ❌ **必坏**——`[sys.executable, "orchestrator.py"]` 变成「冻结点自己跑自己」，rc=2 `unknown mode: orchestrator.py` |
+| 子进程环境 | ⚠️ **`_MEIPASS` 被塞进 PATH**（`...\_internal\pywin32_system32` 排第一），会继承给所有子进程 |
+| 动态 `importlib.import_module` | ⚠️ PyInstaller 静态分析**看不到**，14 个兄弟模块只有被静态 import 的 `_rpgmv_decrypt` 进了包 |
+
+### 19.2 三个必修（按优先级）
+
+1. **兄弟脚本调用改 in-process**。`orchestrator.py` 现有 **7 处** `subprocess.run([sys.executable, "<脚本>.py", ...])`
+   （296/399/507/580/954/1034/1130 行：`rpa_extract_organized` / `_rpgmv_decrypt` / `_ypf_extract` /
+   `_cs2_int_extract` / `_pna_carve` 等）。冻结后这条通路从根上不存在。
+   **实测解法**：改成 `import` 直接调函数——冻结包里 14/14 模块可 import，`iter_candidates` 返回 1585 条。
+   这一改同时解决「子进程环境被污染」与「错误信息跨进程丢失」两个老问题。
+   替代方案（随包带私有 `python.exe`）不选：多一份运行时、还要管 stdlib 路径，换不来好处。
+2. **数据文件必须显式打包**。`--add-data "rules;rules"`、`cases;cases`、`*.cs`（`_gyu_tool`/`_hg3_tool` 源码随包现编）、
+   `toolbridge.json`（若存在）。**漏一个就是启动即崩**（不是降级，是崩）。
+   纪律：新增任何「代码要读的 JSON/源码文件」，同时更新打包清单——与 `manifest.CONVERTIBLE` 同理，清单只写一份。
+3. **PATH / DLL 环境卫生进 toolbridge**（阶段 3.2 由「蓝图说」变「实测证实」）：
+   冻结进程的 PATH 头部就是 `_internal`，子进程（ffprobe/GARbro/csc）会继承。
+   → 起子进程前 `SetDllDirectoryW(None)` + 从 PATH 里剥掉 `_MEIPASS` 及其子目录，并显式传 env。
+
+### 19.3 复现
+
+```bash
+python -m PyInstaller --noconfirm --clean --onedir --name probe \
+  --distpath _spike_pkg/dist --workpath _spike_pkg/build --specpath _spike_pkg \
+  --add-data "D:/K/deepseek/rules;rules" --add-data "D:/K/deepseek/cases;cases" \
+  --add-data "D:/K/deepseek/_gyu_tool.cs;." --add-data "D:/K/deepseek/_hg3_tool.cs;." \
+  --hidden-import orchestrator --hidden-import _pna_carve ... probe.py
+python -u _spike_pkg/run_probe.py
+```
+
+**教训**：`--add-data` 的相对路径**相对 spec 目录**解析（不是 cwd），必须用绝对路径或先 cd 到 spec 目录——
+否则报 `Unable to find ...\_spike_pkg\rules`。
