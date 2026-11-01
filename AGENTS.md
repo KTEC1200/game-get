@@ -18,6 +18,11 @@
 > **但约定「等软件第一版成型了才上传」**，在那之前**不要 push**、不要加 remote。
 > 期间照常在本地提交，保持历史干净。`.gitignore` 已排除 `_extracted/` 等大产物。
 
+> **🚀 接手顺序（新会话只做这三步）**
+> ① 读本文档「状态 / 下一步 / ⚠️ 五个坑」；
+> ② 跑基线：`python -m pytest tests -q`（应 **493 passed / 9 skipped**）+ `python tests/make_golden.py --check`（应零漂移）；
+> ③ 按「下一步」当前项开工。**改完先回写本文档 + `verified-findings.md`，再清临时产物，最后提交。**
+
 ## 文件索引（按需读，别全读）
 
 | 文件 | 何时读 |
@@ -27,18 +32,24 @@
 | `tutorials/` | 需要规则原始出处时（krkr / unity / 其他引擎三篇） |
 | `galgame-ai-unpack-workflow-plan.md` | 需要完整方案、Windows 打包、许可证/法律时 |
 | `vn-unpacker-verification.md` | 需要第三方工具核实状态时 |
+| `software-plan.md` | **软件化路线与进度**：四阶段、阶段 3（打包/GUI）完成状态 |
 
-## 工作区布局（2026-10-29 实测：根目录 **63 个文件 + 4 个子目录**，含 C# 解码器与黑盒工具）
+## 工作区布局（2026-11-01 实测：根目录 **70 个文件 + 11 个子目录**，含 C# 解码器与黑盒工具）
 
 **知识产物（长期保留）**
 - `AGENTS.md` / `verified-findings.md` / `galgame-unpack-decision-tree.md` —— 结论、证据、规则
 - `galgame_dispatch.py` —— dry-run 分派器（主产物）
-- `_fixtures/` —— 回归样例（`make_fixtures.py` 可重建）
+- `_fixtures/` —— 回归样例（`_fixtures/make_fixtures.py` 可重建，6 个 fixture）
+- `cases/` —— **案例库**（12 个 case + `index.json` 9 个签名 + `_failures_raw.json` / `_docs_meta.json` 原始素材），见下方专节
+- `rules/` —— 引擎指纹**规则表**（`engines.json` + 解释器 `rules/__init__.py`，含命中信号 `fired_ids`）
+- `tests/` —— 全量测试 + `golden_detect.json` 基线（`make_golden.py --check` 查漂移）
+- `_spike_pkg/` —— PyInstaller 打包探针（`probe.py` / `run_probe.py` 复现脚本；`dist/`、`build/` 已进 .gitignore）
+- `OUT/`（空占位）、`_unused/`（旧日志）、`banben/`（历史空目录）、`_extracted/`（解包产物，已 .gitignore）
 - `tutorials/` —— 用户的原始教程（**用户提供的资料，勿删**）
 
 **可复用脚本**
 - **编排器：`orchestrator.py`**（2026-10-29，软件化第 3 步，**主入口**）—— 一条命令跑完
-  `detect → extract → postprocess → verify → manifest`：
+  `detect → case-lookup → extract → postprocess → verify → manifest`：
   `python orchestrator.py <游戏目录> --out <输出目录> [--allow-gui] [--reuse-raw DIR] [--no-verify] [--dry-run]`。
   已接 **Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD / ExHIBIT / CatSystem2 / Unity 八条链路**（其余引擎判得出就退出码 2，不假装成功）。
   退出码：`0` 全通过 / `1` 阶段失败或对账有差 / `2` 引擎判出但无链路 / `3` 未命中。
@@ -140,10 +151,10 @@ Ren'Py 侧：`_rpa_stage` / `_rpa_patch_stage` / `_rpa_arch.txt` / `_rpa_patch.t
     `argv` 是列表（含空格路径不会被拆碎），`cmdline` 只给人复制、不参与执行。
   - 产物一律落 `<仓库>/_extracted/<游戏名>/`，**不写进游戏目录**（会污染原包，且加密 KiriKiri 链
     要 stage 纯 ASCII 副本，混在一起分不清谁产生的）。
-- 引擎判定已实测正确 **9/9**（1 Unity + 8 KiriKiri）；回归样例 `_fixtures/`（用 `make_fixtures.py` 重建）**6/6 通过**（2026-10-14 复跑确认）。
-  2026-10-30 起引擎规则扩到 **9 个**（Unity / KiriKiri / Ren'Py / Tyrano-Electron / RPG Maker /
-  AdvHD / Yu-Ris / ExHIBIT / CatSystem2），12 个真实样本里 11 个在场全部判对（`My Best Deal` 已从磁盘消失）；
-  `tests/golden_detect.json` 逐字锁定 engine/score/evidence/facts 四个维度，**测试 318 passed / 5 skipped**。
+- 引擎判定：**9 条引擎规则**（Unity / KiriKiri / Ren'Py / Tyrano-Electron / RPG Maker / AdvHD / Yu-Ris / EXHIBIT / CatSystem2）。
+  基线由两处共同锁住：`_fixtures/make_fixtures.py` 重建的 **6 个 fixture** + 现场 **11 个真实样本**
+  （`My Best Deal` 已从磁盘消失），全部与 `tests/golden_detect.json`（逐字锁定 engine/score/evidence/facts）一致 ——
+  跑 `python tests/make_golden.py --check` 应输出零漂移；全量测试 **493 passed / 9 skipped**（`python -m pytest tests -q`）。
 - 用户的 `D:\HY\pork社` 7 个游戏经 **GUI 实测全部可静态提取**。
 - ✅ **三条产出线（视频 / 图片 / 音频）全部有实测验证过的样本** —— 见下表。
 
@@ -192,164 +203,51 @@ Ren'Py 侧：`_rpa_stage` / `_rpa_patch_stage` / `_rpa_arch.txt` / `_rpa_patch.t
    - **分类逻辑一旦发现错了，就「修逻辑 + 从源归档重跑」**，不要写迁移脚本原地修数据
      （原归档没动过，重跑只需 31 秒；原地迁移要处理「已移动/未移动」混合状态，越修越乱——实测踩过）。
 
-## 下一步
+## 下一步（当前）
 
-> **⭐ 2026-10-28 用户定调的新方向**：主线做 **Ren'Py（含 .rpa 文件的）与 KrkrZ 引擎**，**Unity 作为进阶**；
-> 终局目标不变——把工作流做成一套可复用的 Windows 软件（方案蓝图 `galgame-ai-unpack-workflow-plan.md`）。
+> **方向**：2026-10-28 用户定调主线 **Ren'Py（.rpa）与 KrkrZ**、Unity 进阶；2026-11-01 用户追加
+> **「Tyrano 不做，先软件化」**。终局不变——可复用的 Windows 软件（路线 `software-plan.md`）。
 
-1. ~~跑通一个游戏的完整提取~~ ✅ **已完成十二个**（见上表）。
-2. **已暂停任务（2026-10-28 用户指示，四项均已完成，断点详单见「⭐⭐ 交接摘要 → 已暂停的未完成任务」）**：
-   ① ~~KrkrExtract 补 Lite.exe~~ ✅（已下载核实）→ ② ~~pork 社 `高慢妻陥落！！` 动态提取~~ ✅ →
-   ③ ~~教师催眠1 动态提取~~ ✅ → ④ ~~软件制作规划~~ ✅。教程流程（留作背景）：三件套放游戏根目录 → 游戏 exe 拖到
-   `KrkrExtract.Lite.exe` 启动注入 → xp3 拖入控制台 → 输出 `KrkrExtract_Output`；
-   报 `Unknown chunk in root chunk` 时换 KrkrzExtract；更新的 xp3 可试 KrkrDump/krkrzCxdec。
-   **自动化版本见 `krkr_auto_extract.py`（推荐，无需手工拖拽）。**
-3. **搁置（需用户辅助/交互，等指示）**：夕凪荘 BGM 22 个加密 ogg 的内存 dump（游戏开场界面需交互点击推进；
-   静态逆向进展已回写 §15.3——解密器挂 this+0x70 的 vtable[0]，构造点 0x1029E1F0 置 0 系外部安装，
-   dump 工具 `_bgm_dump2.py` 已备好）、GUI 弹窗行为确认。
-4. **划走（2026-10-28 用户决定）**：夏への方舟 ×3、NekoSDK。
-5. 最后才考虑接 AI 兜底（A1/A2/A3）——目前规则覆盖率已够高。
-6. 选样参考：`_scan_hy_inventory.py` 的盘点结果（2026-10-25）+ `_extracted/_batch_dispatch.json`（2026-10-26 批量判定）。
+**基线**：12 个样本全部走完（判定→提取→验收→对账→回写，见上表）；orchestrator 8 条链路；cases/ 案例库建成并接入；
+PyInstaller 冻结可行性已验证（`verified-findings.md` §19）。
 
-### ⭐ 当前任务队列（2026-10-26 商定；2026-10-27 更新：前 3 项已完成，用户改为「GARbro 能解的不做，只做难/没见过的」→ 转入下方「全库扫描候选清单」，本队列仅存档）
+### ① 打包三条必修（§19.2，按序做；不做就冻不出能用的 exe）
 
-按序执行，每个都走完整流程：判定 → 提取 → `_verify_media.py` 验收 → 计数对账到 0 → 结论回写本文档与
-`verified-findings.md`。产出一律放 `D:\K\deepseek\_extracted\<游戏名>\`，解包前看磁盘余量（2026-10-29 实测 D 盘可用 73.4 GiB）。
+1. **7 处兄弟脚本改 in-process**——`orchestrator.py` 的 296 `rpa_extract_organized` / 399 `krkr_auto_extract` /
+   507 `_rpgmv_decrypt` / 580 `_ypf_extract` / 954 `_grp_extract` / 1034 `_cs2_int_extract` / 1131 `_as_audio_collect2`。
+   冻结后 `sys.executable` 是冻结点自己，实测 `rc=2 unknown mode`。改法已实证：14/14 兄弟模块可 import，
+   统一补 `main(argv: list[str] | None = None) -> int`（内部不 `sys.exit`）+ 用 `redirect_stdout` 收日志。
+2. **打包数据文件清单**——`rules/`、`cases/`、`*.cs` 源码必须 `--add-data`（漏一个不是降级而是**启动即崩**）；
+   `toolbridge.json` 本仓当前不存在（可选配置，缺失时走内置候选 + PATH）。
+3. **子进程环境卫生**——`_MEIPASS` 会被塞进 PATH 头部并继承给 ffprobe/GARbro/csc →
+   `SetDllDirectoryW(None)` + 从 PATH 剥掉，写进 `toolbridge.py`。
 
-1. ~~**常識改変学園-製品版-**（1.16 GB）—— RPG Maker MV/MZ 新分支~~ ✅ **已完成**（2026-10-26，见样本表；
-   加密=假头16B+前16B XOR，key 在 System.json，自建 `_rpgmv_decrypt.py` 解决，无需 RPGMakerDecrypter；RPG Maker 分支已写入决策树 §2.3）。
-2. ~~**tm／ラブラブお痴験バイト性活**（3.0 GB，本体在 `tm\ラブラブお痴験バイト性活\`）—— AdvHD 引擎新分支~~
-   ✅ **已完成**（2026-10-26，见样本表；GARbro 原生支持 .arc 一个工具通吃，.dat=ASF/WMV 改后缀即得，
-   .pna=PNAP 多帧容器用 `_pna_carve.py` carve；AdvHD 判据已写进决策树 §2.4。封包是 .arc 不是 .pac——原文笔误）。
-3. ~~**あまねぇ -幼馴染…-**（2.14 GB）—— 未知 `pac/` 格式~~ ✅ **已完成**（2026-10-26，见样本表）。
-   YPF = **Yu-Ris 引擎**封包（不是 Yaneura，yscfg/YSSD 前缀有迷惑性）；GARbro 不支持；
-   格式完整逆向后自研 `_ypf_extract.py`（名字 XOR key + 名长置换表 + 可选 zlib + YCG），
-   3484 PNG + 4522 OGG 全过验收；arc_unpacker 可作备选但有大坑（见决策树 §3 坑表）。
-   Yu-Ris 判据已写进决策树 §2.5。
-4. ~~Boku_Kano / 我与老师的私人课程2 / Toshiue Kanojo~~ **已划走**（全是 pf8/.pfs 家族，GARbro 可读，见候选清单划走区）。
-5. ~~**温泉蒸汽人妻**~~ 已划走（KiriKiri Console 可读，按用户 2026-10-26 标准「GARbro 能解的不做」）。
-6. ~~**MagicalMILFs / スキだらけ！**~~ 已划走（Ren'Py 散装，媒体裸放只验收）。
-7. ~~（可选）**EnderLilies**~~ 出圈外（UE，非 galgame）。
-8. ~~挂起等用户~~ → 并入候选清单「加密 KiriKiri 动态提取」项（现已 **8 部**：pork社×4 + 教师催眠×2 +
-   aniyome + Doinaka Kyoudai）。
+### ② 阶段 3 剩下
+Inno Setup 打包 + 杀软误报应对文档 → GUI 最小壳（CLI + 拖目录出报告，管线稳了再做）。
 
-### ⭐ 全库扫描候选清单（2026-10-26 应用户要求扫 D:\HY 全部 49 目录）
+### ③ 搁置（需用户配合交互，等指示）
+夕凪荘 22 个加密 BGM 的内存 dump（工具 `_bgm_dump2.py` 已备好，需玩到标题画面/播 BGM 时跑；静态进展见 §15.3）、
+GUI 弹窗行为确认（加密 KiriKiri 纯 CLI 自动化可行性）。
 
-盘点 JSON：`_extracted/_hy_inventory_20261026.json`。已跑通 7 样本之外，未知引擎全部做了魔数+GARbro 探针，
-**按含金量（新分支 × 覆盖游戏数）排序**；「探针」= GARbro.Console 裸调 listing。
+### ④ 最后才考虑
+接 AI 兜底（A1/A2/A3）——目前规则覆盖率已够高。
 
-**~~划走~~（2026-10-26 用户判定：GARbro 能解包的不做）**：
-- pf8/.pfs 家族 ×8：meikuraS、Maid for Loving You、SlowLife【PC+Ty】、yugamase、bokukano2、Toshiue_Kanojo、
-  bonusfd1(Boku_Kano)、**アマカノ3**（后补探针：iarsys+emotedriver+`70 66 38`）——GARbro 全可读（含队列第 4 项三作）
-- KAGUYA「LINK」.arc ×3：Mama×Holic、アネトモ、姉ちゃんのススメ——GARbro 可读（vrm.arc 内是 VRM 3D 模型，标准 glTF）
-- Seifuku PAC ×2：Seifuku Kanojo 1+2——GARbro 可读（Movie.pac 内是 ZSTD 流）
-- riruka .arc ×1——GARbro 可读（movie.arc=裸 ASF）
-- role player（KiriKiri .xp3 Console 可读 ✅）、有閑夫人倶楽部（AdvHD ✅）、催眠性指導/Mizuki（Ren'Py）、
-  MagicalMILFs/スキだらけ/爱的课堂（媒体裸放只验收）
+## 样本来源与划走清单（选样参考）
 
-**保留——难/没见过（按经验价值排序）**：
+**旧盘点数据已删除**：`_extracted/_hy_inventory_20261026.json` 与 `_batch_dispatch.json` 都不在了。
+要选样一律**现场重跑** `python _scan_hy_inventory.py`（只读，出 UTF-8 JSON）+ `galgame_dispatch.py` 判定，
+**不要引用旧结论**（坑 2：能不能解一律实跑定）。
 
-1. **ExHIBIT 引擎**（夕凪荘的S级的女朋友们 + 夏への方舟 ×3，共 4 部 13.1G）——~~真·未知格式~~
-   ✅ **夕凪荘已攻坚（2026-10-26）**：.gyu 图片 2184/2184 全解（`_gyu_tool.exe`，含 7 变体/MT 去混淆/
-   双 LZ/调色板/alpha）、.grp 语音 9185/9185（`_grp_extract.py`，AiFS TOC）、op.wmv 视频——
-   **唯 BGM 22 个加密未破**（侦察全档见 verified-findings §15.3，密钥疑在 cluu/GUID/DPMODE）。
-   **夏への方舟 ×3 待做**（同引擎，res2001.grp 是明文 OGG 拼流，BGM 大概率白捡；.gyu 同解码器）。
-2. **CatSystem2 `__key__` 加密**（甜蜜女友 ss/ss+/1/1+/2/2+ 6 部，取一作即可覆盖分支）
-   ✅ **甜蜜女友2+ 已攻坚（2026-10-27）**：加密全链逆向（小端 Blowfish + MT 名字混淆），
-   main_key=0x212C5F31 用「k0 反推+约束爆破」拿下，**53500/53500 零失败**，图片 4392 PNG、
-   音频 22806 OGG、视频 10 MPG（见 verified-findings §16）。**同系列其余 5 部可直接复用工具**
-   （main_key 若不同按 §16.2 方法重爆，秒级）。
-3. ~~**加密 KiriKiri 动态提取**（8 部：pork社×4 + 教师催眠1/2 + aniyome + Doinaka Kyoudai）~~
-   ✅ **分支已打通（2026-10-28）**：`krkr_auto_extract.py` 全自动（注入+拖拽+完成判定，
-   教师催眠1 全 10 包即用它跑完）；剩余 7 部可直接复用该工具，逐部跑一遍即可。
-   （环境注意：游戏路径必须 ASCII stage——工具已内置；verified-findings §17）
-4. **NekoSDK**（俺を欲しがる二人の母，WAFFLE）——本体是 **4.9G RAR（iso+mds）未解压**；
-   翻译补丁脚本带 `NEKOSDK_ADVSCRIPT` 头 → 引擎指纹明确，NekoSDK（ねこぱんだ）资源格式现场分析。
-
-**出圈外（非目标）**：nier（49G NieR:Automata）、nikke2（NIKKE 私服客户端）、Miside（Unity+BepInEx）、
-EnderLilies/EnderMagnolia（UE，umodel 可选）。
-**搭车项**：E-mote 立绘后处理（`.pimg/.psb`→FreeMote+krkrFgiEditor）是决策树里从未触发过的分支——
-pf8/加密 KiriKiri 家族提取后若见到这两个扩展名，顺手把这条线走通。
-
-**建议打法（2026-10-27 更新，前两项已完成）**：~~ExHIBIT 夕凪荘~~✅ → ~~CatSystem2 甜蜜女友2+~~✅ →
-**夏への方舟 ×3**（ExHIBIT 工具直接复用）→ **NekoSDK**（先解 RAR 再判定）→ **加密 KiriKiri ×8**
-（需补 Krkr 工具 + 用户 GUI 确认，放最后）。
-
-### ⭐⭐ 交接摘要（2026-10-28 会话中状态）——新会话从这里接手
-
-**终局目标提醒**：最终交付物是**一套可复用的 Windows 软件**（详见文首「终局目标」）。
-后续每个新引擎分支的工具实现，都按「将来要进软件包」的标准写：
-依赖轻（C# csc 自包含优先，Python 仅在无 C# 必要时用）、参数统一（`<输入> <输出>` 风格）、
-判定规则可数据驱动（方便并进 `galgame_dispatch.py`）。方案蓝图在 `galgame-ai-unpack-workflow-plan.md`。
-
-**主线方向（2026-10-28 用户定调）**：**Ren'Py（.rpa）与 KrkrZ 引擎为主，Unity 进阶**。
-
-**已完成（累计 12 个完整样本，全部走完 判定→提取→验收→对账→回写）**：KiriKiri 兼职人妻 /
-Unity My Wife / Ren'Py×2（My Best Deal、Swipe Right）/ Electron SPITE / RPG Maker MV 常識改変学園 /
-AdvHD ラブラブ / Yu-Ris あまねぇ / ExHIBIT 夕凪荘 / CatSystem2 甜蜜女友2+ /
-**KiriKiri加密 高慢妻陥落！！（2838/2838）+ 教师催眠1（5724/5724，含 movie.xp3 Lock 破解）**。
-其中甜蜜女友2+ 已于 2026-10-28 **补完 107 个 24bpp HG-3 变体**（4502/4502 零失败；
-根因=`_hg3_tool.cs` 的 `DecodeFile` 硬编码 `row = w*4`，24bpp 时 flip 越界；ApplyDelta 的 4 等分位
-转置对 24bpp 同构无需改——GARbro 原版语义即如此，方法论见 verified-findings §16.5）。
-
-**已暂停的未完成任务（2026-10-28 用户指示暂停，断点如下，可直接续做）**：
-
-1. ~~**KrkrExtract 补工具**~~ ✅ **已完成（2026-10-28）**：Lite.exe 534,016 B 已下载并核实
-   （本地 dll 就是 5.0.0.2 配套构建，运行时标题实锤），三件套齐。
-2. ~~**pork 社最小加密 Krkr 动态提取（高慢妻陥落！！）**~~ ✅ **已完成（2026-10-28）**：
-   2838/2838 零失败，全自动管线沉淀为 `krkr_auto_extract.py`；两条硬结论（ASCII 路径必需、
-   Explorer 拖拽是唯一自动化通路）见 verified-findings §17。
-3. ~~**教师催眠1 动态提取**~~ ✅ **已完成（2026-10-28）**：5724/5724 零失败（10 包全自动，
-   中途断点续传实测；movie.xp3 Lock 混淆 TOC 手工破解出 logo.mpg + pv_movie.wmv，见 §17.7）。
-4. ~~**软件制作规划**~~ ✅ **已完成（2026-10-28）**：输出 `software-plan.md`
-   （manifest 契约 / toolbridge / orchestrator 四阶段路线，蓝图的落地版）。
-
-**搁置（需用户辅助交互，等指示再动）**：
-- 夕凪荘 BGM 22 个加密 ogg：静态逆向已推进（解密器挂 loader 对象 this+0x70 的 vtable[0]，
-  虚调用壳 0x1029ECA0，构造 0x1029E1F0 只置 0 → 解密器系**外部安装**，安装点未追到）；
-  内存 dump 方案工具已备好（`_bgm_dump2.py`：启动游戏+自动点击+按 serial 匹配扫描），
-  但游戏停在需交互的开场界面，自动点击未推进——**需用户配合玩到标题画面/播放 BGM 时跑 dump**。
-- GUI 弹窗行为确认（加密 KiriKiri 纯 CLI 自动化可行性）。
-
-**划走（2026-10-28 用户决定）**：夏への方舟 ×3（ExHIBIT 工具本已现成）、NekoSDK（4.9G RAR）。
-
-**环境变化**：磁盘余量 ~50G（2026-10-27）；外部工具新增 `D:\K\galgame\arc_unpacker\`（0.11，注意
-`--out=DIR` 必须等号形式）与 csc.exe 黑盒 oracle / C# 解码器工作流（`csc -platform:x86` 载 32 位游戏 DLL）。
-本会话新增可复用技能：**capstone PE 反汇编流水线**（`_bgm_re*.py`：vtable 搜索 → ctor 调用点 → 虚调用链；
-比黑盒 oracle 快且不需要游戏跑起来）。**PrintWindow 窗口截屏**（`_bgm_shot.py`，查游戏当前画面）。
-2026-10-28 深夜会话新增环境事实：**① 本机 DPI 200%**（物理 2880x1800，无感知进程看到 1440x900 虚拟坐标）
-——UI 自动化脚本必须 `SetProcessDPIAware()` 且全程物理坐标，跨进程坐标（UIA/PowerShell）要自检口径；
-**② 网络**：系统代理 `127.0.0.1:7897` 时断时续（挂着也可能全断），直连 `raw.githubusercontent.com`
-通常可用、`github.com` 直连不通但走代理偶尔可通、`api.github.com`/`codeload` 基本不通——下载 GitHub
-release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）已由用户放入 `D:\K\galgame\krkr\krkrz\`。
-
-**新会话开局**：读本文件 → 「已暂停的未完成任务」四项已全部完成（2026-10-28）；
-软件化进度见 `software-plan.md` §5（2026-10-30 状态，**§5 六项全部完成**）：
-`toolbridge.py` ✅ → `orchestrator.py` ✅ → `manifest.py` ✅ 契约唯一实现
-（含 `counts()` 两目录形态与 `counts_flat()` 落盘即成品形态）→ 4 个解包器全部接上 `--manifest` ✅
-→ `rules/engines.json` 指纹外置 ✅（规则表 + 解释器，`rules/__init__.py`）→ `planner.py` ✅
-（`dispatch --plan` 输出「建议 extractor + 参数」）。
-**测试 432 passed / 8 skipped**；`python tests/make_golden.py --check` 零漂移。
-**软件化四阶段（software-plan §3）里阶段 1 已完成**；**阶段 2 进行中**：
-- ✅ orchestrator 已接 **8 条链路**（Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD / ExHIBIT /
-  CatSystem2 / **Unity**）；前七条都用真实样本跑过退出码 0、对账 0 差，CatSystem2 验到 4 包
-  （bgm/config/fes/image00 = 1351/1351 零失败，含最大单包 image00 的 1163 条），Unity 已全量跑通（图片 777/777、音频 1168/1168、视频 0/0，媒体 123.2 分钟，全链 153.0s 退出码 0）。
-- ✅ **csc 黑盒工作流产品化进 toolbridge**（阶段 2 第 2 条）：8 个工具、C# 源码随包现编、
-  `check_all()` / `check_csharp()` 自检，19 项新测试 + 3 轮变异验证（真 csc 编 hello-world 并运行）。
-- 下一步：① ~~CatSystem2 **全量 51 包 / 53500 条**~~ ✅ **已跑通并拿到绿色 manifest**（2026-11-01：extract 53500/0 差、postprocess 4499 PNG、
-  verify 图片 4499/4499、音频 23259/23259、视频 10/10、失败 0，媒体 2291.0 分钟，全链 2261.6s 退出码 0）
-  ② ~~接 **Unity**~~ ✅ **已实现并全量跑通第 8 条链路（`_unity_extract.py`）**：JSON 枚举作地面真相、Convert 分批导出、FSB5 多轮累积。实测图片 777/777、音频 1168/1168、视频 0/0，媒体 123.2 分钟，全链 153.0s 退出码 0（Texture2D 有 5 个引用型资产缺口，已显式报出并对账通过）
-  ③ 接剩下 1 个引擎（**Tyrano-Electron**；目前只有 `_fixtures/tyrano_game`，没有真实样本）—— 排在 cases/ 之后
-     **2026-11-01 用户决定：Tyrano 暂不做**（无真实样本，收益低），软件化优先。
-  ④ ~~`cases/` 案例库~~ ✅ **已完成（2026-11-01）**：12 个 case + `index.json` + `build_cases.py` +
-  `tests/test_cases.py`；并已**接入 orchestrator**（阶段 1.5 `case-lookup` + `case_lib.py` +
-  `manifest.source.case_match`），见下方专节。
-- **阶段 3 第 1 条（PyInstaller 冻结冒烟）已完成（2026-11-01）**，结论见 `verified-findings.md` §19、
-  路线更新见 `software-plan.md` §3 阶段 3。一句话：**冻结可行，但必须先改三处**——
-  ① 7 处 `[sys.executable, "<脚本>.py"]` 兄弟脚本调用改 **in-process**（冻结后必坏，已实测）；
-  ② 数据文件（`rules/engines.json` / `cases/` / `*.cs` / `toolbridge.json`）必须显式 `--add-data`（漏了就启动即崩）；
-  ③ 子进程环境清理（`_MEIPASS` 被塞进 PATH，会继承给 ffprobe/GARbro/csc）。
-  实测可用：原生/.NET 外部 exe 正常、CJK 路径正常、Pillow/numpy/pycryptodome 均进包、onedir 66.3 MiB / 冷启动 0.67s。
+- **划走（GARbro 能解，用户 2026-10-26「不做」）**：pf8/.pfs 家族 ×8（meikuraS / Maid for Loving You / SlowLife /
+  yugamase / bokukano2 / Toshiue_Kanojo / bonusfd1 / アマカノ3）、KAGUYA「LINK」.arc ×3（Mama×Holic / アネトモ /
+  姉ちゃんのススメ）、Seifuku PAC ×2、riruka .arc、role player、有閑夫人倶楽部、催眠性指導/Mizuki、
+  MagicalMILFs / スキだらけ / 爱的课堂（媒体裸放，只验收）。
+- **划走（用户 2026-10-28 决定）**：夏への方舟 ×3（同 ExHIBIT 引擎，工具现成）、NekoSDK（本体 4.9G RAR 未解压）。
+- **出圈外（非 galgame）**：nier、nikke2、Miside、EnderLilies / EnderMagnolia。
+- **保留未做**：加密 KiriKiri 剩余 7 部（pork社其余 + 教师催眠2 + aniyome + Doinaka Kyoudai）——
+  工具 `krkr_auto_extract.py` 现成，逐部跑即可。
+- **搭车项**：E-mote 立绘（`.pimg/.psb` → FreeMote + krkrFgiEditor）是决策树里**从未触发过**的分支，
+  见到 `.pimg/.psb` 就顺手走通。
 
 ## cases/ 案例库（已完成 2026-11-01）
 
@@ -389,10 +287,10 @@ release 资产多试几条路由；**③ KrkrzExtract.exe**（176KB, v1.0.0.0）
   ✅ `tests/test_case_lookup.py`（41 个测试，含「签名/ case_id 可由每个 case 文件重算」锁定算法）。
 - ✅ 测试 **493 passed / 9 skipped**；`python tests/make_golden.py --check` 零漂移。
 
-**12 个 case 的来源分布**：5 个 `manifest`（My Wife / ラブラブ / 夕凪荘 / 甜蜜女友2+ ×2，其中
-甜蜜女友2+_试跑 是同款非独立样本已排除）+ 7 个 `docs-reconstructed`（兼职人妻 / My Best Deal /
-SPITE / Swipe Right / 常識改変学園 / あまねぇ / 高慢妻陥落！！ / 教师催眠1——实际 8 个纯文档，
-My Best Deal 目录已删、指纹 reconstructed）。
+**12 个 case 的来源分布（2026-11-01 实测）**：**4 个 `manifest`** 机械重建（My Wife / ラブラブ / 夕凪荘 /
+甜蜜女友2+；`甜蜜女友2+_试跑` 是同款非独立样本，已排除）+ **8 个 `docs-reconstructed`**（兼职人妻 / My Best Deal /
+SPITE / Swipe Right / 常識改変学園 / あまねぇ / 高慢妻陥落！！ / 教师催眠1）。其中 My Best Deal 目录已删
+（`fingerprint.reconstructed=true`、`signature=null`），**这是唯一查不到的样本**。
 
 **已知坑**：
 - 兼职人妻（GARbro 可解）与高慢妻陥落！！（必须动态注入）**指纹完全相同**（都只有
@@ -617,6 +515,10 @@ My Best Deal 目录已删、指纹 reconstructed）。
   → **不要设置 `sandbox_permissions`**（approval 已禁用，带该参数会被自动拒绝）。根因见 `verified-findings.md` §6。
 - **命令里别写 CJK 字面量**（GBK 控制台会乱码）→ 让 PowerShell/Python 自行从文件系统解析路径。
 - `web_fetch`/`read_page` 会限流（Firecrawl 429）→ 改用 `api.github.com`。
+- **本机 DPI 200%**（物理 2880×1800，无感知进程看到 1440×900 虚拟坐标）→ UI 自动化脚本必须
+  `SetProcessDPIAware()` 且全程物理坐标；跨进程坐标（UIA / PowerShell）先自检口径。
+- **网络**：系统代理 `127.0.0.1:7897` 时断时续（挂着也可能全断）。直连 `raw.githubusercontent.com` 通常可用；
+  `github.com` 直连不通、走代理偶尔可通；`api.github.com` / `codeload` 基本不通 → 下 GitHub release 资产多试几条路由。
 
 ### 外部工具位置（2026-10-29 逐一核实存在；均在 `D:\K\deepseek` 之外，勿搬）
 
