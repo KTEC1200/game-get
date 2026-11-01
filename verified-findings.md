@@ -1095,12 +1095,28 @@ orchestrator 新增**阶段 1.5 `case-lookup`**，位于 `detect` 之后、`IMPL
 
 ### 19.2 三个必修（按优先级）
 
-1. **兄弟脚本调用改 in-process**。`orchestrator.py` 现有 **7 处** `subprocess.run([sys.executable, "<脚本>.py", ...])`
-   （296/399/507/580/954/1034/1130 行：`rpa_extract_organized` / `_rpgmv_decrypt` / `_ypf_extract` /
-   `_cs2_int_extract` / `_pna_carve` 等）。冻结后这条通路从根上不存在。
-   **实测解法**：改成 `import` 直接调函数——冻结包里 14/14 模块可 import，`iter_candidates` 返回 1585 条。
+1. ✅ **兄弟脚本调用改 in-process —— 已完成（2026-11-02）**。`orchestrator.py` 原有 **7 处**
+   `subprocess.run([sys.executable, "<脚本>.py", ...])`（Ren'Py / krkr GUI / RPG Maker / Yu-Ris /
+   ExHIBIT .grp / CatSystem2 / Unity FSB5 多轮累积）。冻结后这条通路从根上不存在。
+   **实做**：① 7 个兄弟脚本统一 `main(argv: list[str] | None = None) -> int`（内部不 `sys.exit`；
+   手动解析 `sys.argv` 的 `_rpgmv_decrypt` / `_ypf_extract` / `_cs2_int_extract` / `_as_audio_collect2`
+   改成 `argv = sys.argv[1:] if argv is None else list(argv)`，argparse 的传 `parse_args(argv)`；
+   krkr 补了 `return 0`）；② orchestrator 新增 **`_run_sibling(mod, argv) -> (rc, 输出全文)`**——
+   `redirect_stdout/stderr` 收输出（与子进程时代 `capture_output` 的日志形态一致）、`SystemExit`
+   按其 code 折算 rc（兜底 usage 路径）、其他异常降级 rc=1 + traceback 进输出（对应当年 stderr）、
+   **KeyboardInterrupt 不拦**；③ orchestrator 顶部**静态 import** `rpa_extract_organized` /
+   `krkr_auto_extract` / `_as_audio_collect2`（另 4 个本来就有）——PyInstaller 静态分析只认这个。
+   **护栏测试 3 条**（test_orchestrator.py §8.5）：AST 检查 orchestrator 代码里不许再出现
+   `sys.executable` / `subprocess.*`（用 AST 不用文本匹配——docstring 里的说明字样不算违例）、
+   7 模块 `main` 签名锁定（argv=None + -> int）、`_run_sibling` 契约（收输出/降级/折算）。
+   测试 fake 从 patch `orch.subprocess.run` 改为 patch `orch.<mod>.main`（in-process 下 argv
+   直接就是 `[<参数>...]`，没有前导 python/脚本名）。全量 **496 passed / 9 skipped**（493+3），
+   golden 零漂移；5 个脚本 CLI 无参退出码逐个冒烟与改前一致；rpgmaker 链路测试**真跑 in-process**
+   `_rpgmv_decrypt.main()`（fixture www 实解密）通过。
    这一改同时解决「子进程环境被污染」与「错误信息跨进程丢失」两个老问题。
    替代方案（随包带私有 `python.exe`）不选：多一份运行时、还要管 stdlib 路径，换不来好处。
+   已知取舍：`_as_audio_collect2` 子进程时代的 `timeout=3600` 进程内给不了——超时防护由
+   外层对账兜底（少音频必然对不上）。
 2. **数据文件必须显式打包**。`--add-data "rules;rules"`、`cases;cases`、`*.cs`（`_gyu_tool`/`_hg3_tool` 源码随包现编）、
    `toolbridge.json`（若存在）。**漏一个就是启动即崩**（不是降级，是崩）。
    纪律：新增任何「代码要读的 JSON/源码文件」，同时更新打包清单——与 `manifest.CONVERTIBLE` 同理，清单只写一份。

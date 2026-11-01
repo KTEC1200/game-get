@@ -92,14 +92,14 @@ def write_manifest(dest: Path, src: Path, ver, key: int, total: int,
     return man
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("archive")
     ap.add_argument("outdir")
     ap.add_argument("--only", help="只解名字匹配该正则的条目")
     ap.add_argument("--manifest", default=None,
                     help="manifest.json 输出路径（不给就不写）")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
 
     src, dest = Path(a.archive), Path(a.outdir)
     index, ver, idxoff, key = load_index(src)

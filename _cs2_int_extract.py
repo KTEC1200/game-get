@@ -536,8 +536,8 @@ def _extract_one(data, name: str, out_root: str, main_key: int, no_names: bool,
     return ok, fail
 
 
-def main() -> int:
-    argv = sys.argv[1:]
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
     args = [a for a in argv if not a.startswith('--')]
     if len(args) < 2:
         print('usage: python _cs2_int_extract.py <游戏根目录> <输出目录> '

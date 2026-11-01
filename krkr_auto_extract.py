@@ -239,7 +239,7 @@ def write_manifest(outdir, game_dir, per_archive, path):
     return man, counts_block
 
 
-def main():
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("game_dir")
     ap.add_argument("--out", default=None, help="结束后把 KrkrExtract_Output 移动到这里")
@@ -248,7 +248,7 @@ def main():
     ap.add_argument("--reuse-stage", action="store_true", help="不重建 stage（续传时用）")
     ap.add_argument("--manifest", default=None,
                     help="manifest.json 输出路径（默认 <--out>/manifest.json）")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     game_dir = args.game_dir
     assert os.path.isdir(game_dir), "game dir not found: %s" % game_dir
     only = [s.strip().lower() for s in args.only.split(",")] if args.only else None
@@ -425,6 +425,7 @@ def main():
         close_all_explorers()
         for p in pids_by_name("game.exe"):
             subprocess.run(["taskkill", "/F", "/PID", str(p)], capture_output=True)
+    return 0
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -70,8 +70,9 @@ def digest(p: Path) -> str:
     return h.hexdigest()
 
 
-def main() -> int:
-    src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
+    src, dest = Path(argv[0]), Path(argv[1])
     dest.mkdir(parents=True, exist_ok=True)
     work = dest.parent / (dest.name + "_work")
     work.mkdir(parents=True, exist_ok=True)

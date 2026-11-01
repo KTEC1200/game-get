@@ -37,11 +37,13 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import shutil
-import subprocess
 import sys
 import time
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -52,12 +54,15 @@ import case_lib                        # noqa: E402  （案例库查表：签名
 import manifest                        # noqa: E402
 import rpa_tool                        # noqa: E402
 import toolbridge as tb                # noqa: E402
+import rpa_extract_organized           # noqa: E402  （兄弟链路一律 in-process 调 main()，见 _run_sibling）
+import krkr_auto_extract               # noqa: E402  （同上；静态 import 也是 PyInstaller 打包清单的依据，§19.2）
 import _rpgmv_decrypt as rpgmv         # noqa: E402  （复用它的筛选常量，别抄第二份）
 import _ypf_extract as ypf             # noqa: E402  （复用它的表解析，别抄第二份）
 import _pna_carve as pna               # noqa: E402  （复用它的 carve()，别抄第二份）
 import _grp_extract as grp             # noqa: E402  （复用它的 TOC 解析，别抄第二份）
 import _cs2_int_extract as cs2         # noqa: E402  （复用它的地面真相/魔数识别，别抄第二份）
 import _unity_extract as unity         # noqa: E402  （复用它的 JSON 枚举/Convert 导出，别抄第二份）
+import _as_audio_collect2              # noqa: E402  （冻结包少了它音频只剩 ~30%，§19.1）
 
 if sys.platform == "win32":
     for _s in (sys.stdout, sys.stderr):
@@ -89,6 +94,32 @@ IMPLEMENTED = ("Ren'Py", "KiriKiri", "RPG Maker", "Yu-Ris", "AdvHD", "ExHIBIT",
 
 
 # ---------------------------------------------------------------- 结构
+
+def _run_sibling(mod, argv: list[str]) -> tuple[int, str]:
+    """In-process 跑兄弟模块的 `main(argv)`，返回 (rc, stdout+stderr 全文)。
+
+    **为什么不用 `subprocess.run([sys.executable, "xxx.py", ...])`**：PyInstaller 冻结后
+    `sys.executable` 是冻结点自己，那条通路从根上不存在（rc=2 `unknown mode`，
+    verified-findings §19.1）；in-process 还顺带解决「错误信息跨进程丢失」。
+    兄弟模块统一接口 `main(argv: list[str] | None = None) -> int`（内部不 sys.exit）。
+
+    stdout/stderr 重定向收进返回值，由调用方写 ctx.log —— 与子进程时代 `capture_output`
+    的日志形态一致。异常降级：`SystemExit` 按其 code 折算 rc（兜底个别 usage 路径）、
+    其他异常按子进程时代的语义记 rc=1 并把 traceback 写进输出（对应当年的 stderr）。
+    KeyboardInterrupt 不拦 —— 用户 Ctrl+C 要能打断整条链。
+    """
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = mod.main(list(argv))
+    except SystemExit as exc:                               # noqa: BLE001
+        code = exc.code
+        rc = 0 if code in (None, 0) else (code if isinstance(code, int) else 1)
+    except Exception:                                       # noqa: BLE001
+        traceback.print_exc(file=buf)
+        rc = 1
+    return int(rc or 0), buf.getvalue()
+
 
 @dataclass
 class Stage:
@@ -292,18 +323,15 @@ def stage_extract_renpy(ctx: Ctx) -> Stage:
             return st
         expected_total += expected
         dest = ctx.raw_dir / arc.stem
-        proc = subprocess.run(
-            [sys.executable, str(Path(__file__).parent / "rpa_extract_organized.py"),
-             str(arc), str(dest)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace")
+        rc, out = _run_sibling(rpa_extract_organized, [str(arc), str(dest)])
         ctx.log("extract", f"$ rpa_extract_organized.py {arc.name} -> {dest}\n"
-                           f"rc={proc.returncode}\n{proc.stdout}\n{proc.stderr}")
+                           f"rc={rc}\n{out}")
         got = _count(dest).total if dest.is_dir() else 0
         per_archive.append({"archive": arc.name, "expected": expected, "got": got,
-                            "rc": proc.returncode})
-        if proc.returncode != 0 or got != expected:
+                            "rc": rc})
+        if rc != 0 or got != expected:
             st.detail = (f"{arc.name}: 对账失败 期望 {expected} 实得 {got} "
-                         f"(rc={proc.returncode})")
+                         f"(rc={rc})")
             st.data = {"archives": per_archive}
             st.seconds = time.time() - t0
             return st
@@ -394,16 +422,13 @@ def stage_extract_kirikiri(ctx: Ctx) -> Stage:
                          "加密链路需 GUI 自动化（约 40 分钟），确认后加 --allow-gui 重跑。")
             st.seconds = time.time() - t0
             return st
-        script = Path(__file__).parent / "krkr_auto_extract.py"
-        proc = subprocess.run(
-            [sys.executable, str(script), str(ctx.game_dir), "--out", str(ctx.out_dir)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace")
-        ctx.log("extract", f"$ krkr_auto_extract.py rc={proc.returncode}\n"
-                           f"{proc.stdout}\n{proc.stderr}")
+        rc, out = _run_sibling(krkr_auto_extract,
+                               [str(ctx.game_dir), "--out", str(ctx.out_dir)])
+        ctx.log("extract", f"$ krkr_auto_extract.py rc={rc}\n{out}")
         # krkr_auto_extract 产出 <out>/KrkrExtract_Output/{data,png}
         kout = ctx.out_dir / "KrkrExtract_Output"
         if not kout.is_dir():
-            st.detail = f"GUI 链路没有产出 KrkrExtract_Output (rc={proc.returncode})"
+            st.detail = f"GUI 链路没有产出 KrkrExtract_Output (rc={rc})"
             st.seconds = time.time() - t0
             return st
         data_dir = kout / "data" if (kout / "data").is_dir() else kout
@@ -503,20 +528,18 @@ def stage_extract_rpgmaker(ctx: Ctx) -> Stage:
         return st
 
     man = ctx.work_dir / "rpgmv.manifest.json"
-    proc = subprocess.run(
-        [sys.executable, str(Path(__file__).parent / "_rpgmv_decrypt.py"),
-         str(www), str(ctx.raw_dir), "--manifest", str(man)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    rc, out = _run_sibling(rpgmv, [str(www), str(ctx.raw_dir),
+                                   "--manifest", str(man)])
     ctx.log("extract", f"$ _rpgmv_decrypt.py {www} -> {ctx.raw_dir}\n"
-                       f"rc={proc.returncode}\n{proc.stdout}\n{proc.stderr}")
+                       f"rc={rc}\n{out}")
     actual = _count(ctx.raw_dir).total
     st.data = {"www": str(www), "expected_total": expected, "actual_total": actual,
-               "reconcile_ok": actual == expected, "rc": proc.returncode,
+               "reconcile_ok": actual == expected, "rc": rc,
                "archives": [{"archive": str(www.name), "expected": expected,
                              "got": actual}]}
     st.seconds = time.time() - t0
     if actual != expected:
-        st.detail = f"对账失败：候选 {expected} vs 落盘 {actual} (rc={proc.returncode})"
+        st.detail = f"对账失败：候选 {expected} vs 落盘 {actual} (rc={rc})"
         return st
     st.ok = True
     st.detail = f"{actual} 个文件，对账 0 差"
@@ -576,17 +599,14 @@ def stage_extract_yuris(ctx: Ctx) -> Stage:
     for rec, arc in zip(per_archive, ypfs):
         dest = ctx.raw_dir / arc.stem
         man = ctx.work_dir / f"{arc.stem}.manifest.json"
-        proc = subprocess.run(
-            [sys.executable, str(Path(__file__).parent / "_ypf_extract.py"),
-             str(arc), str(dest), "--manifest", str(man)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace")
+        rc, out = _run_sibling(ypf, [str(arc), str(dest), "--manifest", str(man)])
         ctx.log("extract", f"$ _ypf_extract.py {arc.name} -> {dest}\n"
-                           f"rc={proc.returncode}\n{proc.stdout}\n{proc.stderr}")
+                           f"rc={rc}\n{out}")
         got = _count(dest).total if dest.is_dir() else 0
-        rec.update({"got": got, "rc": proc.returncode, "ok": got == rec["expected"]})
+        rec.update({"got": got, "rc": rc, "ok": got == rec["expected"]})
         if got != rec["expected"]:
             st.detail = (f"{arc.name}: 对账失败 期望 {rec['expected']} 实得 {got} "
-                         f"(rc={proc.returncode})")
+                         f"(rc={rc})")
             st.data = {"archives": per_archive}
             st.seconds = time.time() - t0
             return st
@@ -949,15 +969,12 @@ def stage_extract_exhibit(ctx: Ctx) -> Stage:
     # 2) .grp → raw/audio/<包名>/（TOC 解析在 _grp_extract.py 里，别在这儿重写）
     if res_dir is not None:
         audio_dst = ctx.raw_dir / "audio"
-        argv = [str(Path(__file__).parent / "_grp_extract.py"), str(res_dir),
-                str(audio_dst), "--manifest", str(ctx.work_dir / "grp.manifest.json")]
-        proc = subprocess.run([sys.executable, *argv], capture_output=True, text=True,
-                              encoding="utf-8", errors="replace")
-        ctx.log("extract", f"$ {sys.executable} {' '.join(argv)}\n"
-                           f"{proc.stdout}\n{proc.stderr}")
-        if proc.returncode != 0:
-            st.detail = (f"_grp_extract.py 失败（rc={proc.returncode}）："
-                         f"{proc.stderr.strip()[:200]}")
+        rc, out = _run_sibling(grp, [str(res_dir), str(audio_dst),
+                                     "--manifest",
+                                     str(ctx.work_dir / "grp.manifest.json")])
+        ctx.log("extract", f"$ _grp_extract.py {res_dir} -> {audio_dst}\n{out}")
+        if rc != 0:
+            st.detail = f"_grp_extract.py 失败（rc={rc}）：{out.strip()[:200]}"
             st.data = {"archives": per_archive, "unsupported": unsupported}
             st.seconds = time.time() - t0
             return st
@@ -1031,18 +1048,14 @@ def stage_extract_cs2(ctx: Ctx) -> Stage:
 
     if ctx.reuse_raw is None:
         ctx.raw_dir.mkdir(parents=True, exist_ok=True)
-        cmd = [sys.executable, str(Path(__file__).parent / "_cs2_int_extract.py"),
-               str(ctx.game_dir), str(ctx.raw_dir),
-               "--manifest", str(ctx.work_dir / "cs2.manifest.json")]
-        proc = subprocess.run(cmd, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace")
-        tail = (proc.stdout or "").strip().splitlines()[-8:]
+        rc, out = _run_sibling(cs2, [str(ctx.game_dir), str(ctx.raw_dir),
+                                     "--manifest",
+                                     str(ctx.work_dir / "cs2.manifest.json")])
+        tail = out.strip().splitlines()[-8:]
         for line in tail:
             ctx.log("extract", "  " + line)
-        for line in (proc.stderr or "").strip().splitlines()[-5:]:
-            ctx.log("extract", "  [stderr] " + line)
-        if proc.returncode != 0:
-            st.detail = f"_cs2_int_extract.py 失败（rc={proc.returncode}）：{tail[-1] if tail else ''}"
+        if rc != 0:
+            st.detail = f"_cs2_int_extract.py 失败（rc={rc}）：{tail[-1] if tail else ''}"
             st.seconds = time.time() - t0
             return st
 
@@ -1125,20 +1138,17 @@ def stage_extract_unity(ctx: Ctx) -> Stage:
         if audio_exp > 0 and audio_got < audio_exp * 0.5:
             ctx.log("extract", f"音频单次导出 {audio_got}/{audio_exp}（<50%），跑多轮分组累积...")
             audio_dir = ctx.raw_dir / "Audio"
-            script = Path(__file__).parent / "_as_audio_collect2.py"
-            if script.exists():
-                proc = subprocess.run(
-                    [sys.executable, str(script), str(data_dir), str(audio_dir)],
-                    capture_output=True, timeout=3600)
-                if proc.returncode == 0:
-                    audio_files = list(audio_dir.rglob("*.wav"))
-                    got["by_type"]["AudioClip"] = len(audio_files)
-                    got["total"] = sum(got["by_type"].values())
-                    ctx.log("extract", f"音频多轮累积后：{len(audio_files)} 个 wav")
-                else:
-                    ctx.log("extract", f"_as_audio_collect2.py 失败（rc={proc.returncode}）")
+            # in-process 跑（冻结包里 sys.executable 拉不了脚本，§19.2）；子进程时代的
+            # timeout=3600 在进程内给不了——超时防护改由外层对账兜底（少音频必然对不上）。
+            rc, out = _run_sibling(_as_audio_collect2, [str(data_dir), str(audio_dir)])
+            ctx.log("extract", f"$ _as_audio_collect2.py rc={rc}\n{out}")
+            if rc == 0:
+                audio_files = list(audio_dir.rglob("*.wav"))
+                got["by_type"]["AudioClip"] = len(audio_files)
+                got["total"] = sum(got["by_type"].values())
+                ctx.log("extract", f"音频多轮累积后：{len(audio_files)} 个 wav")
             else:
-                ctx.log("extract", "[WARN] _as_audio_collect2.py 不存在，跳过音频多轮累积")
+                ctx.log("extract", f"_as_audio_collect2.py 失败（rc={rc}）")
 
         # 更新 archives
         archives = [{"name": t, "entries": got["by_type"][t]} for t in unity.UNITY_TYPES]

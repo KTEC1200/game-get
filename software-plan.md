@@ -205,19 +205,21 @@ manifest.json 契约（对账与验收的唯一地面真相）:
 > **能用的**：冻结后调原生 exe（ffprobe）与 .NET exe（GARbro 2562 条）都正常；CJK 路径正常；
 > Pillow / numpy / pycryptodome 都进包可用；业务代码 in-process 直接调函数可行（`iter_candidates` 1585 条）。
 > **必须改的（三条，按优先级）**：
-> ① **7 处 `subprocess.run([sys.executable, "<脚本>.py"])` 必须改 in-process**——冻结后 `sys.executable`
->    是冻结点自己，实测 rc=2 `unknown mode: orchestrator.py`。改法已实证：14/14 兄弟模块可 import。
+> ① ~~**7 处 `subprocess.run([sys.executable, "<脚本>.py"])` 必须改 in-process**~~
+>    ✅ **已完成（2026-11-02，见 verified-findings §19.2 第 1 条）**：7 兄弟脚本统一
+>    `main(argv=None) -> int`，orchestrator 走 `_run_sibling(mod, argv)` + 顶部静态 import，
+>    AST 护栏禁 `sys.executable`/`subprocess` 回潮，496 passed。
 >    不选「随包带私有 python.exe」：多一份运行时、还要管 stdlib 路径。
 > ② **数据文件必须显式 `--add-data`**（`rules/engines.json`、`cases/*.json`、`*.cs` 源码、`toolbridge.json`）——
 >    漏一个不是降级而是**启动即崩**（实测 `FileNotFoundError: ...\\_internal\\rules\\engines.json`）。
-> ③ 子进程环境：`_MEIPASS` 被塞进 PATH 头部，会继承给 ffprobe/GARbro/csc → 第 2 条清理**实测必要**。
+> ③ 子进程环境：`_MEIPASS` 被塞进 PATH 头部，会继承给 ffprobe/GARbro/csc → 第 3 条清理**实测必要**。
 > 附带：动态 `importlib.import_module` 的模块 PyInstaller 静态分析看不到，要 `--hidden-import` 或静态 import。
 
 1. ~~PyInstaller onedir 冒烟：冻结 + subprocess 调外部 exe~~ ✅ **已完成（2026-11-01，见 §19）**。
-   下一步是据此改代码：先做 ①（兄弟脚本 in-process），再落 ② 打包清单、③ 环境卫生。
-2. `SetDllDirectoryW(None)` + PATH 清理写进 toolbridge（**§19.2 第 3 条已实测证实必要**）。
-3. Inno Setup 打包；杀软误报应对文档（蓝图 §4.5，社区实践非官方结论）。
-4. GUI 最小化：先 CLI + 简单托盘/表单（拖一个目录进去 → 出 manifest 报告），不抢在管线稳之前。
+2. ~~兄弟脚本 in-process~~ ✅ **已完成（2026-11-02，见 §19.2 第 1 条）**。**当前第 ② 条：打包数据文件清单**。
+3. `SetDllDirectoryW(None)` + PATH 清理写进 toolbridge（**§19.2 第 3 条已实测证实必要**）。
+4. Inno Setup 打包；杀软误报应对文档（蓝图 §4.5，社区实践非官方结论）。
+5. GUI 最小化：先 CLI + 简单托盘/表单（拖一个目录进去 → 出 manifest 报告），不抢在管线稳之前。
 
 ### 阶段 4：AI 兜底（M3 后，按蓝图 §2.4 阶梯）
 - A1（规则检索增强）→ A2（错误日志归因）→ A3（参数求解）逐个上，每个都用案例库做回归；

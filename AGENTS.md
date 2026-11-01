@@ -20,7 +20,7 @@
 
 > **🚀 接手顺序（新会话只做这三步）**
 > ① 读本文档「状态 / 下一步 / ⚠️ 五个坑」；
-> ② 跑基线：`python -m pytest tests -q`（应 **493 passed / 9 skipped**）+ `python tests/make_golden.py --check`（应零漂移）；
+> ② 跑基线：`python -m pytest tests -q`（应 **496 passed / 9 skipped**）+ `python tests/make_golden.py --check`（应零漂移）；
 > ③ 按「下一步」当前项开工。**改完先回写本文档 + `verified-findings.md`，再清临时产物，最后提交。**
 
 ## 文件索引（按需读，别全读）
@@ -52,6 +52,12 @@
   `detect → case-lookup → extract → postprocess → verify → manifest`：
   `python orchestrator.py <游戏目录> --out <输出目录> [--allow-gui] [--reuse-raw DIR] [--no-verify] [--dry-run]`。
   已接 **Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD / ExHIBIT / CatSystem2 / Unity 八条链路**（其余引擎判得出就退出码 2，不假装成功）。
+  **兄弟链路 in-process（2026-11-02，打包必修第 1 条）**：7 个兄弟脚本统一
+  `main(argv: list[str] | None = None) -> int`（内部不 `sys.exit`），经 **`_run_sibling(mod, argv)`**
+  进程内调用（冻结包里 `sys.executable` 拉不了脚本，§19.2）+ orchestrator 顶部**静态 import** 全部
+  7 个兄弟模块（PyInstaller 静态分析只认这个）；orchestrator 代码里禁 `sys.executable`/`subprocess`
+  （AST 护栏，test_orchestrator.py §8.5）。**新增链路时**：脚本 main 签名照这个约定来，别再写
+  「读 sys.argv 的 CLI-only 脚本」。
   退出码：`0` 全通过 / `1` 阶段失败或对账有差 / `2` 引擎判出但无链路 / `3` 未命中。
   输出 `raw/`（原始）+ `png/`（tlg/pna 转出的成品）+ `manifest.json`（counts 分 raw/final/converted 三段）
   + `_work/*.log`。**对账一律以索引为地面真相，diff≠0 即失败**；`--reuse-raw` 跳解包但不跳对账。
@@ -154,7 +160,7 @@ Ren'Py 侧：`_rpa_stage` / `_rpa_patch_stage` / `_rpa_arch.txt` / `_rpa_patch.t
 - 引擎判定：**9 条引擎规则**（Unity / KiriKiri / Ren'Py / Tyrano-Electron / RPG Maker / AdvHD / Yu-Ris / EXHIBIT / CatSystem2）。
   基线由两处共同锁住：`_fixtures/make_fixtures.py` 重建的 **6 个 fixture** + 现场 **11 个真实样本**
   （`My Best Deal` 已从磁盘消失），全部与 `tests/golden_detect.json`（逐字锁定 engine/score/evidence/facts）一致 ——
-  跑 `python tests/make_golden.py --check` 应输出零漂移；全量测试 **493 passed / 9 skipped**（`python -m pytest tests -q`）。
+  跑 `python tests/make_golden.py --check` 应输出零漂移；全量测试 **496 passed / 9 skipped**（`python -m pytest tests -q`）。
 - 用户的 `D:\HY\pork社` 7 个游戏经 **GUI 实测全部可静态提取**。
 - ✅ **三条产出线（视频 / 图片 / 音频）全部有实测验证过的样本** —— 见下表。
 
@@ -213,12 +219,16 @@ PyInstaller 冻结可行性已验证（`verified-findings.md` §19）。
 
 ### ① 打包三条必修（§19.2，按序做；不做就冻不出能用的 exe）
 
-1. **7 处兄弟脚本改 in-process**——`orchestrator.py` 的 296 `rpa_extract_organized` / 399 `krkr_auto_extract` /
-   507 `_rpgmv_decrypt` / 580 `_ypf_extract` / 954 `_grp_extract` / 1034 `_cs2_int_extract` / 1131 `_as_audio_collect2`。
-   冻结后 `sys.executable` 是冻结点自己，实测 `rc=2 unknown mode`。改法已实证：14/14 兄弟模块可 import，
-   统一补 `main(argv: list[str] | None = None) -> int`（内部不 `sys.exit`）+ 用 `redirect_stdout` 收日志。
-2. **打包数据文件清单**——`rules/`、`cases/`、`*.cs` 源码必须 `--add-data`（漏一个不是降级而是**启动即崩**）；
-   `toolbridge.json` 本仓当前不存在（可选配置，缺失时走内置候选 + PATH）。
+1. ~~**7 处兄弟脚本改 in-process**~~ ✅ **已完成（2026-11-02）**：7 兄弟脚本统一
+   `main(argv: list[str] | None = None) -> int`（内部不 `sys.exit`）；orchestrator 新增
+   `_run_sibling(mod, argv)`（redirect_stdout 收输出、SystemExit 折算 rc、异常降级 rc=1+traceback、
+   KeyboardInterrupt 不拦）+ 顶部静态 import 三个此前缺失的模块（PyInstaller 只认静态 import）；
+   测试 fake 改 patch `orch.<mod>.main`；AST 护栏禁 `sys.executable`/`subprocess` 回潮
+   （test_orchestrator.py §8.5）。496 passed / 9 skipped，golden 零漂移，CLI 退出码冒烟一致。
+   细节见 verified-findings §19.2 第 1 条。
+2. **打包数据文件清单**（**←当前项**）——`rules/`、`cases/`、`*.cs` 源码必须 `--add-data`（漏一个不是降级而是**启动即崩**）；
+   `toolbridge.json` 本仓当前不存在（可选配置，缺失时走内置候选 + PATH）。顺手把冻结探针按改后的
+   in-process 代码复跑一遍（`_spike_pkg/run_probe.py`）。
 3. **子进程环境卫生**——`_MEIPASS` 会被塞进 PATH 头部并继承给 ffprobe/GARbro/csc →
    `SetDllDirectoryW(None)` + 从 PATH 剥掉，写进 `toolbridge.py`。
 

@@ -750,21 +750,17 @@ def test_yuris_extract_reconciles_per_archive(tmp_path, monkeypatch):
     monkeypatch.setattr(orch.ypf, "read_index",
                         lambda p: (0x1EE, [_E(0)] * (2 if p.name == "cg.ypf" else 3), 0xFF, b""))
 
-    def _fake_run(argv, **kw):
-        # argv = [python, _ypf_extract.py, <ypf>, <dest>, --manifest, <man>]
-        dest = Path(argv[3])
-        n = 2 if "cg.ypf" in argv[2] else 3
+    def _fake_main(argv=None):
+        # in-process：orchestrator 把 [ypf, dest, --manifest, man] 直接传给 main(argv)
+        argv = list(argv or [])
+        dest = Path(argv[1])
+        n = 2 if "cg.ypf" in argv[0] else 3
         dest.mkdir(parents=True, exist_ok=True)
         for i in range(n):
             (dest / f"f{i}.png").write_bytes(b"x")
+        return 0
 
-        class _R:
-            returncode = 0
-            stdout = ""
-            stderr = ""
-        return _R()
-
-    monkeypatch.setattr(orch.subprocess, "run", _fake_run)
+    monkeypatch.setattr(orch.ypf, "main", _fake_main)
 
     st = orch.stage_extract_yuris(_ctx(tmp_path))
     assert st.ok, st.detail
@@ -799,6 +795,82 @@ def test_extractors_stores_names_not_functions():
     for engine, name in orch.EXTRACTORS.items():
         assert isinstance(name, str), f"{engine} 存的不是函数名"
         assert callable(getattr(orch, name, None)), f"{name} 在模块里不存在"
+
+
+# ---------------------------------------------------------------------------
+# 8.5 兄弟链路 in-process 护栏（PyInstaller 冻结，verified-findings §19.2）
+# ---------------------------------------------------------------------------
+
+#: 与解包器同级的 7 个兄弟模块（orchestrator 以 `_run_sibling(mod, argv)` in-process 调用）。
+#: **别只在这里加**：orchestrator 顶部必须同时静态 import（PyInstaller 静态分析
+#: 看不到动态 import，漏一个冻结包里就没有、启动即崩）。
+SIBLING_MODULES = ("rpa_extract_organized", "krkr_auto_extract", "rpgmv", "ypf",
+                   "grp", "cs2", "_as_audio_collect2")
+
+
+def test_sibling_modules_statically_imported_and_no_py_spawn():
+    """★冻结护栏★ ① orchestrator 代码里不许出现 `sys.executable` 取值或 subprocess 调用
+    ——冻结后 `sys.executable` 是冻结点自己，`[sys.executable, "xxx.py"]` 变成
+    「冻结点跑自己」（rc=2 unknown mode）；② 7 个兄弟模块必须在 orchestrator 顶部
+    静态 import（hasattr 即证明）。
+
+    用 AST 而不是文本匹配：docstring/注释里的「subprocess」字样是给人看的说明，不算违例。
+    """
+    import ast
+    tree = ast.parse(Path(orch.__file__).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                assert alias.name != "subprocess", \
+                    "orchestrator 不该再 import subprocess（外部 exe 一律走 toolbridge）"
+        if isinstance(node, ast.Attribute):
+            if (node.attr == "executable" and isinstance(node.value, ast.Name)
+                    and node.value.id == "sys"):
+                pytest.fail("orchestrator 又出现 sys.executable——冻结后会拿自己当解释器")
+            if isinstance(node.value, ast.Name) and node.value.id == "subprocess":
+                pytest.fail(f"orchestrator 又出现 subprocess.{node.attr}——兄弟链路走 _run_sibling")
+    for name in SIBLING_MODULES:
+        assert hasattr(orch, name), f"orchestrator 没有静态 import {name}（冻结包会缺它）"
+
+
+def test_sibling_main_uniform_interface():
+    """兄弟模块统一 `main(argv: list[str] | None = None) -> int`（内部不 sys.exit）——
+    `_run_sibling` 的降级逻辑全靠这个约定：argv=None 收 CLI、list 收编排器，
+    返回 int 当 rc。签名漂移（比如又改回读 sys.argv）在这里先红。"""
+    import inspect
+    for name in SIBLING_MODULES:
+        mod = getattr(orch, name)
+        sig = inspect.signature(mod.main)
+        params = list(sig.parameters.values())
+        assert params and params[0].name == "argv" and params[0].default is None, \
+            f"{name}.main 首参必须是 argv=None（现在是 {sig}）"
+        assert sig.return_annotation in (int, "int"), \
+            f"{name}.main 返回注解必须是 int（现在是 {sig.return_annotation!r}）"
+
+
+def test_run_sibling_captures_output_rc_and_degrades():
+    """`_run_sibling` 契约：正常 → (rc, 收进来的 stdout)；异常 → rc=1 + traceback 进输出；
+    SystemExit 按其 code 折算。与子进程时代「rc + capture_output」的日志形态对齐。"""
+    import types
+
+    ok = types.SimpleNamespace(main=lambda argv: (print("hi"), 0)[1])
+    assert orch._run_sibling(ok, ["a"]) == (0, "hi\n")
+
+    boom = types.SimpleNamespace(
+        main=lambda argv: (_ for _ in ()).throw(RuntimeError("xxx")))
+    rc, out = orch._run_sibling(boom, [])
+    assert rc == 1 and "RuntimeError" in out and "xxx" in out
+
+    exit2 = types.SimpleNamespace(
+        main=lambda argv: (_ for _ in ()).throw(SystemExit(2)))
+    assert orch._run_sibling(exit2, [])[0] == 2
+
+    exit_none = types.SimpleNamespace(
+        main=lambda argv: (_ for _ in ()).throw(SystemExit(None)))
+    assert orch._run_sibling(exit_none, [])[0] == 0
+
+    silent = types.SimpleNamespace(main=lambda argv: None)   # 老式 main 忘了 return
+    assert orch._run_sibling(silent, [])[0] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1022,20 +1094,16 @@ def _exhibit_game(tmp_path: Path, *, gyu_n: int = 2, ogg_n: int = 2,
     return game
 
 
-class _FakeProc:
-    def __init__(self, rc: int = 0, out: str = "", err: str = "") -> None:
-        self.returncode, self.stdout, self.stderr = rc, out, err
-
-
-def _fake_grp_run(n_ogg: int, rc: int = 0, seen: list | None = None):
-    """冒充 `subprocess.run` 跑 `_grp_extract.py`：造 n_ogg 个产物，返回假 proc。"""
-    def _run(cmd, **_kw):
+def _fake_grp_main(n_ogg: int, rc: int = 0, seen: list | None = None):
+    """冒充 `_grp_extract.main`：argv=[<res>, <audio_dst>, --manifest, <man>]，造 n_ogg 个产物。"""
+    def _main(argv=None):
+        argv = list(argv or [])
         if seen is not None:
-            seen.append(list(cmd))
+            seen.append(argv)
         if rc == 0:
-            _write_n(Path(cmd[3]) / "res2001", n_ogg)
-        return _FakeProc(rc, "ok", "boom" if rc else "")
-    return _run
+            _write_n(Path(argv[1]) / "res2001", n_ogg)
+        return rc
+    return _main
 
 
 def _fake_run_csharp(n_png: int, seen: list | None = None, raises: Exception | None = None):
@@ -1093,8 +1161,8 @@ def test_exhibit_extract_reconciles_and_calls_both_tools(tmp_path, monkeypatch):
     grp_calls: list = []
     monkeypatch.setattr(orch.tb, "run_csharp",
                         _fake_run_csharp(2, seen=gyu_calls))
-    monkeypatch.setattr(orch.subprocess, "run",
-                        _fake_grp_run(2, seen=grp_calls))
+    monkeypatch.setattr(orch.grp, "main",
+                        _fake_grp_main(2, seen=grp_calls))
 
     ctx = _ctx(tmp_path, game_dir=game)
     st = orch.stage_extract_exhibit(ctx)
@@ -1105,8 +1173,8 @@ def test_exhibit_extract_reconciles_and_calls_both_tools(tmp_path, monkeypatch):
     assert gyu_calls[0]["key"] == "gyu"
     assert gyu_calls[0]["argv"] == [str(game), str(ctx.raw_dir / "img")]
     # 接线：grp 工具拿 res 目录，产物落 raw/audio，并带 --manifest
-    assert grp_calls[0][2] == str(game / "res")
-    assert grp_calls[0][3] == str(ctx.raw_dir / "audio")
+    assert grp_calls[0][0] == str(game / "res")
+    assert grp_calls[0][1] == str(ctx.raw_dir / "audio")
     assert "--manifest" in grp_calls[0]
     # 加密 BGM 如实上报，且**不在 raw 里**
     assert st.data["unsupported"][0]["count"] == 1
@@ -1119,7 +1187,7 @@ def test_exhibit_extract_fails_when_gyu_short(tmp_path, monkeypatch):
     """`.gyu` 少解了几张 → 工具判失败 → extract 不许假装成功。"""
     game = _exhibit_game(tmp_path, gyu_n=3, ogg_n=2)
     monkeypatch.setattr(orch.tb, "run_csharp", _short_csharp)
-    monkeypatch.setattr(orch.subprocess, "run", _fake_grp_run(2))
+    monkeypatch.setattr(orch.grp, "main", _fake_grp_main(2))
     st = orch.stage_extract_exhibit(_ctx(tmp_path, game_dir=game))
     assert not st.ok
     assert "_gyu_tool 解码失败" in st.detail
@@ -1141,7 +1209,7 @@ def test_exhibit_extract_fails_on_count_mismatch(tmp_path, monkeypatch):
     """
     game = _exhibit_game(tmp_path, gyu_n=2, ogg_n=2, encrypted_n=0)
     monkeypatch.setattr(orch.tb, "run_csharp", _fake_run_csharp(2))
-    monkeypatch.setattr(orch.subprocess, "run", _fake_grp_run(1))    # 少切 1 条
+    monkeypatch.setattr(orch.grp, "main", _fake_grp_main(1))    # 少切 1 条
     st = orch.stage_extract_exhibit(_ctx(tmp_path, game_dir=game))
     assert not st.ok
     assert "对账失败" in st.detail
@@ -1152,7 +1220,7 @@ def test_exhibit_extract_gyu_shortfall_is_caught_by_product_count(tmp_path, monk
     """gyu 少产出时由 `run_csharp` 的产物计数先拦（`min_products` = 期望张数）。"""
     game = _exhibit_game(tmp_path, gyu_n=2, ogg_n=2, encrypted_n=0)
     monkeypatch.setattr(orch.tb, "run_csharp", _fake_run_csharp(1))
-    monkeypatch.setattr(orch.subprocess, "run", _fake_grp_run(2))
+    monkeypatch.setattr(orch.grp, "main", _fake_grp_main(2))
     st = orch.stage_extract_exhibit(_ctx(tmp_path, game_dir=game))
     assert not st.ok
     assert "_gyu_tool 解码失败" in st.detail
@@ -1172,7 +1240,7 @@ def test_exhibit_extract_reports_csharp_build_failure(tmp_path, monkeypatch):
 def test_exhibit_extract_fails_when_grp_rc_nonzero(tmp_path, monkeypatch):
     game = _exhibit_game(tmp_path, gyu_n=1, ogg_n=2)
     monkeypatch.setattr(orch.tb, "run_csharp", _fake_run_csharp(1))
-    monkeypatch.setattr(orch.subprocess, "run", _fake_grp_run(0, rc=2))
+    monkeypatch.setattr(orch.grp, "main", _fake_grp_main(0, rc=2))
     st = orch.stage_extract_exhibit(_ctx(tmp_path, game_dir=game))
     assert not st.ok
     assert "_grp_extract.py 失败" in st.detail
@@ -1188,7 +1256,7 @@ def test_exhibit_reuse_raw_still_reconciles(tmp_path, monkeypatch):
     _write(ctx.raw_dir / "loose" / "res" / "g" / "ev" / "op.wmv")
     monkeypatch.setattr(orch.tb, "run_csharp",
                         lambda *a, **k: pytest.fail("复用模式不该再调工具"))
-    monkeypatch.setattr(orch.subprocess, "run",
+    monkeypatch.setattr(orch.grp, "main",
                         lambda *a, **k: pytest.fail("复用模式不该再调工具"))
     st = orch.stage_extract_exhibit(ctx)
     assert st.ok, st.detail
@@ -1201,7 +1269,7 @@ def test_exhibit_reuse_raw_fails_on_mismatch(tmp_path, monkeypatch):
     ctx = _ctx(tmp_path, game_dir=game, reuse_raw=tmp_path / "out" / "raw")
     _write_n(ctx.raw_dir / "img", 1, ext=".png")
     monkeypatch.setattr(orch.tb, "run_csharp", lambda *a, **k: None)
-    monkeypatch.setattr(orch.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(orch.grp, "main", lambda *a, **k: None)
     st = orch.stage_extract_exhibit(ctx)
     assert not st.ok
     assert "复用产物对账失败" in st.detail
@@ -1291,22 +1359,23 @@ def _cs2_exp(by_arc: dict, unlistable: list | None = None) -> dict:
             "unlistable": list(unlistable or []), "arcs": sorted(by_arc)}
 
 
-def _fake_cs2_extract(per_arc: dict, rc: int = 0, seen: list | None = None):
-    """冒充 `subprocess.run` 跑 `_cs2_int_extract.py`：按 `raw/<包名>/` 造产物。
+def _fake_cs2_main(per_arc: dict, rc: int = 0, seen: list | None = None):
+    """冒充 `_cs2_int_extract.main`：按 `raw/<包名>/` 造产物。
 
-    argv 形状 = `[python, _cs2_int_extract.py, <game>, <out>, --manifest, <path>]`，
-    所以输出目录是 `cmd[3]`。
+    argv 形状 = `[<game>, <out>, --manifest, <path>]`（in-process 直接传给 main），
+    所以输出目录是 `argv[1]`。
     """
-    def _run(cmd, **_kw):
+    def _main(argv=None):
+        argv = list(argv or [])
         if seen is not None:
-            seen.append(list(cmd))
+            seen.append(argv)
         if rc == 0:
             for name, n in per_arc.items():
-                dest = Path(cmd[3]) / Path(name).stem
+                dest = Path(argv[1]) / Path(name).stem
                 for i in range(n):
                     _write(dest / f"f{i:03d}.ogg", b"OggS" + b"x" * 8)
-        return _FakeProc(rc, "ok", "boom" if rc else "")
-    return _run
+        return rc
+    return _main
 
 
 def test_cs2_extract_reconciles_per_archive(tmp_path, monkeypatch):
@@ -1315,8 +1384,8 @@ def test_cs2_extract_reconciles_per_archive(tmp_path, monkeypatch):
     monkeypatch.setattr(orch.cs2, "expected_counts",
                         lambda root: _cs2_exp({"pcm_AA.int": 2, "pcm_BB.int": 3}))
     seen: list = []
-    monkeypatch.setattr(orch.subprocess, "run",
-                        _fake_cs2_extract({"pcm_AA.int": 2, "pcm_BB.int": 3}, seen=seen))
+    monkeypatch.setattr(orch.cs2, "main",
+                        _fake_cs2_main({"pcm_AA.int": 2, "pcm_BB.int": 3}, seen=seen))
 
     st = orch.stage_extract_cs2(ctx)
 
@@ -1326,8 +1395,8 @@ def test_cs2_extract_reconciles_per_archive(tmp_path, monkeypatch):
     assert [a["got"] for a in st.data["archives"]] == [2, 3]
     assert "对账 0 差（逐包 2/2）" in st.detail
     assert "2 个 .int" in st.detail
-    assert seen[0][1].endswith("_cs2_int_extract.py")
-    assert seen[0][3] == str(ctx.raw_dir)
+    assert seen[0][0] == str(ctx.game_dir)
+    assert seen[0][1] == str(ctx.raw_dir)
     assert "--manifest" in seen[0]
 
 
@@ -1336,8 +1405,8 @@ def test_cs2_extract_fails_on_per_archive_mismatch_even_when_total_matches(tmp_p
     ctx = _ctx(tmp_path)
     monkeypatch.setattr(orch.cs2, "expected_counts",
                         lambda root: _cs2_exp({"a.int": 2, "b.int": 3}))
-    monkeypatch.setattr(orch.subprocess, "run",
-                        _fake_cs2_extract({"a.int": 3, "b.int": 2}))
+    monkeypatch.setattr(orch.cs2, "main",
+                        _fake_cs2_main({"a.int": 3, "b.int": 2}))
 
     st = orch.stage_extract_cs2(ctx)
 
@@ -1353,7 +1422,7 @@ def test_cs2_extract_fails_when_total_mismatches(tmp_path, monkeypatch):
     """
     ctx = _ctx(tmp_path)
     monkeypatch.setattr(orch.cs2, "expected_counts", lambda root: _cs2_exp({"a.int": 2}))
-    monkeypatch.setattr(orch.subprocess, "run", _fake_cs2_extract({"a.int": 2}))
+    monkeypatch.setattr(orch.cs2, "main", _fake_cs2_main({"a.int": 2}))
     _write(ctx.raw_dir / "stray.ogg", b"OggS" + b"x" * 8)      # 不属于任何包
 
     st = orch.stage_extract_cs2(ctx)
@@ -1365,8 +1434,8 @@ def test_cs2_extract_fails_when_total_mismatches(tmp_path, monkeypatch):
 def test_cs2_extract_fails_when_tool_rc_nonzero(tmp_path, monkeypatch):
     ctx = _ctx(tmp_path)
     monkeypatch.setattr(orch.cs2, "expected_counts", lambda root: _cs2_exp({"a.int": 1}))
-    monkeypatch.setattr(orch.subprocess, "run",
-                        _fake_cs2_extract({}, rc=1))
+    monkeypatch.setattr(orch.cs2, "main",
+                        _fake_cs2_main({}, rc=1))
 
     st = orch.stage_extract_cs2(ctx)
 
@@ -1384,7 +1453,7 @@ def test_cs2_reuse_raw_still_reconciles(tmp_path, monkeypatch):
     def _boom(*_a, **_kw):
         pytest.fail("--reuse-raw 时不该再调 _cs2_int_extract.py")
 
-    monkeypatch.setattr(orch.subprocess, "run", _boom)
+    monkeypatch.setattr(orch.cs2, "main", _boom)
     st = orch.stage_extract_cs2(ctx)
 
     assert st.ok, st.detail
@@ -1407,7 +1476,7 @@ def test_cs2_extract_unlistable_grp_marks_unverified(tmp_path, monkeypatch):
     ctx = _ctx(tmp_path)
     monkeypatch.setattr(orch.cs2, "expected_counts",
                         lambda root: _cs2_exp({"a.int": 2}, unlistable=["weird.int"]))
-    monkeypatch.setattr(orch.subprocess, "run", _fake_cs2_extract({"a.int": 2}))
+    monkeypatch.setattr(orch.cs2, "main", _fake_cs2_main({"a.int": 2}))
 
     st = orch.stage_extract_cs2(ctx)
 

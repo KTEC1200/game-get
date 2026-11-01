@@ -147,13 +147,15 @@ def write_manifest(out_root: Path, www: Path, key: bytes, stats: Counter,
     return man
 
 
-def main() -> int:
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    dry = "--dry" in sys.argv
-    key_hex = sys.argv[sys.argv.index("--key") + 1] if "--key" in sys.argv else None
-    man_path = Path(sys.argv[sys.argv.index("--manifest") + 1]) if "--manifest" in sys.argv else None
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
+    args = [a for a in argv if not a.startswith("--")]
+    dry = "--dry" in argv
+    key_hex = argv[argv.index("--key") + 1] if "--key" in argv else None
+    man_path = Path(argv[argv.index("--manifest") + 1]) if "--manifest" in argv else None
     if len(args) < 2:
-        raise SystemExit(__doc__)
+        print(__doc__, file=sys.stderr)
+        return 1
     www = find_www(Path(args[0]))
     out_root = Path(args[1])
     key = load_key(www, key_hex)

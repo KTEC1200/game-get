@@ -176,16 +176,18 @@ def read_index(arc_path: Path):
     return version, entries, key, data_all
 
 
-def main() -> int:
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    ycg_png = "--no-ycg" not in sys.argv
-    man_path = Path(sys.argv[sys.argv.index("--manifest") + 1]) if "--manifest" in sys.argv else None
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
+    args = [a for a in argv if not a.startswith("--")]
+    ycg_png = "--no-ycg" not in argv
+    man_path = Path(argv[argv.index("--manifest") + 1]) if "--manifest" in argv else None
     arc_path, out_root = Path(args[0]), Path(args[1])
 
     try:
         version, entries, key, data_all = read_index(arc_path)
     except ValueError as exc:
-        raise SystemExit(str(exc))
+        print(str(exc), file=sys.stderr)
+        return 1
     print(f"{arc_path.name}: version={version:#x} count={len(entries)}")
     print(f"  名字 XOR key = {key:#04x}")
 
