@@ -31,3 +31,6 @@ banben/
 _spike_pkg/orchestrator.spec
 # 安装器产物（可重建，不入库）
 packaging/Output/
+
+# 会话/工作区元数据（非代码）
+.workbuddy/
