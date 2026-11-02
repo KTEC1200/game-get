@@ -1135,31 +1135,58 @@ def stage_extract_unity(ctx: Ctx) -> Stage:
         got = unity.extract_all(data_dir, ctx.raw_dir, as_exe, tmp_root=ctx.work_dir / "unity")
         archives = got.get("archives", [])
 
-        # Audio multi-round
+        # Audio：单次 Convert 必然丢一批（FSB5 静默丢失，rc 仍是 0），
+        # 一律走「枚举名字 → 按名对账 → 只补缺的」（2026-11-02 Happiness Double Room 实测：
+        # 446/1441 → 补齐；同一批名字重复跑每次落盘子集不同，故补跑能收敛）。
         audio_got = got["by_type"].get("AudioClip", 0)
         audio_exp = exp["by_type"].get("AudioClip", 0)
-        if audio_exp > 0 and audio_got < audio_exp * 0.5:
-            ctx.log("extract", f"音频单次导出 {audio_got}/{audio_exp}（<50%），跑多轮分组累积...")
-            audio_dir = ctx.raw_dir / "Audio"
-            # in-process 跑（冻结包里 sys.executable 拉不了脚本，§19.2）；子进程时代的
-            # timeout=3600 在进程内给不了——超时防护改由外层对账兜底（少音频必然对不上）。
+        audio_dir = ctx.raw_dir / "Audio"
+        names = (_as_audio_collect2.enumerate_names(data_dir, as_exe,
+                                                    ctx.work_dir / "unity")
+                 if audio_exp > 0 else [])
+        if names:
+            # 逐条枚举才是真地面真相：ByType 的 JSON 导出会让同名资产互相覆盖而少数
+            if len(names) != audio_exp:
+                ctx.log("extract",
+                        f"音频口径不一致：ByType JSON {audio_exp} vs 逐条枚举 {len(names)}"
+                        f"（同名覆盖），以逐条为准")
+            audio_exp = len(names)
+            exp["by_type"]["AudioClip"] = audio_exp
+            exp["total"] = sum(exp["by_type"].values())
+            expected_total = exp["total"]
+            ctx.log("extract", f"音频单次导出 {audio_got}/{audio_exp}，按名字补齐...")
+            res = _as_audio_collect2.collect(data_dir, audio_dir, names, as_exe,
+                                             work_root=ctx.work_dir,
+                                             log=lambda m: ctx.log("extract", m))
+            audio_got = len(list(audio_dir.glob("*.wav")))
+            st.data["audio_missing"] = len(res["missing"])
+            ctx.log("extract", f"音频补齐后 {audio_got}/{audio_exp}，"
+                               f"runs={res['runs']}，缺 {len(res['missing'])}")
+        elif audio_exp > 0 and audio_got < audio_exp:
+            # 枚举失败才退回前缀分组（覆盖不全，但对账仍会拦下来）
+            ctx.log("extract", "音频名字枚举失败，退回前缀分组多轮累积...")
             rc, out = _run_sibling(_as_audio_collect2, [str(data_dir), str(audio_dir)])
             ctx.log("extract", f"$ _as_audio_collect2.py rc={rc}\n{out}")
-            if rc == 0:
-                audio_files = list(audio_dir.rglob("*.wav"))
-                got["by_type"]["AudioClip"] = len(audio_files)
-                got["total"] = sum(got["by_type"].values())
-                ctx.log("extract", f"音频多轮累积后：{len(audio_files)} 个 wav")
-            else:
-                ctx.log("extract", f"_as_audio_collect2.py 失败（rc={rc}）")
+            audio_got = len(list(audio_dir.rglob("*.wav")))
+        if audio_exp > 0:
+            got["by_type"]["AudioClip"] = audio_got
+            got["total"] = sum(got["by_type"].values())
 
-        # 更新 archives
-        archives = [{"name": t, "entries": got["by_type"][t]} for t in unity.UNITY_TYPES]
+        # 更新 archives（键名与其它链路一致：manifest 的 source.archives 读 archive/expected/got，
+        # 用 name/entries 会落成三个 null——2026-11-02 实测踩到）
+        archives = [{"archive": t, "expected": got["by_type"][t], "got": got["by_type"][t]}
+                    for t in unity.UNITY_TYPES]
         actual_total = got["total"]
     else:
-        # --reuse-raw：不跑 Convert，但仍算地面真相并对账
+        # --reuse-raw：不跑 Convert，但仍算地面真相并对账。
+        # 逐类落盘数是**扫盘实测**（不给 None，免得交付记录里查不到「每类多少」）；
+        # expected 留 None = 本轮没重导，不假装验过（manifest.reconcile 的同一口径）。
         actual_total = _count(ctx.raw_dir).total
-        archives = [{"name": t, "entries": None} for t in unity.UNITY_TYPES]
+        archives = []
+        for t in unity.UNITY_TYPES:
+            d = ctx.raw_dir / unity.UNITY_CATEGORIES[t]
+            got_n = sum(1 for f in d.rglob("*") if f.is_file()) if d.is_dir() else 0
+            archives.append({"archive": t, "expected": None, "got": got_n})
 
     # Texture2D 已知缺口：AssetStudio 的 JSON 枚举会列出所有资产（含引用型），
     # 但 Convert 只导出可直接使用的资产。本作实测 5 个（460 枚举 / 455 导出）。

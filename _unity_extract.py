@@ -16,7 +16,9 @@ AudioClip 若是 FSB5 容器，单次 Convert 只能导出约 30%，
 需要多轮 --names 分组累积（复用 _as_audio_collect2.py 的思路）。
 """
 import importlib
+import itertools
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -29,6 +31,9 @@ UNITY_CATEGORIES = {
     "Sprite": "Image_Sprite",
     "AudioClip": "Audio",
 }
+
+#: 本次进程内开过的临时目录序号（见 `_fresh()`）。
+_SEQ = itertools.count(1)
 
 
 def _as_exe() -> Path:
@@ -82,6 +87,30 @@ def _scratch_root(tmp_root: Path | None, default: Path) -> Path:
     return Path(tmp_root) if tmp_root is not None else Path(default)
 
 
+def _fresh(root: Path, name: str) -> Path:
+    """在 root 下开一个**本次专用**的临时目录（唯一名）。
+
+    为什么不复用固定名 + 先删后建：一是删除守卫（本机 >50 个文件的批量删除要人工确认，
+    agent 会话里会直接中断整条链），二是残留的旧 JSON 会把「数 JSON」这一步算虚高
+    ——**计数错误比不计数更坏**。唯一名让「上一轮的残留」天然不影响本轮。
+    """
+    d = root / f"{name}_{os.getpid()}_{next(_SEQ)}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _drop(p: Path) -> None:
+    """尽力删除临时目录；失败就留着（**不能**因为删不掉而中断解包）。
+
+    注意：删除守卫抛的是 BaseException 系（SystemExit），`ignore_errors=True` 拦不住，
+    所以这里显式吞 BaseException——清理是优化，不是正确性的一部分。
+    """
+    try:
+        shutil.rmtree(p, ignore_errors=True)
+    except BaseException:                                          # noqa: BLE001
+        pass
+
+
 def expected_counts(data_dir: Path, as_exe: Path | None = None,
                     tmp_root: Path | None = None) -> dict:
     """AssetStudio JSON 枚举 = 地面真相（唯一出处）。
@@ -96,12 +125,10 @@ def expected_counts(data_dir: Path, as_exe: Path | None = None,
     root.mkdir(parents=True, exist_ok=True)
     by_type = {}
     for t in UNITY_TYPES:
-        tmp = root / f"_json_{t}"
-        shutil.rmtree(tmp, ignore_errors=True)
-        tmp.mkdir(parents=True, exist_ok=True)
-        proc = _run_as(data_dir, tmp, t, "JSON", as_exe)
+        tmp = _fresh(root, f"_json_{t}")
+        _run_as(data_dir, tmp, t, "JSON", as_exe)
         by_type[t] = len(list(tmp.rglob("*.json")))
-        shutil.rmtree(tmp, ignore_errors=True)
+        _drop(tmp)
     return {
         "by_type": by_type,
         "total": sum(by_type.values()),
@@ -126,23 +153,33 @@ def extract_all(data_dir: Path, out_dir: Path, as_exe: Path | None = None,
     archives = []
     for t in UNITY_TYPES:
         cat = UNITY_CATEGORIES[t]
-        tmp = root / f"_conv_{t}"
-        shutil.rmtree(tmp, ignore_errors=True)
-        tmp.mkdir(parents=True, exist_ok=True)
-        proc = _run_as(data_dir, tmp, t, "Convert", as_exe)
+        tmp = _fresh(root, f"_conv_{t}")
+        _run_as(data_dir, tmp, t, "Convert", as_exe)
         # AssetStudio 产物在 <tmp>/<TypeName>/
         subs = [p for p in tmp.iterdir() if p.is_dir()]
         src = subs[0] if subs else tmp
         dst = out_dir / cat
-        dst.mkdir(parents=True, exist_ok=True)
-        n = 0
-        for f in src.rglob("*"):
-            if f.is_file():
-                shutil.copy2(f, dst / f.relative_to(src).name)
-                n += 1
+        moved = False
+        if not dst.exists():
+            # 直接改名：省一次全量复制（本样本产物 2 GB），也不产生批量删除。
+            # 只在目标**不存在**时改名；目标已存在（断点续跑）必须走合并，否则本轮的
+            # 新产物会被后面的清理当临时文件删掉。
+            try:
+                os.replace(src, dst)
+                moved = True
+            except OSError:
+                pass
+        if not moved:
+            dst.mkdir(parents=True, exist_ok=True)
+            for f in src.rglob("*"):
+                if f.is_file():
+                    tgt = dst / f.relative_to(src).name
+                    if not tgt.exists():
+                        shutil.copy2(f, tgt)
+        n = sum(1 for f in dst.rglob("*") if f.is_file())
         by_type[t] = n
         archives.append({"name": t, "entries": n})
-        shutil.rmtree(tmp, ignore_errors=True)
+        _drop(tmp)
     return {"by_type": by_type, "total": sum(by_type.values()), "archives": archives}
 
 

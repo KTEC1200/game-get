@@ -237,7 +237,7 @@
 | AssetStudio | `EndOfStreamException` | Unity 6000 Shader 序列化变更 | → **AssetStudioNext** |
 | AssetStudio.CLI | `Nothing exported.`（**退出码却是 0**） | ⚠️ `--types` 用**逗号**分隔被静默忽略；或输出目录里文件已存在 | 检查类型参数写法；**永远不要用退出码判成功，要数产物** |
 | AssetStudio.CLI | 进程崩溃、退出码 `-1073740940`（`0xC0000374`） | **堆损坏**：一次性全导体积太大（≈870 MB 触发） | → **按类型分批独立导出**（见 `unity_unpack.ps1`） |
-| AssetStudio | 日志里每个资产都打印 `Exporting X`，但磁盘上几乎没有产物，**且无任何报错** | Unity 音频是 **FSB5(FMOD)** 容器（`m_Source: resources.resource`）时 CLI 的静默失败 | → 用 `_as_audio_collect2.py` **多轮正则分组累积**，最后 `^(A\|B\|C)$` 精确锚定清尾巴 |
+| AssetStudio | 日志里每个资产都打印 `Exporting X`，但磁盘上只有**一部分**产物，**退出码 0**、无任何报错 | Unity 音频是 **FSB5(FMOD)** 容器（`m_Source: resources.resource`）时的**随机性静默丢失**（同批名字两次跑落盘子集不同） | → `_as_audio_collect2.py`：**枚举名字（BySource）→ 50 名一批锚定 `^(a\|b)$` → 按名字对账 → 只补缺的、批量逐轮减半**。**判据只能是「按名字数产物」**，rc 与日志都不算 |
 | FFmpeg | `Not yet implemented in FFmpeg, patches welcome`（对 FSB5） | FFmpeg 认识 FSB 容器但不支持其编码 | → 不要指望 FFmpeg 解 FSB；走 AssetStudio 分组累积 |
 | RPA | `_pickle.UnpicklingError: invalid load key, 'x'`（`'x'` 即 `0x78`） | **索引是 zlib 压缩的**，你把 zlib 流直接喂给了 pickle | → 定位索引偏移后先 `zlib.decompress` 再 `pickle.loads`（见 `rpa_tool.py`） |
 | RPA | 表头第 32 字节不是空格（如 `.`），`split(b" ")` 切不开 | Ren'Py 把表头分隔空格**换成别的字符**（换成什么由游戏决定） | → 用正则 `^RPA-3\.0 ([0-9a-f]{16}) ([0-9a-f]{8})` 抓「偏移+key」，**别 split 空格** |

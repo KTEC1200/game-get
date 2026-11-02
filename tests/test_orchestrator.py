@@ -1869,3 +1869,164 @@ def test_unity_extract_reuse_raw_still_reconciles(tmp_path, monkeypatch):
     assert st.ok is False
     assert "对账失败" in st.detail
 
+
+
+def test_unity_extract_merges_into_existing_raw(tmp_path, monkeypatch):
+    """断点续跑：raw/<cat> 已存在时必须**合并**，不能把本轮新产物当临时文件丢掉。
+
+    回归（2026-11-02）：extract_all 改成「改名代替复制」后，若目标目录已存在还去改名，
+    os.replace 会失败、产物落回临时目录，随后被清理——等于静默丢文件。
+    """
+    game = tmp_path / "My Game"
+    game.mkdir()
+    (game / "My Game_Data").mkdir()
+    ctx = _ctx(tmp_path, game_dir=game)
+    old = ctx.raw_dir / "Image_Texture2D"
+    old.mkdir(parents=True, exist_ok=True)
+    (old / "keep.png").write_text("old")
+
+    def fake_run(cmd, **kw):
+        import subprocess
+        out = Path(cmd[2])
+        out.mkdir(parents=True, exist_ok=True)
+        if "JSON" in cmd:
+            for i in range(2):
+                (out / f"asset_{i}.json").write_text("{}")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        sub = out / cmd[cmd.index("--types") + 1]
+        sub.mkdir(parents=True, exist_ok=True)
+        for i in range(2):
+            ext = "wav" if cmd[cmd.index("--types") + 1] == "AudioClip" else "png"
+            (sub / f"asset_{i}.{ext}").write_text("x")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr(orch.tb, "find_tool", lambda key: Path("/fake/assetstudio.exe"))
+
+    orch.stage_extract_unity(ctx)
+    got = sorted(p.name for p in (ctx.raw_dir / "Image_Texture2D").glob("*"))
+    assert got == ["asset_0.png", "asset_1.png", "keep.png"], got
+
+
+def test_unity_audio_shortfall_is_filled_by_name_reconciliation(tmp_path, monkeypatch):
+    """单次 Convert 少音频时，必须按名字补齐并对账到 0 差（2026-11-02 Happiness Double Room）。
+
+    这作的音频是 FSB5：一次 Convert 只落一部分且 rc=0，只有「枚举名字 → 对账 → 补缺」能收全。
+    """
+    game = tmp_path / "My Game"
+    game.mkdir()
+    (game / "My Game_Data").mkdir()
+    ctx = _ctx(tmp_path, game_dir=game)
+    names = ["clip_a", "clip_b"]
+    export_calls = []
+
+    def fake_run(cmd, **kw):
+        import subprocess
+        out = Path(cmd[2])
+        out.mkdir(parents=True, exist_ok=True)
+        export_type = cmd[cmd.index("--export_type") + 1]
+        group = cmd[cmd.index("--group_assets") + 1]
+        if export_type == "JSON" and group == "BySource":          # 逐条枚举
+            d = out / "resources.assets_export"
+            d.mkdir(parents=True, exist_ok=True)
+            for i, n in enumerate(names):
+                (d / f"clip_{i}.json").write_text(json.dumps({"m_Name": n}))
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if export_type == "JSON":                                  # 计数枚举
+            for i in range(2):
+                (out / f"asset_{i}.json").write_text("{}")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        type_name = cmd[cmd.index("--types") + 1]
+        sub = out / type_name
+        sub.mkdir(parents=True, exist_ok=True)
+        if type_name == "AudioClip":
+            export_calls.append(cmd)
+            if "--names" in cmd:                                   # 按名字补跑：全给
+                pat = cmd[cmd.index("--names") + 1]
+                for n in names:
+                    if n in pat:
+                        (sub / f"{n}.wav").write_text("RIFF")
+            else:                                                  # 单次导出：只给一个
+                (sub / f"{names[0]}.wav").write_text("RIFF")
+        else:
+            for i in range(2):
+                (sub / f"asset_{i}.png").write_text("x")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr(orch.tb, "find_tool", lambda key: Path("/fake/assetstudio.exe"))
+
+    st = orch.stage_extract_unity(ctx)
+    assert len(list((ctx.raw_dir / "Audio").glob("*.wav"))) == 2
+    assert st.data["audio_missing"] == 0
+    assert st.data["expected_total"] == 6 and st.data["actual_total"] == 6
+    assert st.ok is True and "对账 0 差" in st.detail
+    assert sum(1 for c in export_calls if "--names" in c) == 1, "补齐只该补缺的那批"
+
+
+def test_unity_archives_reach_manifest_with_names(tmp_path, monkeypatch):
+    """回归（2026-11-02）：Unity 阶段的 archives 曾用 name/entries 键，
+    build_manifest 只认 archive/expected/got → manifest 里三个 null（交付记录失真）。"""
+    game = tmp_path / "My Game"
+    game.mkdir()
+    (game / "My Game_Data").mkdir()
+    ctx = _ctx(tmp_path, game_dir=game)
+
+    def fake_run(cmd, **kw):
+        import subprocess
+        out = Path(cmd[2])
+        out.mkdir(parents=True, exist_ok=True)
+        if "JSON" in cmd:
+            for i in range(2):
+                (out / f"asset_{i}.json").write_text("{}")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        t = cmd[cmd.index("--types") + 1]
+        sub = out / t
+        sub.mkdir(parents=True, exist_ok=True)
+        for i in range(2):
+            ext = "wav" if t == "AudioClip" else "png"
+            (sub / f"asset_{i}.{ext}").write_text("x")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr(orch.tb, "find_tool", lambda key: Path("/fake/assetstudio.exe"))
+
+    st = orch.stage_extract_unity(ctx)
+    man = orch.build_manifest(ctx, [st], "Unity")
+    names = [a["name"] for a in man["source"]["archives"]]
+    assert names == ["Texture2D", "Sprite", "AudioClip"]
+    assert [a["entries"] for a in man["source"]["archives"]] == [2, 2, 2]
+
+
+def test_unity_archives_reach_manifest_with_names(tmp_path, monkeypatch):
+    """回归（2026-11-02）：Unity 阶段的 archives 曾用 name/entries 键，
+    build_manifest 只认 archive/expected/got → manifest 里三个 null（交付记录失真）。"""
+    game = tmp_path / "My Game"
+    game.mkdir()
+    (game / "My Game_Data").mkdir()
+    ctx = _ctx(tmp_path, game_dir=game)
+
+    def fake_run(cmd, **kw):
+        import subprocess
+        out = Path(cmd[2])
+        out.mkdir(parents=True, exist_ok=True)
+        if "JSON" in cmd:
+            for i in range(2):
+                (out / f"asset_{i}.json").write_text("{}")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        t = cmd[cmd.index("--types") + 1]
+        sub = out / t
+        sub.mkdir(parents=True, exist_ok=True)
+        for i in range(2):
+            ext = "wav" if t == "AudioClip" else "png"
+            (sub / f"asset_{i}.{ext}").write_text("x")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr(orch.tb, "find_tool", lambda key: Path("/fake/assetstudio.exe"))
+
+    st = orch.stage_extract_unity(ctx)
+    man = orch.build_manifest(ctx, [st], "Unity")
+    names = [a["name"] for a in man["source"]["archives"]]
+    assert names == ["Texture2D", "Sprite", "AudioClip"]
+    assert [a["entries"] for a in man["source"]["archives"]] == [2, 2, 2]

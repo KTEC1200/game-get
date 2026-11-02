@@ -14,6 +14,7 @@ _tmp_extract/
 # 打包探针的构建产物（66 MiB，可重建；源码 probe.py 保留作复现脚本）
 _spike_pkg/dist/
 _spike_pkg/build/
+_spike_pkg/feedback_*/
 
 # 临时/中间产物
 *.log

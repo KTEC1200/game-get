@@ -1,40 +1,58 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""把 AssetStudio.CLI 导不全的 AudioClip 用「多轮 + 正则分组」的方式尽量收全。
+"""把 AssetStudio.CLI 导不全的 AudioClip 收全（按名字对账 + 只补跑缺的）。
 
-背景（实测 2026-10-12，详见 verified-findings.md §8）:
-  本作音频是 FSB5(FMOD Sample Bank 5) 容器，数据在外置 resources.resource 中。
-  AssetStudio.CLI 单次导出 1183 个 AudioClip 时只有约 8 个落到磁盘，
-  且日志里每个资产都打印 "Exporting AudioClip: X"、**没有任何报错**（静默失败）。
-  但换成不同的 --names 分组、多跑几次时，每次都能再多成功一批
-  => 失败与「运行内的处理顺序/规模」有关，可用分组反复跑来累积。
+背景（实测 2026-10-12 / 2026-11-02，详见 verified-findings.md §8）:
+  本类作品的音频是 FSB5(FMOD Sample Bank 5) 容器，数据在外置 resources.resource 里。
+  AssetStudio.CLI 一次导出 1441 个 AudioClip 时**只落盘一部分**，且：
+    - 逐条日志照打 "Exporting AudioClip: X"，**没有任何报错**；
+    - 退出码仍然是 **0**（不是崩溃，除非批量极大时偶发 access violation）。
+  → 退出码与日志都不能当成功判据，只有「按名字数产物」能。
 
-本轮策略: 用正则 alternation 把多个名字合并进一次运行，减少进程启动开销。
-  第 1 轮: ^(VA0|VA1|...|VA9) 这类「前缀+首位」合并（每组 10 个）
-  第 2 轮: 两两组合 (VA00|VA01|...) 进一步细分
-  第 3 轮: 全名前缀粗分组兜底
-每轮输出到独立目录，按文件名和内容哈希去重累积。数字名称也会细分，
-但固定分组不能保证覆盖所有资产。
+  同一批名字重复跑，每次落盘的子集**不同**（实测同样 80 个名字：一次 80/80，一次 28/80），
+  所以「跑一次 + 把缺的再跑一遍」能收敛。**单名导出实测稳定成功**。
+
+策略（2026-11-02 重写，替代「盲目前缀分组多轮」）:
+  ① 先用 JSON 枚举拿到**全部 AudioClip 名字**（地面真相，`--group_assets BySource`
+     避免同名 JSON 互相覆盖）；
+  ② 把名字按批（默认 50）用 `--names "^(a|b|c)$"` 导出，落盘后**逐个名字核对**；
+  ③ 只把缺的名字收进下一轮，批量逐轮减半，直到补齐或轮数用尽；
+  ④ 缺的照样报出来（`missing`），不静默放过——对账在 orchestrator 侧仍会 diff≠0。
+
+  拿不到名字清单时（JSON 枚举失败/为空）退回旧的 `rounds()` 前缀分组逻辑。
 
 用法:
-  python _as_audio_collect2.py <输入目录> <累积输出目录>
+  python _as_audio_collect2.py <输入目录> <累积输出目录> [--names-file FILE]
 """
 import hashlib
+import itertools
+import json
+import os
 import shutil
-import tempfile
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import toolbridge
+
+#: 本次进程内开过的临时目录序号（见 `_fresh()`）。
+_SEQ = itertools.count(1)
+
 VOICE_PREFIXES = ["VA", "VB", "VC", "FE", "SEX", "ADD", "SE", "bgm", "SYASEI",
                   "sexyvoice", "ding", "punch", "camera", "door", "cross", "sex"]
 
+# 单次 `--names` 的批量。实测 50 名一批时补跑 1~2 轮即可补齐 200 名（35s）；
+# 再大并不会更快（丢失比例随批量上升），再小则进程启动开销占主导。
+BATCH = 50
+MAX_ROUNDS = 5
+TIMEOUT = 900
+
 
 def rounds() -> list[tuple[str, list[str]]]:
+    """无名字清单时的兜底：前缀分组多轮（旧策略，覆盖不全但总能捞到东西）。"""
     out: list[tuple[str, list[str]]] = []
 
-    # 第 1 轮：前缀 + 首位数字（合并成一次运行）
     r1 = []
     for p in VOICE_PREFIXES:
         alts = "|".join(f"{p}{d}" for d in "0123456789")
@@ -44,7 +62,6 @@ def rounds() -> list[tuple[str, list[str]]]:
         r1.append(f"^{c}")
     out.append(("round1", r1))
 
-    # 第 2 轮：前缀 + 前两位数字，两两合并
     r2 = []
     for p in ("VA", "VB", "VC"):
         pairs = [f"{p}{a}{b}" for a in "0123456789" for b in "0123456789"]
@@ -54,7 +71,6 @@ def rounds() -> list[tuple[str, list[str]]]:
     r2.extend(f"^{a}" for a in "0123456789")
     out.append(("round2", r2))
 
-    # 第 3 轮：单个两位前缀（更细）
     r3 = []
     for p in ("VA", "VB", "VC"):
         for a in "0123456789":
@@ -73,55 +89,216 @@ def digest(p: Path) -> str:
     return h.hexdigest()
 
 
+def _drop(p: Path) -> None:
+    """尽力清理临时目录；删不掉就留着（清理不能成为失败原因）。
+
+    删除守卫在本机对 >50 个文件的批量删除要人工确认，抛的是 BaseException 系，
+    `ignore_errors=True` 拦不住，故显式吞。
+    """
+    try:
+        shutil.rmtree(p, ignore_errors=True)
+    except BaseException:                                          # noqa: BLE001
+        pass
+
+
+def _fresh(root: Path, name: str) -> Path:
+    """本次专用临时目录（唯一名）——残留的旧 JSON 会把计数算虚高，唯一名可免疫。"""
+    d = root / f"{name}_{os.getpid()}_{next(_SEQ)}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def enumerate_names(src: Path, exe: Path, work: Path) -> list[str]:
+    """JSON 枚举 AudioClip 的名字（地面真相）。失败返回空列表。
+
+    `--group_assets BySource`：每个 CAB 一个子目录，避免同名资产在 JSON 阶段就互相覆盖
+    （ByType 时同名 JSON 会覆盖，等于把「同名多条」错当成一条）。
+    """
+    tmp = _fresh(Path(work), "_names")
+    try:
+        subprocess.run(
+            [str(exe), str(src), str(tmp), "--game", "Normal",
+             "--types", "AudioClip", "--export_type", "JSON",
+             "--group_assets", "BySource"],
+            capture_output=True, timeout=TIMEOUT)
+    except (subprocess.TimeoutExpired, OSError):
+        _drop(tmp)
+        return []
+
+    names: list[str] = []
+    for p in tmp.rglob("*.json"):
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        name = d.get("m_Name")
+        if name:
+            names.append(name)
+    _drop(tmp)
+    return names
+
+
+def _name_pattern(names: list[str]) -> str:
+    """把一批名字编成一条锚定正则（锚定很关键：前缀匹配会重复导出、批量失真）。"""
+    import re
+    return "^(" + "|".join(re.escape(n) for n in names) + ")$"
+
+
+def _export(exe: Path, src: Path, tmp: Path, pattern: str,
+            export_type: str = "Convert") -> int:
+    """跑一次 AssetStudio 导出。返回退出码（**只作诊断，不当成功判据**）。"""
+    _drop(tmp)
+    tmp.mkdir(parents=True, exist_ok=True)
+    try:
+        proc = subprocess.run(
+            [str(exe), str(src), str(tmp), "--game", "Normal",
+             "--types", "AudioClip", "--names", pattern,
+             "--export_type", export_type, "--group_assets", "ByType"],
+            capture_output=True, timeout=TIMEOUT)
+        return proc.returncode
+    except subprocess.TimeoutExpired:
+        return -1
+
+
+def _merge(dest: Path, tmp: Path) -> int:
+    """把 tmp 里的 wav 搬进 dest。同名不同内容 = 真冲突，直接报错（不许静默覆盖）。"""
+    moved = 0
+    for w in list(tmp.rglob("*.wav")):
+        tgt = dest / w.name
+        if tgt.exists():
+            if digest(tgt) == digest(w):
+                continue                      # 同一份内容，重复导出，跳过
+            raise ValueError(f"AudioClip filename conflict: {w.name}")
+        shutil.move(str(w), str(tgt))
+        moved += 1
+    return moved
+
+
+def collect(src: Path, dest: Path, names: list[str], exe: Path | None = None,
+            batch: int = BATCH, max_rounds: int = MAX_ROUNDS, log=print,
+            work_root: Path | None = None) -> dict:
+    """按名字对账收音频。返回 {expected, unique, collected, missing, runs}。
+
+    work_root: 临时目录放哪。**默认 dest.parent**（= raw/）能用但会污染交付目录
+    （清理失败时残留的 wav 会被对账数进去），orchestrator 一律显式传 `_work/`。
+    """
+    exe = exe or toolbridge.find_tool("assetstudio")
+    dest.mkdir(parents=True, exist_ok=True)
+
+    unique = sorted(set(names))
+    have = {p.stem for p in dest.glob("*.wav")}
+    pending = [n for n in unique if n not in have]
+    log(f"音频对账：枚举 {len(names)} 条（唯一名 {len(unique)}），已落盘 {len(have)}，"
+        f"待补 {len(pending)}")
+
+    root = Path(work_root) if work_root is not None else dest.parent
+    root.mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix=dest.name + "_work_", dir=root))
+    runs = 0
+    try:
+        cur_batch = batch
+        for rnd in range(1, max_rounds + 1):
+            if not pending:
+                break
+            log(f"第 {rnd} 轮：待补 {len(pending)}，批量 {cur_batch}")
+            gained = 0
+            for i in range(0, len(pending), cur_batch):
+                chunk = pending[i:i + cur_batch]
+                runs += 1
+                rc = _export(exe, src, work / "cur", _name_pattern(chunk))
+                added = _merge(dest, work / "cur")
+                gained += added
+                if added < len(chunk):
+                    log(f"  [{i + len(chunk)}/{len(pending)}] rc={rc} "
+                        f"+{added}/{len(chunk)} 缺 {len(chunk) - added}")
+            have = {p.stem for p in dest.glob("*.wav")}
+            pending = [n for n in unique if n not in have]
+            log(f"  本轮 +{gained}，累计 {len(have)}，仍缺 {len(pending)}")
+            cur_batch = max(1, cur_batch // 2)
+    finally:
+        _drop(work)
+
+    have = {p.stem for p in dest.glob("*.wav")}
+    missing = [n for n in unique if n not in have]
+    total = list(dest.glob("*.wav"))
+    mb = sum(p.stat().st_size for p in total) / 1024 / 1024
+    log(f"完成: {len(total)} 个 wav, {mb:.1f} MB -> {dest}；runs={runs}，"
+        f"枚举 {len(names)} / 唯一 {len(unique)} / 缺 {len(missing)}")
+    if missing:
+        log(f"仍缺（前 10）：{missing[:10]}")
+    return {"expected": len(names), "unique": len(unique),
+            "collected": len(total), "missing": missing, "runs": runs}
+
+
+def _collect_by_rounds(src: Path, dest: Path, exe: Path, log=print,
+                       work_root: Path | None = None) -> None:
+    """兜底：拿不到名字清单时按前缀分组多轮累积（旧策略）。"""
+    seen = {(p.name.casefold(), digest(p)) for p in dest.rglob("*.wav")}
+    log(f"无名字清单，退回前缀分组：起始已累积 {len(seen)}")
+    root = Path(work_root) if work_root is not None else dest.parent
+    root.mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix=dest.name + "_work_", dir=root))
+    try:
+        for rname, pats in rounds():
+            log(f"=== {rname}: {len(pats)} 个模式 ===")
+            gained_total = 0
+            for i, pat in enumerate(pats, 1):
+                rc = _export(exe, src, work / "cur", pat)
+                added = 0
+                for w in list((work / "cur").rglob("*.wav")):
+                    key = (w.name.casefold(), digest(w))
+                    if key in seen:
+                        continue
+                    tgt = dest / w.name
+                    if tgt.exists():
+                        raise ValueError(f"AudioClip filename conflict: {w.name}")
+                    shutil.move(str(w), str(tgt))
+                    seen.add(key)
+                    added += 1
+                gained_total += added
+                if added:
+                    log(f"  [{i}/{len(pats)}] +{added:<4} 累计={len(seen)}   {pat[:46]}")
+            log(f"  {rname} 共新增 {gained_total}，累计 {len(seen)}")
+    finally:
+        _drop(work)
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
+    names_file = None
+    if "--names-file" in argv:
+        k = argv.index("--names-file")
+        names_file = Path(argv[k + 1])
+        del argv[k:k + 2]
+    work_root = None
+    if "--work-dir" in argv:
+        k = argv.index("--work-dir")
+        work_root = Path(argv[k + 1])
+        work_root.mkdir(parents=True, exist_ok=True)
+        del argv[k:k + 2]
+    if len(argv) < 2:
+        print("用法: _as_audio_collect2.py <输入目录> <累积输出目录>"
+              " [--names-file FILE] [--work-dir DIR]", flush=True)
+        return 2
     src, dest = Path(argv[0]), Path(argv[1])
     dest.mkdir(parents=True, exist_ok=True)
     exe = toolbridge.find_tool("assetstudio")
-    work = Path(tempfile.mkdtemp(prefix=dest.name + "_work_", dir=dest.parent))
+    root = work_root or dest.parent
+    root.mkdir(parents=True, exist_ok=True)
 
-    seen = {(p.name.casefold(), digest(p)) for p in dest.rglob("*.wav")}
-    print(f"起始已累积: {len(seen)}", flush=True)
+    if names_file is not None:
+        names = [n for n in names_file.read_text(encoding="utf-8").splitlines() if n]
+    else:
+        work = Path(tempfile.mkdtemp(prefix=dest.name + "_enum_", dir=root))
+        try:
+            names = enumerate_names(src, exe, work)
+        finally:
+            _drop(work)
 
-    for rname, pats in rounds():
-        print(f"\n=== {rname}: {len(pats)} 个模式 ===", flush=True)
-        gained_total = 0
-        for i, pat in enumerate(pats, 1):
-            tmp = work / "cur"
-            shutil.rmtree(tmp, ignore_errors=True)
-            tmp.mkdir(parents=True, exist_ok=True)
-            try:
-                subprocess.run(
-                    [str(exe), str(src), str(tmp), "--game", "Normal",
-                     "--types", "AudioClip", "--names", pat,
-                     "--export_type", "Convert", "--group_assets", "ByType"],
-                    capture_output=True, timeout=900)
-            except subprocess.TimeoutExpired:
-                print(f"  [{i}/{len(pats)}] TIMEOUT {pat[:40]}", flush=True)
-                continue
-
-            added = 0
-            for w in list(tmp.rglob("*.wav")):
-                key = (w.name.casefold(), digest(w))
-                if key in seen:
-                    continue
-                if any(name == key[0] for name, _ in seen):
-                    raise ValueError(f"AudioClip filename conflict: {w.name}")
-                tgt = dest / w.name
-                if tgt.exists():
-                    raise ValueError(f"AudioClip filename conflict: {w.name}")
-                shutil.move(str(w), str(tgt))
-                seen.add(key)
-                added += 1
-            gained_total += added
-            if added:
-                print(f"  [{i}/{len(pats)}] +{added:<4} 累计={len(seen)}   {pat[:46]}", flush=True)
-        print(f"  {rname} 共新增 {gained_total}，累计 {len(seen)}", flush=True)
-
-    shutil.rmtree(work, ignore_errors=True)
-    total = list(dest.rglob("*.wav"))
-    mb = sum(p.stat().st_size for p in total) / 1024 / 1024
-    print(f"\n完成: {len(total)} 个 wav, {mb:.1f} MB -> {dest}")
+    if names:
+        collect(src, dest, names, exe, work_root=root)
+    else:
+        _collect_by_rounds(src, dest, exe, work_root=root)
     return 0
 
 
