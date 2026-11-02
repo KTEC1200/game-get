@@ -60,7 +60,7 @@
 - **编排器：`orchestrator.py`**（2026-10-29，软件化第 3 步，**主入口**）—— 一条命令跑完
   `detect → case-lookup → extract → postprocess → verify → manifest`：
   `python orchestrator.py <游戏目录> --out <输出目录> [--allow-gui] [--reuse-raw DIR] [--no-verify] [--dry-run]`。
-  已接 **Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD / ExHIBIT / CatSystem2 / Unity 八条链路**（其余引擎判得出就退出码 2，不假装成功）。
+  已接 **Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD / ExHIBIT / CatSystem2 / Unity / Artemis 九条链路**（其余引擎判得出就退出码 2，不假装成功）。
   **兄弟链路 in-process（2026-11-02，打包必修第 1 条）**：7 个兄弟脚本统一
   `main(argv: list[str] | None = None) -> int`（内部不 `sys.exit`），经 **`_run_sibling(mod, argv)`**
   进程内调用（冻结包里 `sys.executable` 拉不了脚本，§19.2）+ orchestrator 顶部**静态 import** 全部
@@ -77,7 +77,9 @@
   （图片 4306/4306、音频 7031/7031、视频 9/9，媒体 857.4 分钟，全链 578.8s 退出码 0）、
   `夕凪荘的S级的女朋友们` 11476 条目 0 差（`.gyu` 2184 + `.grp` 9185 + 散装 107；
   图片 2184/2184、音频 9291/9291、视频 1/1，媒体 1072.0 分钟，全链 930.3s 退出码 0；
-  **22 个加密 BGM 显式排除并报出**）。
+  **22 个加密 BGM 显式排除并报出**）、
+  `Toshiue Kanojo`（Artemis，2026-11-02）3 个 .pfs 3977 条 + 散装 31 = 4008 条目 0 差
+  （图片 1007/1007、音频 2597/2597、视频 1/1，媒体 389.3 分钟，全链 235.5s 退出码 0）。
   **待转格式按扩展名分派**：`.tlg`→`tlg2png`、`.pna`→`_pna_carve.carve()`；两者都列在
   `manifest.CONVERTIBLE`（**唯一出处**，orchestrator 直接引用，别在两边各写一份，否则
   「交付了多少」两边数字对不上）。一个 `.pna` 出多帧，所以 postprocess 另记 `frames_out`。
