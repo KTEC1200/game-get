@@ -19,7 +19,7 @@
 > （master 全历史至 `2d64bac`），remote 已建、tracking 已设。
 > `.gitignore` 已排除 `_extracted/`、`packaging/Output/`、`_spike_pkg/dist|build/` 等大产物。
 
-> **2026-11-02 测试反馈**：随包 GARbro 的 .NET 插件加载修复仅适用于可信工具目录；Unity 样本的音频收集未对账通过，KiriKiri 的 GUI 索引兜底尚无真机端到端验证。案例索引已保留旧案例并加入 Toshiue。实测和限制见 `verified-findings.md`。
+> **2026-11-02 测试反馈**：随包 GARbro 的 .NET 插件加载修复仅适用于可信工具目录；Unity 样本的音频收集未对账通过，KiriKiri 索引兜底已用真实注入新索引和模拟窗口缺失提取 2562 条，自然窗口缺失尚未复现。案例索引已保留旧案例并加入 Toshiue。实测和限制见 `verified-findings.md`。
 
 > **🚀 接手顺序（新会话只做这三步）**
 > ① 读本文档「状态 / 下一步 / ⚠️ 五个坑」；
