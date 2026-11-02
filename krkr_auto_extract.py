@@ -23,6 +23,8 @@ from ctypes import wintypes
 from datetime import datetime
 from pathlib import Path
 
+import _xp3_carve
+
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
 user32.SetProcessDPIAware()  # 本机 200% 缩放：此后全部坐标为物理像素
@@ -321,7 +323,27 @@ def main(argv: list[str] | None = None) -> int:
             subprocess.run(["taskkill", "/F", "/PID", str(p)], capture_output=True)
         time.sleep(1.0)
     ui = find_ui_window(pid)
-    assert ui, "KrkrExtract UI window not found (error dialog? wrong path?)"
+    if not ui:
+        archives = sorted(Path(stage).glob("*.xp3"))
+        if only:
+            archives = [p for p in archives if p.name.lower() in only]
+        pairs = [(p, Path(str(p) + ".index")) for p in archives]
+        if not pairs or any(not index.is_file() for _, index in pairs):
+            raise RuntimeError("KrkrExtract UI window not found and complete XP3 index dumps unavailable")
+        outdir = Path(stage) / "KrkrExtract_Output" / "data"
+        try:
+            for archive, index in pairs:
+                count = _xp3_carve.extract(archive, index, outdir / archive.stem)
+                log("index carve %s: %d files verified" % (archive.name, count))
+        except (ValueError, OSError, KeyError) as exc:
+            raise RuntimeError("XP3 index carve failed: %s" % exc) from exc
+        if args.out:
+            dst = Path(args.out) / "KrkrExtract_Output"
+            if dst.exists():
+                shutil.rmtree(dst)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(outdir.parent), str(dst))
+        return 0
     urc = wintypes.RECT()
     user32.GetWindowRect(ui, ctypes.byref(urc))
     log("injected pid=%d ui=0x%X rect=(%d,%d,%d,%d)" % (pid, ui, urc.left, urc.top, urc.right, urc.bottom))

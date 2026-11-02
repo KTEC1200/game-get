@@ -155,6 +155,13 @@ Unity 侧：`_as_aud_*` / `_as_stage` / `_t_*` / `_as_audio` / `_fsb_probe` / `_
 Ren'Py 侧：`_rpa_stage` / `_rpa_patch_stage` / `_rpa_arch.txt` / `_rpa_patch.txt` / `_rpa_media*.csv` / `_vframe*.png`。
 各条结论与数据**均已转写进本文档与 `verified-findings.md`**，无需原始中间产物。
 
+## 最新进度（2026-11-02，三项反馈修复中）
+
+- Unity 临时目录已迁到输出侧；回归测试覆盖，真实 Happiness Double Room 尚未完整复跑。
+- Artemis 已接入规则和提取链；Toshiue 实际全链退出码 0，4008/4008 对账零差，图片 1007、音频 2597、视频 1 均通过验收。
+- KiriKiri 新增索引 dump 提取兜底，仅支持经校验的单段明文条目；目标样本本次 GARbro 直接全链成功（2562/2562，图片 902、音频 1577 全通过），未触发兜底，窗口失败后自动提取仍未实证。
+- 当前变更未完成交付、案例库同步或提交；证据和限制见 verified-findings.md。
+
 ## 状态
 
 - ✅ **`galgame_dispatch.py`** — dry-run 分派器，纯规则、只读、仅标准库。引擎指纹在

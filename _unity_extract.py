@@ -15,10 +15,12 @@ Convert 导出数对账都走 expected_counts()，别另写一份。
 AudioClip 若是 FSB5 容器，单次 Convert 只能导出约 30%，
 需要多轮 --names 分组累积（复用 _as_audio_collect2.py 的思路）。
 """
+import importlib
 import json
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 UNITY_TYPES = ("Texture2D", "Sprite", "AudioClip")
@@ -48,16 +50,53 @@ def _run_as(data_dir: Path, tmp: Path, type_name: str, export_type: str,
     return subprocess.run(cmd, capture_output=True, timeout=1800)
 
 
-def expected_counts(data_dir: Path, as_exe: Path | None = None) -> dict:
+def _run_audio_collect(script: Path, data_dir: Path, audio_dir: Path) -> int:
+    """in-process 调用 `_as_audio_collect2.py`（它已是 `main(argv)->int` 形态，§19.2）。
+
+    原来走 `subprocess.run([sys.executable, script, ...])`：冻结包里 sys.executable 是
+    orchestrator.exe，等于拿未知参数重启自身（§19.2 第 1 条禁的就是这个）。
+    """
+    try:
+        try:
+            mod = importlib.import_module("_as_audio_collect2")   # orchestrator 已静态 import
+        except ImportError:
+            spec = importlib.util.spec_from_file_location("_as_audio_collect2", script)
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules["_as_audio_collect2"] = mod
+            spec.loader.exec_module(mod)
+        return int(mod.main([str(data_dir), str(audio_dir)]))
+    except Exception as exc:                                       # noqa: BLE001
+        print(f"[WARN] _as_audio_collect2 in-process 失败：{type(exc).__name__}: {exc}",
+              flush=True)
+        return 1
+
+
+def _scratch_root(tmp_root: Path | None, default: Path) -> Path:
+    """临时目录根：**绝不能落在游戏目录里**（2026-11-02 Happiness Double Room 实测）。
+
+    原实现把 `_json_<T>` 建在 `data_dir.parent`（= 游戏根目录），遇到只读/受保护的游戏目录
+    直接 `PermissionError: [WinError 5]`，Unity 链路在「数 JSON」这一步就崩，
+    与 AssetStudio / Unity 版本无关。调用方显式传 `ctx.work_dir` 下的子目录；
+    裸调用退到 `default`。
+    """
+    return Path(tmp_root) if tmp_root is not None else Path(default)
+
+
+def expected_counts(data_dir: Path, as_exe: Path | None = None,
+                    tmp_root: Path | None = None) -> dict:
     """AssetStudio JSON 枚举 = 地面真相（唯一出处）。
 
     每种类型跑一次 JSON 导出，数 JSON 文件数。
     返回 {'by_type': {type: count}, 'total': sum, 'unlistable': [], 'types': [...]}
+
+    tmp_root: 临时目录**根**（裸调用默认系统 temp）。绝不写游戏目录——见 `_scratch_root()`。
     """
     as_exe = as_exe or _as_exe()
+    root = _scratch_root(tmp_root, Path(tempfile.gettempdir()) / "unity_extract_json")
+    root.mkdir(parents=True, exist_ok=True)
     by_type = {}
     for t in UNITY_TYPES:
-        tmp = data_dir.parent / f"_json_{t}"
+        tmp = root / f"_json_{t}"
         shutil.rmtree(tmp, ignore_errors=True)
         tmp.mkdir(parents=True, exist_ok=True)
         proc = _run_as(data_dir, tmp, t, "JSON", as_exe)
@@ -71,17 +110,23 @@ def expected_counts(data_dir: Path, as_exe: Path | None = None) -> dict:
     }
 
 
-def extract_all(data_dir: Path, out_dir: Path, as_exe: Path | None = None) -> dict:
+def extract_all(data_dir: Path, out_dir: Path, as_exe: Path | None = None,
+                tmp_root: Path | None = None) -> dict:
     """Convert 导出 + 复制到 out_dir/<category>/。
 
     返回 {'by_type': {type: count}, 'total': sum, 'archives': [...]}
+
+    tmp_root: 临时目录**根**（裸调用默认 `<out_dir>/../_scratch`：输出侧、不在游戏目录，
+    也**不在 out_dir（raw/）里**——否则会被对账当成产物数进去）。
     """
     as_exe = as_exe or _as_exe()
+    root = _scratch_root(tmp_root, out_dir.parent / "_scratch")
+    root.mkdir(parents=True, exist_ok=True)
     by_type = {}
     archives = []
     for t in UNITY_TYPES:
         cat = UNITY_CATEGORIES[t]
-        tmp = out_dir.parent / f"_conv_{t}"
+        tmp = root / f"_conv_{t}"
         shutil.rmtree(tmp, ignore_errors=True)
         tmp.mkdir(parents=True, exist_ok=True)
         proc = _run_as(data_dir, tmp, t, "Convert", as_exe)
@@ -171,16 +216,15 @@ def main(argv=None) -> int:
         audio_dir = out_dir / "Audio"
         script = Path(__file__).parent / "_as_audio_collect2.py"
         if script.exists():
-            proc = subprocess.run(
-                [sys.executable, str(script), str(data_dir), str(audio_dir)],
-                capture_output=True, timeout=3600)
-            if proc.returncode == 0:
+            # in-process：冻结包里 sys.executable = orchestrator.exe（§19.2）
+            rc = _run_audio_collect(script, data_dir, audio_dir)
+            if rc == 0:
                 audio_files = list(audio_dir.rglob("*.wav"))
                 got["by_type"]["AudioClip"] = len(audio_files)
                 got["total"] = sum(got["by_type"].values())
                 print(f"[音频] 多轮累积后：{len(audio_files)} 个 wav", flush=True)
             else:
-                print(f"[WARN] _as_audio_collect2.py 失败（rc={proc.returncode}）", flush=True)
+                print(f"[WARN] _as_audio_collect2.py 失败（rc={rc}）", flush=True)
 
     total_ok = got["total"]
     total_fail = 0

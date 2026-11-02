@@ -1762,6 +1762,40 @@ def test_unity_extract_reconciles_json_vs_convert(tmp_path, monkeypatch):
     assert "对账 0 差" in st.detail
 
 
+def test_unity_scratch_never_writes_into_game_dir(tmp_path, monkeypatch):
+    """回归（2026-11-02 Happiness Double Room，WinError 5）：临时目录**绝不能**落在游戏目录里。
+
+    实测：`data_dir.parent / "_json_Texture2D"` 在只读/受保护的游戏目录下 mkdir 直接
+    `PermissionError: [WinError 5]`，Unity 链路在「数 JSON」之前就崩（与 AssetStudio、Unity
+    版本无关）。本测试锁死「所有传给 AssetStudio 的临时目录都在 work_dir 下、且不在 game_dir 下」。
+    """
+    game = tmp_path / "My Game"
+    game.mkdir()
+    data = game / "My Game_Data"
+    data.mkdir()
+    ctx = _ctx(tmp_path, game_dir=game)
+
+    seen = []
+
+    def fake_run(cmd, **kw):
+        import subprocess
+        seen.append(Path(cmd[2]))
+        if "--export_type" in cmd and "JSON" in cmd:
+            d = Path(cmd[2])
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "a.json").write_text("{}")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr(orch.tb, "find_tool", lambda key: Path("/fake/assetstudio.exe"))
+
+    orch.stage_extract_unity(ctx)
+    assert seen, "没有跑到 AssetStudio（测试本身失效）"
+    for p in seen:
+        assert game not in p.parents and p != game, "临时目录落进游戏目录: %s" % p
+        assert ctx.out_dir in p.parents, "临时目录应在输出目录下: %s" % p
+
+
 def test_unity_extract_fails_on_mismatch(tmp_path, monkeypatch):
     """JSON 枚举到但 Convert 没导出 → 对账失败。"""
     game = tmp_path / "My Game"

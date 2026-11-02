@@ -620,6 +620,87 @@
           "id": "cs2_int_magic"
         }
       ]
+    },
+    {
+      "engine": "Artemis",
+      "signals": [
+        {
+          "id": "artemis_runtime",
+          "weight": 70,
+          "when": {
+            "any_file": [
+              "iarsys64.dll",
+              "iarsys32.dll",
+              "iarsys.dll"
+            ]
+          },
+          "detail": "`{files}` 存在（Artemis / iMel 运行时）",
+          "facts": {
+            "artemis_pfs_count": {
+              "count_any": [
+                ".pfs",
+                ".000",
+                ".001",
+                ".002",
+                ".003"
+              ]
+            }
+          }
+        },
+        {
+          "gate": "artemis_runtime",
+          "weight": 20,
+          "when": {
+            "count_any_ext": [
+              ".pfs"
+            ]
+          },
+          "detail": "发现 {n} 个 `.pfs` 封包",
+          "id": "artemis_pfs"
+        },
+        {
+          "id": "artemis_pfs_magic",
+          "weight": 70,
+          "when": {
+            "all": [
+              {
+                "not": {
+                  "any_file": [
+                    "iarsys64.dll",
+                    "iarsys32.dll",
+                    "iarsys.dll"
+                  ]
+                }
+              },
+              {
+                "magic_any": {
+                  "exts": [
+                    ".pfs",
+                    ".000",
+                    ".001",
+                    ".002",
+                    ".003"
+                  ],
+                  "hex": "706638",
+                  "limit": 5
+                }
+              }
+            ]
+          },
+          "detail": "`{magicfile}` 头部为 `pf8`（Artemis 封包，已确认）",
+          "facts": {
+            "artemis_pfs_count": {
+              "count_any": [
+                ".pfs",
+                ".000",
+                ".001",
+                ".002",
+                ".003"
+              ]
+            }
+          }
+        }
+      ]
     }
   ]
 }

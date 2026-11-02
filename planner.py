@@ -103,7 +103,7 @@ def _repo_root() -> Path:
 # `--help`/docstring/源码）。凭想象写参数等于给用户一条必然失败的命令。
 
 IMPLEMENTED_CHAINS = ("Ren'Py", "KiriKiri", "RPG Maker", "Yu-Ris", "AdvHD", "ExHIBIT",
-                      "CatSystem2", "Unity")
+                      "CatSystem2", "Unity", "Artemis")
 
 
 def build(rep: Any) -> Plan | None:
@@ -361,6 +361,28 @@ def _catsystem2(engine: str, game: Path, archives: dict, out: Path) -> Plan:
     return p
 
 
+def _artemis(engine: str, game: Path, archives: dict, out: Path) -> Plan:
+    pfss = archives.get(".pfs", [])
+    p = _plan_orchestrator(
+        engine, game, archives, out,
+        "_pfs_extract.py",
+        _py("_pfs_extract.py") + [str(game), str(out / "raw")],
+        "单工具兜底：`_pfs_extract.py` 一次解目录下所有 pf8/pf6/pf2（索引 + SHA1(索引) 循环 XOR）；"
+        "orchestrator 会自动跑它，这里给的是「只想单独解包」时的命令",
+    )
+    p.notes.extend([
+        "每包一个子目录 `raw/<归档文件名>/`：实测**跨包重名 70 条**，平铺会让 .000/.001 覆盖 .pfs 的同名条目",
+        "`.pfs.000/.001` 可能是独立 pf8 归档，按文件魔数和索引识别",
+        "GARbro 能解 pf8（这不是坑 1 的假阴性）；自研工具的价值是纳入统一对账与交付口径",
+        "解密即成品（PNG/OGG 明文落盘）→ raw == final，没有待转格式",
+    ])
+    if pfss:
+        p.notes.insert(0, f"找到 {len(pfss)} 个 .pfs：" + "、".join(x.name for x in pfss[:6]))
+    else:
+        p.notes.append("没找到 .pfs —— 确认游戏根目录（.pfs 与 exe 同级）")
+    return p
+
+
 _BUILDERS = {
     "Ren'Py": _renpy,
     "KiriKiri": _kirikiri,
@@ -371,6 +393,7 @@ _BUILDERS = {
     "Yu-Ris": _yuris,
     "ExHIBIT": _exhibit,
     "CatSystem2": _catsystem2,
+    "Artemis": _artemis,
 }
 
 

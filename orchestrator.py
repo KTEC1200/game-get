@@ -63,6 +63,7 @@ import _grp_extract as grp             # noqa: E402  （复用它的 TOC 解析�
 import _cs2_int_extract as cs2         # noqa: E402  （复用它的地面真相/魔数识别，别抄第二份）
 import _unity_extract as unity         # noqa: E402  （复用它的 JSON 枚举/Convert 导出，别抄第二份）
 import _as_audio_collect2              # noqa: E402  （冻结包少了它音频只剩 ~30%，§19.1）
+import _pfs_extract as pfs              # noqa: E402  （Artemis 的索引解析/落地，地面真相唯一出处）
 
 if sys.platform == "win32":
     for _s in (sys.stdout, sys.stderr):
@@ -90,7 +91,7 @@ AV_EXT = {".mp4", ".mkv", ".avi", ".webm", ".mov", ".wmv", ".flv", ".mpg", ".mpe
 
 #: 已实现完整链路的引擎（其余判得出来但没链路 → 退出码 2）
 IMPLEMENTED = ("Ren'Py", "KiriKiri", "RPG Maker", "Yu-Ris", "AdvHD", "ExHIBIT",
-               "CatSystem2", "Unity")
+               "CatSystem2", "Unity", "Artemis")
 
 
 # ---------------------------------------------------------------- 结构
@@ -427,8 +428,8 @@ def stage_extract_kirikiri(ctx: Ctx) -> Stage:
         ctx.log("extract", f"$ krkr_auto_extract.py rc={rc}\n{out}")
         # krkr_auto_extract 产出 <out>/KrkrExtract_Output/{data,png}
         kout = ctx.out_dir / "KrkrExtract_Output"
-        if not kout.is_dir():
-            st.detail = f"GUI 链路没有产出 KrkrExtract_Output (rc={rc})"
+        if rc != 0 or not kout.is_dir():
+            st.detail = f"GUI 链路失败或没有产出 KrkrExtract_Output (rc={rc})"
             st.seconds = time.time() - t0
             return st
         data_dir = kout / "data" if (kout / "data").is_dir() else kout
@@ -1120,7 +1121,9 @@ def stage_extract_unity(ctx: Ctx) -> Stage:
         return st
 
     as_exe = tb.find_tool("assetstudio")
-    exp = unity.expected_counts(data_dir, as_exe)
+    # 临时目录根必须显式给：裸默认会退到系统 temp，而**绝不能**落回游戏目录
+    # （2026-11-02 Happiness Double Room 实测 WinError 5，见 _unity_extract._scratch_root()）
+    exp = unity.expected_counts(data_dir, as_exe, tmp_root=ctx.work_dir / "unity")
     if exp["total"] == 0:
         st.detail = "AssetStudio JSON 枚举到 0 个资产"
         return st
@@ -1129,7 +1132,7 @@ def stage_extract_unity(ctx: Ctx) -> Stage:
     archives: list[dict] = []
 
     if ctx.reuse_raw is None:
-        got = unity.extract_all(data_dir, ctx.raw_dir, as_exe)
+        got = unity.extract_all(data_dir, ctx.raw_dir, as_exe, tmp_root=ctx.work_dir / "unity")
         archives = got.get("archives", [])
 
         # Audio multi-round
@@ -1188,6 +1191,166 @@ def stage_extract_unity(ctx: Ctx) -> Stage:
     return st
 
 
+# ---------------------------------------------------------------- Artemis（pf8 / .pfs）
+
+#: Artemis 的散装媒体后缀（不在 .pfs 里的裸媒体：特典 mp3/图、电影）。
+_ARTEMIS_LOOSE_EXT = IMG_EXT | AV_EXT
+
+#: ASF/WMV 容器头 GUID（同 AdvHD 的 .dat）：Artemis 把开场电影存成 movie/*.dat。
+_ASF_GUID = bytes.fromhex("3026b2758e66cf11a6d900aa0062ce6c")
+
+
+def _artemis_loose_media(game_dir: Path) -> list[tuple[Path, Path]]:
+    """散装媒体，返回 [(源, 相对 raw 的目标)]（目标一律落在 raw/loose/ 下）。
+
+    媒体本体按**扩展名**认（特典目录下就是裸 mp3/jpg）；另外 .dat 若以 ASF GUID 开头
+    （开场电影）也收，落盘改后缀 .wmv——**只改扩展名，不转码**（与 AdvHD 的 .dat 同款）。
+    目标保持游戏内相对路径，出问题时能一眼看出它原来在哪。
+    """
+    out: list[tuple[Path, Path]] = []
+    for p in sorted(game_dir.rglob("*")):
+        if not p.is_file():
+            continue
+        ext = p.suffix.lower()
+        if ext in _ARTEMIS_LOOSE_EXT:
+            out.append((p, Path("loose") / p.relative_to(game_dir)))
+        elif ext == ".dat" and _head(p, 16) == _ASF_GUID:
+            out.append((p, (Path("loose") / p.relative_to(game_dir)).with_suffix(".wmv")))
+    return out
+
+
+def _artemis_expected(game_dir: Path, *,
+                      raw_dir: Path | None = None) -> tuple[int, bool, list[dict]]:
+    """算 Artemis 的期望落盘数：Σ 归档条目数 + 散装媒体个数。
+
+    条目数来自 pfs.expected_counts()（**地面真相唯一出处**，别在这儿重解析索引）。
+    每项明细带上 identity_ok（字节恒等式 7+index_size+Σsize==文件大小）——索引偏移
+    或 key 传输错了它先炸，对账只是第二道闸。
+    raw_dir 给了就同时把 got 填上（按 raw/<归档文件名>/ 数文件）。
+    """
+    exp = pfs.expected_counts(game_dir)
+    per_archive: list[dict] = []
+    expected = 0
+    listable = True
+    for name, n in sorted(exp["by_arc"].items()):
+        got = None
+        if raw_dir is not None:
+            dest = raw_dir / name
+            got = _count(dest).total if dest.is_dir() else 0
+        expected += n
+        per_archive.append({"archive": name, "expected": n, "got": got,
+                            "identity_ok": exp["identity"].get(name), "listable": True})
+    for name in exp["unlistable"]:
+        listable = False
+        per_archive.append({"archive": name, "expected": None, "got": None,
+                            "listable": False})
+    loose = _artemis_loose_media(game_dir)
+    got_loose = None
+    if raw_dir is not None:
+        got_loose = sum(1 for _src, rel in loose if (raw_dir / rel).exists())
+    expected += len(loose)
+    per_archive.append({"archive": "(散装 mp3/jpg/ASF .dat)", "expected": len(loose),
+                        "got": got_loose, "listable": True})
+    return expected, listable, per_archive
+
+
+def stage_extract_artemis(ctx: Ctx) -> Stage:
+    """Artemis Engine（pf8/pf6/pf2）：索引 + SHA1(索引) 循环 XOR 解密 + 散装媒体复制。
+
+    地面真相 = pfs.expected_counts()（自研 _pfs_extract.py 逆向后解析）。
+    对账做**两层**：逐包（raw/<归档文件名>/ 的文件数 vs 索引条目数）与总计——
+    三个包之间**有重名**（本作实测 70 个），总数对上也可能互相盖掉，
+    所以每个归档各落一个子目录：平铺会让后一个包覆盖前一个包（落盘 3977 变 3907，
+    而总数看着「对」）。
+
+    解密是内联在落盘里的：**raw 就是成品**（png/ogg 原样），所以 raw == final、converted 为空。
+    --reuse-raw 时不重新解包，但**照旧算同一份地面真相并对账**（跳的是解包不是验收）。
+    """
+    st = Stage("extract")
+    t0 = time.time()
+    exp = pfs.expected_counts(ctx.game_dir)
+    loose = _artemis_loose_media(ctx.game_dir)
+    if not exp["arcs"] and not loose:
+        st.detail = "顶层既没有 pf8/pf6/pf2 归档，也没有散装媒体"
+        st.seconds = time.time() - t0
+        return st
+
+    # 先算地面真相：失败路径也要能报出「期望多少」，否则对账失败时看不出差在哪。
+    expected, listable, per_archive = _artemis_expected(ctx.game_dir)
+
+    if ctx.reuse_raw:
+        # 复用模式：不重新解包，但**仍然算地面真相** —— 对账不能因为跳步就失效。
+        st.skipped = True
+        st.ok = True
+        st.detail = f"复用已有 raw: {ctx.reuse_raw}"
+        actual = _count(ctx.raw_dir).total
+        expected, listable, per_archive = _artemis_expected(ctx.game_dir, raw_dir=ctx.raw_dir)
+        st.data = {"reused_from": str(ctx.reuse_raw), "actual_total": actual,
+                   "archives": per_archive}
+        st.seconds = time.time() - t0
+        if not listable:
+            st.ok = False
+            st.data["reason"] = "有归档索引解析失败，无完整地面真相，未对账"
+            st.detail = f"复用已有 raw，{actual} 个文件；有归档列不出条目，未对账"
+            return st
+        st.data["expected_total"] = expected
+        if actual != expected or any(a["expected"] != a["got"] for a in per_archive):
+            st.detail = f"复用产物对账失败：索引 {expected} vs 落盘 {actual}，请检查逐包明细"
+            st.ok = False
+            return st
+        st.detail = f"复用已有 raw，对账 {expected} == {actual}"
+        return st
+
+    ctx.raw_dir.mkdir(parents=True, exist_ok=True)
+    rc, out = _run_sibling(pfs, [str(ctx.game_dir), str(ctx.raw_dir),
+                                 "--manifest",
+                                 str(ctx.work_dir / "pfs.manifest.json")])
+    tail = out.strip().splitlines()[-8:]
+    for line in tail:
+        ctx.log("extract", "  " + line)
+    if rc != 0:
+        st.detail = f"_pfs_extract.py 失败（rc={rc}）：{tail[-1] if tail else ''}"
+        st.data = {"archives": per_archive}
+        st.seconds = time.time() - t0
+        return st
+
+    # 散装媒体 → raw/loose/<游戏内相对路径>
+    for src, rel in loose:
+        dst = ctx.raw_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if not dst.exists():
+            shutil.copy2(src, dst)
+        ctx.log("extract", f"[媒体] {src.relative_to(ctx.game_dir)} → raw/{rel.as_posix()}")
+
+    # 跑完了再算一次，这回把 got 填上（期望值与上面同源，不会漂）
+    _e, _l, per_archive = _artemis_expected(ctx.game_dir, raw_dir=ctx.raw_dir)
+    actual_total = _count(ctx.raw_dir).total
+    mism = [f"{a['archive']}(索引 {a['expected']} vs 落盘 {a['got']})"
+            for a in per_archive
+            if a.get("listable") and a.get("got") is not None and a["got"] != a["expected"]]
+    st.data = {"mode": "static", "archives": per_archive, "loose_media": len(loose),
+               "actual_total": actual_total, "identity": exp["identity"],
+               "raw_by_ext": _count(ctx.raw_dir).by_ext}
+    st.seconds = time.time() - t0
+    if not listable:
+        # 有归档列不出，不能将不完整提取报为成功。
+        st.ok = False
+        st.data["reason"] = "有归档索引解析失败，无完整地面真相，未对账"
+        st.detail = f"落盘 {actual_total} 个文件，有归档列不出条目，未对账"
+        return st
+    st.data["expected_total"] = expected
+    if mism:
+        st.detail = "逐包对账失败：" + "；".join(mism[:3])
+        return st
+    if actual_total != expected:
+        st.detail = f"对账失败：索引 {expected} vs 落盘 {actual_total}"
+        return st
+    st.ok = True
+    st.detail = (f"{len(exp['arcs'])} 个 .pfs {exp['total']} 条 + {len(loose)} 个散装媒体，"
+                 f"{actual_total} 个文件，对账 0 差")
+    return st
+
+
 # ---------------------------------------------------------------- 阶段 3: postprocess
 
 EXTRACTORS = {
@@ -1199,6 +1362,7 @@ EXTRACTORS = {
     "ExHIBIT": "stage_extract_exhibit",
     "CatSystem2": "stage_extract_cs2",
     "Unity": "stage_extract_unity",
+    "Artemis": "stage_extract_artemis",
 }
 
 def _carve_pna(src: Path, out_dir: Path) -> int:

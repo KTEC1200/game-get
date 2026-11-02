@@ -460,7 +460,7 @@ def test_rules_file_loads():
     rs = rules.load()
     assert rs.version == 1
     assert rs.threshold == 60
-    assert len(rs.engines) == 9
+    assert len(rs.engines) == 10
 
 
 def test_rules_file_declares_its_probes():
@@ -481,7 +481,7 @@ def test_engine_order_is_stable():
     """引擎块顺序影响同分排序，锁住它防止无意重排。"""
     assert [b["engine"] for b in rules.load().engines] == [
         "Unity", "KiriKiri", "Ren'Py", "Tyrano/Electron", "RPG Maker",
-        "AdvHD", "Yu-Ris", "ExHIBIT", "CatSystem2",
+        "AdvHD", "Yu-Ris", "ExHIBIT", "CatSystem2", "Artemis",
     ]
 
 

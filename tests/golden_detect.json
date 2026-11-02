@@ -197,6 +197,29 @@
       "path": "D:\\HY\\Swipe Right for Sugar Mama Sensei",
       "score": 100
     },
+    "Toshiue Kanojo": {
+      "above_threshold": true,
+      "engine": "Artemis",
+      "expect": "Artemis",
+      "facts": {
+        "artemis_pfs_count": 4
+      },
+      "guesses": [
+        {
+          "engine": "Artemis",
+          "evidence": [
+            "+70 `iarsys64.dll` 存在（Artemis / iMel 运行时）",
+            "+20 发现 1 个 `.pfs` 封包"
+          ],
+          "score": 90
+        }
+      ],
+      "has_attention": false,
+      "has_warning": false,
+      "note_count": 0,
+      "path": "D:\\HY\\Toshiue Kanojo",
+      "score": 90
+    },
     "【PC电脑】甜蜜女友2+": {
       "above_threshold": true,
       "engine": "CatSystem2",

@@ -44,6 +44,7 @@ REAL_SAMPLES: list[tuple[str, str]] = [
     (r"D:\HY\甜蜜女友\【PC电脑】甜蜜女友2+", "CatSystem2"),
     (r"D:\HY\pork社\高慢妻陥落！！", "KiriKiri"),
     (r"D:\HY\教师催眠1", "KiriKiri"),
+    (r"D:\HY\Toshiue Kanojo", "Artemis"),
 ]
 
 

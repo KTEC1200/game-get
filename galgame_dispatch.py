@@ -129,7 +129,7 @@ def count_subdir_games(game_dir: Path, sub_dirs: list[str]) -> list[str]:
     `夕凪荘/res` 与 `userdata` 各含 0 个 exe）→ 要求「有封包 **且** 有 exe」。
     """
     # 与 scan() 的封包列表保持同一套扩展名
-    pack_exts = (".xp3", ".rpa", ".asar", ".bundle", ".arc", ".ypf", ".gyu") + CS2_INT_EXTS
+    pack_exts = (".xp3", ".rpa", ".asar", ".bundle", ".arc", ".ypf", ".gyu", ".pfs") + CS2_INT_EXTS
 
     def has_game_signature(d: Path, depth: int = 2) -> bool:
         try:
@@ -311,7 +311,7 @@ def _note_collection(game_dir: Path, inv: "rules.Inventory", rep: Report) -> Non
     的集合目录会漏判；但只认封包又会把同一游戏内部的资源目录（`res/`、`userdata/`）
     误当成独立游戏——所以必须同时要求「有自己的 exe」。
     """
-    pack_exts = (".xp3", ".rpa", ".asar", ".bundle", ".arc", ".ypf", ".gyu") + CS2_INT_EXTS
+    pack_exts = (".xp3", ".rpa", ".asar", ".bundle", ".arc", ".ypf", ".gyu", ".pfs") + CS2_INT_EXTS
     has_pack = any(p.suffix.lower() in pack_exts for p in inv.all_files) or any(
         d.endswith("_Data") for d in inv.top_dirs
     )
@@ -449,7 +449,7 @@ def scan(game_dir: Path, max_files: int = 200_000, deep: bool = False,
     return rep
 
 
-ARCHIVE_EXTS = (".xp3", ".rpa", ".asar", ".arc", ".ypf", ".gyu", ".int", ".grp")
+ARCHIVE_EXTS = (".xp3", ".rpa", ".asar", ".arc", ".ypf", ".gyu", ".pfs", ".int", ".grp")
 
 
 def _collect_archives(inv: "rules.Inventory") -> dict[str, list[Path]]:
@@ -547,6 +547,17 @@ ADVICE: dict[str, dict[str, object]] = {
             "24bpp 变体：row 必须按 `w * (bpp/8)` 算，硬编码 `w*4` 会越界（§16.5 的坑）",
         ],
         "output": "音频 OggS 明文（解密后），视频是 MPEG-PS（`00 00 01 ba`）",
+    },
+    "Artemis": {
+        "tool": "`_pfs_extract.py <游戏目录> <输出目录>`（自研：pf8 索引 + SHA1(索引) 循环 XOR，"
+                "一次解目录下所有 .pfs 及其分卷 .pfs.NNN）",
+        "fallback": [
+            "GARbro **能**解 pf8（这批样本原本就是这么划走的）——自研工具是为了纳入统一链路与对账",
+            "`.pfs.000/.001` 可能各自带有独立 pf8 索引，应按魔数识别",
+            "落盘**每个归档一个子目录** `raw/<归档文件名>/`：实测跨包重名 70 条，平铺会互相覆盖",
+            "索引 key = SHA1(索引区字节，含首 u32 条目数)，不是固定 key——换一作必须重算",
+        ],
+        "output": "PNG + OGG 是交付物；.sli/.ast/.lua/.glsl/.ttf/.dat 等 403 条为非媒体（按 nonmedia 放过）",
     },
 }
 
