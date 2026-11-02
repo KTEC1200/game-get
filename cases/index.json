@@ -1,7 +1,37 @@
 {
   "schema": "cases-index/1",
-  "generated_at": "2026-11-01T17:33:51+08:00",
+  "generated_at": "2026-11-02T21:40:55+08:00",
   "by_signature": {
+    "e0bde5633a1e": [
+      {
+        "case_id": "1fc5ee3f9915",
+        "engine": "AdvHD",
+        "engine_label": "AdvHD",
+        "sample": "ラブラブお痴験バイト性活",
+        "discriminator": null,
+        "provenance": "manifest"
+      }
+    ],
+    "20b90f43db7b": [
+      {
+        "case_id": "3a73db965b27",
+        "engine": "Ren'Py",
+        "engine_label": "Ren'Py",
+        "sample": "Swipe Right for Sugar Mama Sensei",
+        "discriminator": "rpa-python3-4pack",
+        "provenance": "docs-reconstructed"
+      }
+    ],
+    "26ea5c9bed83": [
+      {
+        "case_id": "3f543fe2825d",
+        "engine": "CatSystem2",
+        "engine_label": "CatSystem2",
+        "sample": "甜蜜女友2+",
+        "discriminator": null,
+        "provenance": "manifest"
+      }
+    ],
     "6519ddb81f58": [
       {
         "case_id": "3f7607cd8585",
@@ -12,49 +42,19 @@
         "provenance": "docs-reconstructed"
       },
       {
-        "case_id": "6adbd459d021",
-        "engine": "KiriKiri",
-        "engine_label": "KiriKiri 加密",
-        "sample": "高慢妻陥落！！",
-        "discriminator": "xp3-encrypted",
-        "provenance": "docs-reconstructed"
-      },
-      {
         "case_id": "69c521e192f0",
         "engine": "KiriKiri",
         "engine_label": "KiriKiri 加密（krkrZ）",
         "sample": "教师催眠1",
         "discriminator": "xp3-encrypted-krkrZ",
         "provenance": "docs-reconstructed"
-      }
-    ],
-    "6807e46dcb04": [
+      },
       {
-        "case_id": "eaa76f4a37f0",
-        "engine": "Unity",
-        "engine_label": "Unity",
-        "sample": "My Wife Wants to Be a Professional Cosplayer",
-        "discriminator": null,
-        "provenance": "manifest"
-      }
-    ],
-    "524eebf5ec1b": [
-      {
-        "case_id": "4955589831f2",
-        "engine": "Tyrano/Electron",
-        "engine_label": "Electron（自研引擎）",
-        "sample": "SPITE",
-        "discriminator": null,
-        "provenance": "docs-reconstructed"
-      }
-    ],
-    "20b90f43db7b": [
-      {
-        "case_id": "3a73db965b27",
-        "engine": "Ren'Py",
-        "engine_label": "Ren'Py",
-        "sample": "Swipe Right for Sugar Mama Sensei",
-        "discriminator": "rpa-python3-4pack",
+        "case_id": "6adbd459d021",
+        "engine": "KiriKiri",
+        "engine_label": "KiriKiri 加密",
+        "sample": "高慢妻陥落！！",
+        "discriminator": "xp3-encrypted",
         "provenance": "docs-reconstructed"
       }
     ],
@@ -68,14 +68,14 @@
         "provenance": "docs-reconstructed"
       }
     ],
-    "e0bde5633a1e": [
+    "524eebf5ec1b": [
       {
-        "case_id": "1fc5ee3f9915",
-        "engine": "AdvHD",
-        "engine_label": "AdvHD",
-        "sample": "ラブラブお痴験バイト性活",
+        "case_id": "4955589831f2",
+        "engine": "Tyrano/Electron",
+        "engine_label": "Electron（自研引擎）",
+        "sample": "SPITE",
         "discriminator": null,
-        "provenance": "manifest"
+        "provenance": "docs-reconstructed"
       }
     ],
     "7c6e1abb20ae": [
@@ -98,32 +98,28 @@
         "provenance": "manifest"
       }
     ],
-    "26ea5c9bed83": [
+    "2ee6eff84c5a": [
       {
-        "case_id": "3f543fe2825d",
-        "engine": "CatSystem2",
-        "engine_label": "CatSystem2",
-        "sample": "甜蜜女友2+",
+        "case_id": "d51d21d26882",
+        "engine": "Artemis",
+        "engine_label": "Artemis",
+        "sample": "Toshiue Kanojo",
+        "discriminator": null,
+        "provenance": "manifest"
+      }
+    ],
+    "6807e46dcb04": [
+      {
+        "case_id": "eaa76f4a37f0",
+        "engine": "Unity",
+        "engine_label": "Unity",
+        "sample": "My Wife Wants to Be a Professional Cosplayer",
         "discriminator": null,
         "provenance": "manifest"
       }
     ]
   },
   "cases": [
-    {
-      "case_id": "3f7607cd8585",
-      "engine": "KiriKiri",
-      "sample": "兼职人妻",
-      "signature": "6519ddb81f58",
-      "provenance": "docs-reconstructed"
-    },
-    {
-      "case_id": "eaa76f4a37f0",
-      "engine": "Unity",
-      "sample": "My Wife Wants to Be a Professional Cosplayer",
-      "signature": "6807e46dcb04",
-      "provenance": "manifest"
-    },
     {
       "case_id": "0f0633bc8c63",
       "engine": "Ren'Py",
@@ -132,17 +128,31 @@
       "provenance": "docs-reconstructed"
     },
     {
-      "case_id": "4955589831f2",
-      "engine": "Tyrano/Electron",
-      "sample": "SPITE",
-      "signature": "524eebf5ec1b",
-      "provenance": "docs-reconstructed"
+      "case_id": "1fc5ee3f9915",
+      "engine": "AdvHD",
+      "sample": "ラブラブお痴験バイト性活",
+      "signature": "e0bde5633a1e",
+      "provenance": "manifest"
     },
     {
       "case_id": "3a73db965b27",
       "engine": "Ren'Py",
       "sample": "Swipe Right for Sugar Mama Sensei",
       "signature": "20b90f43db7b",
+      "provenance": "docs-reconstructed"
+    },
+    {
+      "case_id": "3f543fe2825d",
+      "engine": "CatSystem2",
+      "sample": "甜蜜女友2+",
+      "signature": "26ea5c9bed83",
+      "provenance": "manifest"
+    },
+    {
+      "case_id": "3f7607cd8585",
+      "engine": "KiriKiri",
+      "sample": "兼职人妻",
+      "signature": "6519ddb81f58",
       "provenance": "docs-reconstructed"
     },
     {
@@ -153,11 +163,25 @@
       "provenance": "docs-reconstructed"
     },
     {
-      "case_id": "1fc5ee3f9915",
-      "engine": "AdvHD",
-      "sample": "ラブラブお痴験バイト性活",
-      "signature": "e0bde5633a1e",
-      "provenance": "manifest"
+      "case_id": "4955589831f2",
+      "engine": "Tyrano/Electron",
+      "sample": "SPITE",
+      "signature": "524eebf5ec1b",
+      "provenance": "docs-reconstructed"
+    },
+    {
+      "case_id": "69c521e192f0",
+      "engine": "KiriKiri",
+      "sample": "教师催眠1",
+      "signature": "6519ddb81f58",
+      "provenance": "docs-reconstructed"
+    },
+    {
+      "case_id": "6adbd459d021",
+      "engine": "KiriKiri",
+      "sample": "高慢妻陥落！！",
+      "signature": "6519ddb81f58",
+      "provenance": "docs-reconstructed"
     },
     {
       "case_id": "9101a028fe2e",
@@ -174,25 +198,18 @@
       "provenance": "manifest"
     },
     {
-      "case_id": "3f543fe2825d",
-      "engine": "CatSystem2",
-      "sample": "甜蜜女友2+",
-      "signature": "26ea5c9bed83",
+      "case_id": "d51d21d26882",
+      "engine": "Artemis",
+      "sample": "Toshiue Kanojo",
+      "signature": "2ee6eff84c5a",
       "provenance": "manifest"
     },
     {
-      "case_id": "6adbd459d021",
-      "engine": "KiriKiri",
-      "sample": "高慢妻陥落！！",
-      "signature": "6519ddb81f58",
-      "provenance": "docs-reconstructed"
-    },
-    {
-      "case_id": "69c521e192f0",
-      "engine": "KiriKiri",
-      "sample": "教师催眠1",
-      "signature": "6519ddb81f58",
-      "provenance": "docs-reconstructed"
+      "case_id": "eaa76f4a37f0",
+      "engine": "Unity",
+      "sample": "My Wife Wants to Be a Professional Cosplayer",
+      "signature": "6807e46dcb04",
+      "provenance": "manifest"
     }
   ]
 }

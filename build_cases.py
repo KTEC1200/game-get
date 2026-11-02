@@ -32,7 +32,7 @@
     python build_cases.py --from-docs         # 从 _failures_raw.json + _docs_meta.json 提炼
     python build_cases.py --index             # 重建 cases/index.json
     python build_cases.py --validate          # 校验所有 case 的 schema + provenance 诚实
-    python build_cases.py                     # 全做（重建 + 索引 + 校验）
+    python build_cases.py                     # 索引并校验已有案例（不重建）
 """
 from __future__ import annotations
 
@@ -160,16 +160,13 @@ def build_from_manifest(sample: str, spec: dict, failures_data: dict) -> dict:
     manifest_path = ROOT / spec["manifest"]
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     game_dir = Path(spec["game_dir"])
-    fp = _fingerprint(game_dir)
-
-    # engine 以现场重扫的规范名为准（案例库按指纹查，engine 必须与 fingerprint.engine 一致）；
-    # manifest 里的描述性标签另存 engine_label 供人读。
-    engine = fp.get("engine") or manifest.get("engine")
+    detect = next(st for st in manifest["stages"] if st.get("stage") == "detect")
+    engine = detect["engine"]
     engine_label = manifest.get("engine")
-    signals = fp["signals"]
-    # manifest 里的 engine 与现场重扫可能不一致（规则改了），记录之
-    if engine_label and engine_label != engine:
-        fp["engine_mismatch"] = {"manifest": engine_label, "scanned": engine}
+    signals = sorted(detect["fired_ids"])
+    fp = {"signals": signals, "score": detect["score"], "threshold": THRESHOLD,
+          "signature": case_lib.signature(engine, signals), "engine": engine,
+          "reconstructed": False}
 
     timing = {"detect": None, "extract": None, "postprocess": None,
               "verify": None, "manifest": None, "total": None}
@@ -300,8 +297,9 @@ def _case_filename(case: dict) -> str:
 def write_case(case: dict) -> Path:
     CASES.mkdir(parents=True, exist_ok=True)
     path = CASES / _case_filename(case)
-    path.write_text(json.dumps(case, indent=2, ensure_ascii=False) + "\n",
-                    encoding="utf-8")
+    content = json.dumps(case, indent=2, ensure_ascii=False) + "\n"
+    with path.open("x", encoding="utf-8", newline="\n") as out:
+        out.write(content)
     return path
 
 
@@ -309,7 +307,13 @@ def build_all() -> list[dict]:
     failures_data = _load_failures()
     docs_meta = _load_docs_meta()
     cases = []
+    existing = {case["sample"] for case in load_cases()}
     for sample, spec in SAMPLES.items():
+        if sample in existing:
+            continue
+        if spec["manifest"] and not (ROOT / spec["manifest"]).is_file():
+            print(f"[build] 跳过缺失 manifest: {spec['manifest']}")
+            continue
         if spec["manifest"]:
             case = build_from_manifest(sample, spec, failures_data)
         else:
@@ -319,13 +323,20 @@ def build_all() -> list[dict]:
 
 
 def write_all(cases: list[dict]) -> list[Path]:
-    """写盘前先清掉陈旧 case 文件（case_id 会随 engine 规范化而变，
-    不清的话旧文件会残留，案例库越攒越脏）。"""
-    keep = {"index.json", "_failures_raw.json", "_docs_meta.json"}
-    for old in CASES.glob("*.json"):
-        if old.name not in keep:
-            old.unlink()
+    """Create cases without deleting or replacing existing files."""
+    paths = [CASES / _case_filename(c) for c in cases]
+    if len(set(paths)) != len(paths):
+        raise FileExistsError("duplicate case destination")
+    for path in paths:
+        if path.exists():
+            raise FileExistsError(path)
     return [write_case(c) for c in cases]
+
+
+def load_cases() -> list[dict]:
+    return [json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted(CASES.glob("*.json"))
+            if path.name != "index.json" and not path.name.startswith("_")]
 
 
 def build_index(cases: list[dict]) -> dict:
@@ -417,9 +428,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--validate", action="store_true", help="校验 schema + provenance")
     args = ap.parse_args(argv)
 
-    do_build = args.from_manifests or args.from_docs or not (args.index or args.validate)
-    do_index = args.index or do_build
-    do_validate = args.validate or do_build
+    do_build = args.from_manifests or args.from_docs
+    do_index = args.index or do_build or not args.validate
+    do_validate = args.validate or do_build or not args.index
 
     if do_build:
         cases = build_all()
@@ -429,15 +440,25 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {p.name}")
 
     if do_index:
-        cases = build_all()
+        cases = load_cases()
+        problems = validate_cases(cases)
+        if problems:
+            for problem in problems:
+                print(problem)
+            return 1
         index = build_index(cases)
         idx_path = CASES / "index.json"
-        idx_path.write_text(json.dumps(index, indent=2, ensure_ascii=False) + "\n",
-                            encoding="utf-8")
+        if idx_path.exists():
+            previous = json.loads(idx_path.read_text(encoding="utf-8"))
+            if previous.get("cases") == index["cases"] and previous.get("by_signature") == index["by_signature"]:
+                index["generated_at"] = previous.get("generated_at")
+        content = json.dumps(index, indent=2, ensure_ascii=False) + "\n"
+        if not idx_path.exists() or idx_path.read_text(encoding="utf-8") != content:
+            idx_path.write_text(content, encoding="utf-8", newline="\n")
         print(f"[index] 写入 {idx_path}（{len(index['by_signature'])} 个签名）")
 
     if do_validate:
-        cases = build_all()
+        cases = load_cases()
         problems = validate_cases(cases)
         if problems:
             print(f"[validate] 发现 {len(problems)} 个问题：")

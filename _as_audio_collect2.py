@@ -13,19 +13,20 @@
   第 1 轮: ^(VA0|VA1|...|VA9) 这类「前缀+首位」合并（每组 10 个）
   第 2 轮: 两两组合 (VA00|VA01|...) 进一步细分
   第 3 轮: 全名前缀粗分组兜底
-每轮输出到独立目录，按文件内容哈希去重累积。
+每轮输出到独立目录，按文件名和内容哈希去重累积。数字名称也会细分，
+但固定分组不能保证覆盖所有资产。
 
 用法:
   python _as_audio_collect2.py <输入目录> <累积输出目录>
 """
 import hashlib
-import itertools
 import shutil
+import tempfile
 import subprocess
 import sys
 from pathlib import Path
 
-EXE = r"D:\K\galgame\unity\AssetStudio\AssetStudio.CLI.exe"
+import toolbridge
 VOICE_PREFIXES = ["VA", "VB", "VC", "FE", "SEX", "ADD", "SE", "bgm", "SYASEI",
                   "sexyvoice", "ding", "punch", "camera", "door", "cross", "sex"]
 
@@ -50,6 +51,7 @@ def rounds() -> list[tuple[str, list[str]]]:
         for i in range(0, len(pairs), 2):
             alts = "|".join(pairs[i:i + 2])
             r2.append(f"^({alts})")
+    r2.extend(f"^{a}" for a in "0123456789")
     out.append(("round2", r2))
 
     # 第 3 轮：单个两位前缀（更细）
@@ -58,6 +60,7 @@ def rounds() -> list[tuple[str, list[str]]]:
         for a in "0123456789":
             for b in "0123456789":
                 r3.append(f"^{p}{a}{b}")
+    r3.extend(f"^{a}{b}" for a in "0123456789" for b in "0123456789")
     out.append(("round3", r3))
     return out
 
@@ -74,10 +77,10 @@ def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
     src, dest = Path(argv[0]), Path(argv[1])
     dest.mkdir(parents=True, exist_ok=True)
-    work = dest.parent / (dest.name + "_work")
-    work.mkdir(parents=True, exist_ok=True)
+    exe = toolbridge.find_tool("assetstudio")
+    work = Path(tempfile.mkdtemp(prefix=dest.name + "_work_", dir=dest.parent))
 
-    seen = {digest(p) for p in dest.rglob("*.wav")}
+    seen = {(p.name.casefold(), digest(p)) for p in dest.rglob("*.wav")}
     print(f"起始已累积: {len(seen)}", flush=True)
 
     for rname, pats in rounds():
@@ -89,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
             tmp.mkdir(parents=True, exist_ok=True)
             try:
                 subprocess.run(
-                    [EXE, str(src), str(tmp), "--game", "Normal",
+                    [str(exe), str(src), str(tmp), "--game", "Normal",
                      "--types", "AudioClip", "--names", pat,
                      "--export_type", "Convert", "--group_assets", "ByType"],
                     capture_output=True, timeout=900)
@@ -99,24 +102,21 @@ def main(argv: list[str] | None = None) -> int:
 
             added = 0
             for w in list(tmp.rglob("*.wav")):
-                d = digest(w)
-                if d in seen:
+                key = (w.name.casefold(), digest(w))
+                if key in seen:
                     continue
-                seen.add(d)
+                if any(name == key[0] for name, _ in seen):
+                    raise ValueError(f"AudioClip filename conflict: {w.name}")
                 tgt = dest / w.name
-                n = 1
-                while tgt.exists():
-                    tgt = dest / f"{w.stem}_{n}{w.suffix}"
-                    n += 1
+                if tgt.exists():
+                    raise ValueError(f"AudioClip filename conflict: {w.name}")
                 shutil.move(str(w), str(tgt))
+                seen.add(key)
                 added += 1
             gained_total += added
             if added:
                 print(f"  [{i}/{len(pats)}] +{added:<4} 累计={len(seen)}   {pat[:46]}", flush=True)
         print(f"  {rname} 共新增 {gained_total}，累计 {len(seen)}", flush=True)
-        if gained_total == 0 and rname == "round2":
-            print("  连续无新增，提前结束", flush=True)
-            break
 
     shutil.rmtree(work, ignore_errors=True)
     total = list(dest.rglob("*.wav"))

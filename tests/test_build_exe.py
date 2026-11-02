@@ -56,6 +56,22 @@ def test_bundle_tools_copies_whole_dir_and_globs(tmp_path):
     assert any("[SKIP]" not in r for r in reports)
 
 
+def test_bundled_garbro_enables_plugin_loading_without_changing_source(tmp_path):
+    import xml.etree.ElementTree as ET
+
+    source = tmp_path / "garbro"
+    config = b'<configuration><startup/><runtime><assemblyBinding xmlns="urn:schemas-microsoft-com:asm.v1"/></runtime></configuration>'
+    _fake_tool(source, {"GARbro.Console.exe.config": config})
+    dest = tmp_path / "dist"
+    be.bundle_tools(dest, entries=[("garbro", str(source), "*")])
+
+    result = ET.parse(dest / "bin" / "garbro" / "GARbro.Console.exe.config").getroot()
+    assert result.find("runtime/loadFromRemoteSources").get("enabled") == "true"
+    assert result.find("runtime/{urn:schemas-microsoft-com:asm.v1}assemblyBinding") is not None
+    assert b'<assemblyBinding xmlns="urn:schemas-microsoft-com:asm.v1"' in (dest / "bin" / "garbro" / "GARbro.Console.exe.config").read_bytes()
+    assert (source / "GARbro.Console.exe.config").read_bytes() == config
+
+
 def test_bundle_tools_missing_source_is_warning_not_failure(tmp_path):
     """打包机上少个工具 → [SKIP] 警告，构建继续（toolbridge 会落到下一档并如实报错）。"""
     dest = tmp_path / "dist" / "app"

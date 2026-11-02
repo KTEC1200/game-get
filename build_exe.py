@@ -294,6 +294,23 @@ def bundle_tools(dest_root: Path, entries: list[tuple[str, str, str | list[str]]
                 for p in s.glob(pat):
                     shutil.copy2(p, dst / p.name)
                     n += 1
+        if key == "garbro":
+            config = dst / "GARbro.Console.exe.config"
+            if config.is_file():
+                from xml.dom import minidom
+
+                doc = minidom.parse(str(config))
+                root = doc.documentElement
+                runtimes = root.getElementsByTagName("runtime")
+                runtime = runtimes[0] if runtimes else doc.createElement("runtime")
+                if not runtimes:
+                    root.appendChild(runtime)
+                settings = runtime.getElementsByTagName("loadFromRemoteSources")
+                setting = settings[0] if settings else doc.createElement("loadFromRemoteSources")
+                if not settings:
+                    runtime.appendChild(setting)
+                setting.setAttribute("enabled", "true")
+                config.write_bytes(doc.toxml(encoding="utf-8"))
         size = sum(f.stat().st_size for f in dst.rglob("*") if f.is_file())
         reports.append(f"[OK]   {key}: {n} 个文件，{size / 1048576:.1f} MiB ← {s}")
     _write_tool_notice(bin_root)

@@ -1,0 +1,122 @@
+{
+  "schema": "cases/1",
+  "case_id": "d51d21d26882",
+  "engine": "Artemis",
+  "engine_label": "Artemis",
+  "sample": "Toshiue Kanojo",
+  "game_dir": "D:\\HY\\Toshiue Kanojo",
+  "discriminator": null,
+  "fingerprint": {
+    "signals": [
+      "artemis_pfs",
+      "artemis_runtime"
+    ],
+    "score": 90,
+    "threshold": 60,
+    "signature": "2ee6eff84c5a",
+    "engine": "Artemis",
+    "reconstructed": false
+  },
+  "decision": {
+    "extractor": "_pfs_extract.py",
+    "archive_exts": [
+      ".pfs"
+    ],
+    "archive_count": 3,
+    "expected_total": 4008
+  },
+  "timing": {
+    "detect": 0.02,
+    "extract": 16.79,
+    "postprocess": 0.34,
+    "verify": 216.98,
+    "manifest": 1.41,
+    "total": 235.5
+  },
+  "result": {
+    "ok": true,
+    "source": "manifest",
+    "summary": {
+      "images": 1007,
+      "audio": 2597,
+      "video": 1,
+      "total": 4008
+    },
+    "media_minutes": 389.3,
+    "counts": {
+      "raw": {
+        "by_ext": {
+          ".asb": 3,
+          ".ast": 67,
+          ".dat": 1,
+          ".glsl": 40,
+          ".hlsl": 40,
+          ".iet": 2,
+          ".ini": 1,
+          ".ipt": 5,
+          ".jpg": 1,
+          ".lua": 54,
+          ".mp3": 29,
+          ".ogg": 2568,
+          ".png": 1006,
+          ".sli": 182,
+          ".tbl": 6,
+          ".ttf": 2,
+          ".wmv": 1
+        },
+        "total": 4008,
+        "bytes": 1534028165
+      },
+      "final": {
+        "by_ext": {
+          ".asb": 3,
+          ".ast": 67,
+          ".dat": 1,
+          ".glsl": 40,
+          ".hlsl": 40,
+          ".iet": 2,
+          ".ini": 1,
+          ".ipt": 5,
+          ".jpg": 1,
+          ".lua": 54,
+          ".mp3": 29,
+          ".ogg": 2568,
+          ".png": 1006,
+          ".sli": 182,
+          ".tbl": 6,
+          ".ttf": 2,
+          ".wmv": 1
+        },
+        "total": 4008,
+        "bytes": 1534028165
+      },
+      "converted": {}
+    },
+    "verify": {
+      "verified": true,
+      "image_ok": 1007,
+      "image_fail": 0,
+      "audio_ok": 2597,
+      "audio_fail": 0,
+      "video_ok": 1,
+      "video_fail": 0,
+      "zero_byte": 0,
+      "media_minutes": 389.3
+    },
+    "reconcile": {
+      "expected": 4008,
+      "actual": 4008,
+      "diff": 0,
+      "method": "archive-index"
+    }
+  },
+  "failures": [],
+  "provenance": {
+    "source": "manifest",
+    "manifest_path": "cases/_toshiue_manifest.json",
+    "doc_refs": [
+      "AGENTS.md 样本表"
+    ],
+    "generated_at": "2026-11-02T20:10:46+0800"
+  }
+}

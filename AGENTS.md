@@ -19,9 +19,11 @@
 > （master 全历史至 `2d64bac`），remote 已建、tracking 已设。
 > `.gitignore` 已排除 `_extracted/`、`packaging/Output/`、`_spike_pkg/dist|build/` 等大产物。
 
+> **2026-11-02 测试反馈**：随包 GARbro 的 .NET 插件加载修复仅适用于可信工具目录；Unity 样本的音频收集未对账通过，KiriKiri 的 GUI 索引兜底尚无真机端到端验证。案例索引已保留旧案例并加入 Toshiue。实测和限制见 `verified-findings.md`。
+
 > **🚀 接手顺序（新会话只做这三步）**
 > ① 读本文档「状态 / 下一步 / ⚠️ 五个坑」；
-> ② 跑基线：`python -m pytest tests -q`（应 **496 passed / 9 skipped**）+ `python tests/make_golden.py --check`（应零漂移）；
+> ② 跑基线：`python -m pytest tests -q`（2026-11-02：**515 passed / 9 skipped**）+ `python tests/make_golden.py --check`（应零漂移）；
 > ③ 按「下一步」当前项开工。**改完先回写本文档 + `verified-findings.md`，再清临时产物，最后提交。**
 
 ## 文件索引（按需读，别全读）
@@ -162,7 +164,7 @@ Ren'Py 侧：`_rpa_stage` / `_rpa_patch_stage` / `_rpa_arch.txt` / `_rpa_patch.t
 - Unity 临时目录已迁到输出侧；回归测试覆盖，真实 Happiness Double Room 尚未完整复跑。
 - Artemis 已接入规则和提取链；Toshiue 实际全链退出码 0，4008/4008 对账零差，图片 1007、音频 2597、视频 1 均通过验收。
 - KiriKiri 新增索引 dump 提取兜底，仅支持经校验的单段明文条目；目标样本本次 GARbro 直接全链成功（2562/2562，图片 902、音频 1577 全通过），未触发兜底，窗口失败后自动提取仍未实证。
-- 当前变更未完成交付、案例库同步或提交；证据和限制见 verified-findings.md。
+- 案例库已保留原有 12 个案例并新增 Toshiue 案例及 manifest 快照；最终交付及实机验收仍未完成。证据和限制见 verified-findings.md。
 
 ## 状态
 
@@ -358,7 +360,7 @@ GUI 弹窗行为确认（加密 KiriKiri 纯 CLI 自动化可行性）。
 - ✅ `engines.json` 缺 id 的信号补语义 id（Unity 6、KiriKiri 1、Ren'Py 3、Tyrano 2、RPG Maker 2、
   AdvHD 3、Yu-Ris 3、ExHIBIT 3、CatSystem2 2，共 25 个）——Ren'Py 的 fired_ids 不再是空集。
 - ✅ `cases/_docs_meta.json`（8 个纯文档样本的图片/音频/视频/媒体分钟数，文档口径）。
-- ✅ `build_cases.py`（构建器，含 `write_all` 清陈旧文件 + `validate_cases` 诚实校验）。
+- ✅ `build_cases.py`（构建器，`write_all` 只创建新案例，`validate_cases` 校验来源）。
 - ✅ 生成 **12 个 case + `index.json`（9 个签名）**，`--validate` 全过。
 - ✅ `tests/test_cases.py`（21 个测试，锁纯函数 + 构建产物 + 诚实纪律）。
 - ✅ **接入 orchestrator（2026-11-01，用户批准「报告命中」口径）**：新增 `case_lib.py`（签名/查表**唯一出处**，
@@ -382,8 +384,7 @@ SPITE / Swipe Right / 常識改変学園 / あまねぇ / 高慢妻陥落！！ 
 - `engine` 字段曾误用 `_failures_raw.json` 的描述性标签（如「KiriKiri 加密」）导致与
   `fingerprint.engine` 不一致、按指纹查会错位——已改为以 `gd.scan` 的规范名为准，描述性标签
   另存 `engine_label`。
-- `write_all` 必须清陈旧 case 文件：case_id 随 engine 规范化会变，不清的话旧文件残留、
-  案例库越攒越脏（实测踩过：SPITE 早期被映射成 Tyrano/Electron 的残留文件）。
+- `write_all` 只创建新案例，不删除或覆盖旧案例；部分历史 manifest 已缺失。索引与校验使用现存案例，迁移旧案例时须先核对来源并保留原件。
 
 ## 引擎分支要点（实测）
 

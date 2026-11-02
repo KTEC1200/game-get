@@ -162,7 +162,52 @@ def _load_built_cases() -> list[dict]:
 
 def test_built_cases_exist():
     cases = _load_built_cases()
-    assert len(cases) == 12
+    assert len(cases) == 13
+
+
+def test_write_all_preserves_unrelated_and_rejects_collision(tmp_path, monkeypatch):
+    monkeypatch.setattr(bc, "CASES", tmp_path)
+    unrelated = tmp_path / "other.json"
+    unrelated.write_bytes(b"original")
+    case = _mk_case()
+    path = tmp_path / bc._case_filename(case)
+    path.write_bytes(b"existing")
+    with pytest.raises(FileExistsError):
+        bc.write_all([case])
+    assert unrelated.read_bytes() == b"original"
+    assert path.read_bytes() == b"existing"
+
+
+def test_build_all_skips_existing_and_missing_manifests(tmp_path, monkeypatch):
+    monkeypatch.setattr(bc, "CASES", tmp_path)
+    case = _mk_case()
+    (tmp_path / bc._case_filename(case)).write_text(json.dumps(case), encoding="utf-8")
+    monkeypatch.setattr(bc, "SAMPLES", {"Test Game": {"manifest": "missing.json"},
+                                      "Missing": {"manifest": "also-missing.json"}})
+    monkeypatch.setattr(bc, "_load_failures", lambda: {})
+    monkeypatch.setattr(bc, "_load_docs_meta", lambda: {})
+    assert bc.build_all() == []
+
+
+def test_index_and_validate_use_disk_and_are_idempotent(tmp_path, monkeypatch):
+    monkeypatch.setattr(bc, "CASES", tmp_path)
+    case = _mk_case()
+    (tmp_path / bc._case_filename(case)).write_text(json.dumps(case), encoding="utf-8")
+    monkeypatch.setattr(bc, "build_all", lambda: pytest.fail("unexpected rebuild"))
+    assert bc.main(["--index", "--validate"]) == 0
+    before = (tmp_path / "index.json").read_bytes()
+    assert bc.main(["--index", "--validate"]) == 0
+    assert (tmp_path / "index.json").read_bytes() == before
+
+
+def test_toshiue_case_uses_recorded_manifest():
+    manifest = json.loads((CASES_DIR / "_toshiue_manifest.json").read_text(encoding="utf-8"))
+    case = next(c for c in _load_built_cases() if c["sample"] == "Toshiue Kanojo")
+    detect = next(s for s in manifest["stages"] if s["stage"] == "detect")
+    assert case["fingerprint"]["signals"] == sorted(detect["fired_ids"])
+    assert case["fingerprint"]["score"] == detect["score"]
+    assert case["result"]["reconcile"] == manifest["reconcile"]
+    assert case["provenance"]["manifest_path"] == "cases/_toshiue_manifest.json"
 
 
 def test_built_cases_validate_clean():

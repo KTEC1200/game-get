@@ -330,18 +330,21 @@ def main(argv: list[str] | None = None) -> int:
         pairs = [(p, Path(str(p) + ".index")) for p in archives]
         if not pairs or any(not index.is_file() for _, index in pairs):
             raise RuntimeError("KrkrExtract UI window not found and complete XP3 index dumps unavailable")
-        outdir = Path(stage) / "KrkrExtract_Output" / "data"
+        output = Path(stage) / "KrkrExtract_Output"
+        dst = Path(args.out) / "KrkrExtract_Output" if args.out else None
+        if output.exists() or (dst is not None and dst.exists()):
+            raise RuntimeError("XP3 index carve output already exists; refusing to overwrite")
+        outdir = output / "data"
         try:
             for archive, index in pairs:
                 count = _xp3_carve.extract(archive, index, outdir / archive.stem)
                 log("index carve %s: %d files verified" % (archive.name, count))
         except (ValueError, OSError, KeyError) as exc:
             raise RuntimeError("XP3 index carve failed: %s" % exc) from exc
-        if args.out:
-            dst = Path(args.out) / "KrkrExtract_Output"
-            if dst.exists():
-                shutil.rmtree(dst)
+        if dst is not None:
             dst.parent.mkdir(parents=True, exist_ok=True)
+            if dst.exists():
+                raise RuntimeError("XP3 index carve output already exists; refusing to overwrite")
             shutil.move(str(outdir.parent), str(dst))
         return 0
     urc = wintypes.RECT()
