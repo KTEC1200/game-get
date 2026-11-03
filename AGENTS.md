@@ -62,7 +62,7 @@
 - **编排器：`orchestrator.py`**（2026-10-29，软件化第 3 步，**主入口**）—— 一条命令跑完
   `detect → case-lookup → extract → postprocess → verify → manifest`：
   `python orchestrator.py <游戏目录> --out <输出目录> [--allow-gui] [--reuse-raw DIR] [--no-verify] [--dry-run]`。
-  已接 **Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD / ExHIBIT / CatSystem2 / Unity / Artemis 九条链路**（其余引擎判得出就退出码 2，不假装成功）。
+  已接 **Ren'Py / KiriKiri / RPG Maker / Yu-Ris / AdvHD / ExHIBIT / CatSystem2 / Unity / Artemis 十条链路**（其余引擎判得出就退出码 2，不假装成功）。
   **兄弟链路 in-process（2026-11-02，打包必修第 1 条）**：7 个兄弟脚本统一
   `main(argv: list[str] | None = None) -> int`（内部不 `sys.exit`），经 **`_run_sibling(mod, argv)`**
   进程内调用（冻结包里 `sys.executable` 拉不了脚本，§19.2）+ orchestrator 顶部**静态 import** 全部
@@ -185,7 +185,7 @@ Ren'Py 侧：`_rpa_stage` / `_rpa_patch_stage` / `_rpa_arch.txt` / `_rpa_patch.t
     `argv` 是列表（含空格路径不会被拆碎），`cmdline` 只给人复制、不参与执行。
   - 产物一律落 `<仓库>/_extracted/<游戏名>/`，**不写进游戏目录**（会污染原包，且加密 KiriKiri 链
     要 stage 纯 ASCII 副本，混在一起分不清谁产生的）。
-- 引擎判定：**9 条引擎规则**（Unity / KiriKiri / Ren'Py / Tyrano-Electron / RPG Maker / AdvHD / Yu-Ris / EXHIBIT / CatSystem2）。
+- 引擎判定：**10 条引擎规则**（Unity / KiriKiri / Ren'Py / Tyrano-Electron / RPG Maker / AdvHD / Yu-Ris / EXHIBIT / CatSystem2 / Artemis）。
   基线由两处共同锁住：`_fixtures/make_fixtures.py` 重建的 **6 个 fixture** + 现场 **11 个真实样本**
   （`My Best Deal` 已从磁盘消失），全部与 `tests/golden_detect.json`（逐字锁定 engine/score/evidence/facts）一致 ——
   跑 `python tests/make_golden.py --check` 应输出零漂移；全量测试 **541 passed / 9 skipped**（`python -m pytest tests -q`）。
@@ -409,9 +409,10 @@ SPITE / Swipe Right / 常識改変学園 / あまねぇ / 高慢妻陥落！！ 
 ### KiriKiri
 `GARbro.Console.exe -x <data.xp3>` 直接解（`兼职人妻` 2562 条 / **8 秒**）。
 后处理按需：`.tlg`→`tlg2png`；`.pimg/.psb`→FreeMote + krkrFgiEditor（**仅在游戏有 E-mote 立绘时**才需要）。
-**加密 xp3（Console/GARbro 读不出）→ 动态提取已全自动**：`krkr_auto_extract.py <游戏目录>`
-（Lite.exe CLI 注入 + Explorer 拖拽法 + 完成判定；两大硬结论：游戏路径必须纯 ASCII、
-跨进程 WM_DROPFILES 不可行唯一通路是 Explorer 真拖拽——详见 verified-findings §17）。
+**加密 xp3（Console/GARbro 读不出）→ 动态提取**：
+- 首选 `krkr_auto_extract.py <游戏目录>`（Lite.exe CLI 注入 + Explorer 拖拽法 + 完成判定；游戏路径必须纯 ASCII；跨进程 WM_DROPFILES 不可行，唯一通路是 Explorer 真拖拽——详见 verified-findings §17）。
+- **动态兜底（新）**：若注入后 KrkrExtract UI 窗口永不出现，但每个 `.xp3` 旁被引擎 dump 出完整 `.index`（引擎视角明文 TOC，已对 `高慢妻陥落！！` data.xp3.index 384,558 B 2562 条逐条验证：段数据明文、总字节 571,075,653 + 头/索引 60,761 = 文件 571,136,414），则走 `_xp3_carve.py` 解析 `.index`（连续 `File` chunk；`info` = u32(0)+u64 fsize+u64 fsize+u16 name_len(UTF-16 字符数)+UTF-16LE 名；`segm` = u32(段数-1)+每段(u64 offset,u64 size)+末尾 u64 total；`adlr` = u32 adler32）并按扩展名验魔数逐条 carve 落 `<out>/<xp3 名>/相对路径`，走 `manifest.counts_flat` + `reconcile`（expected=None/diff=None，不把“没验”伪装成“验过了”）。
+→ 尚未在**真实自然缺窗场景**下触发（自然运行 KrkrExtract 窗口存在；GUI 阻塞而非缺窗），代码与单元/真实索引测试已通过（tests/test_xp3_carve.py + tests/test_krkr_index_fallback.py 9 passed）。
 
 ### Ren'Py（RPA）
 - **不要用 `split(b" ")` 解表头**，用正则 `^RPA-3\.0 ([0-9a-f]{16}) ([0-9a-f]{8})` 抓「索引偏移 + XOR key」。
@@ -444,6 +445,8 @@ SPITE / Swipe Right / 常識改変学園 / あまねぇ / 高慢妻陥落！！ 
   「这一批没新增」不等于「剩下的也没有」，旧策略就是这样卡在 761 的。
 - 已排除的两条路（**别再试**）：`fsb5` pip 库（需原生 `libvorbis`+`libogg` 且有查表依赖）；
   FFmpeg（识别 FSB 容器但报 `Not yet implemented`）。
+
+- **临时目录不得写进游戏目录**：`_unity_extract.py` 所有 AssetStudio 与 FSB5 累积暂存目录（`_json_*`、`_conv_*`、`Audio_work` 等）必须落在编排器传入的 `ctx.work_dir/…`（输出侧），严禁使用 `data_dir.parent` 即游戏根目录——实测 `D:\HY\Happiness Double Room\_json_Texture2D` 在受保护游戏目录下 `mkdir` 直接抛 `WinError 5`，与 Unity/AssetStudio 版本无关（verified-findings §8.x）。
 
 ### RPG Maker MV/MZ（`常識改変学園` 实测，2026-10-26）
 - 判定：NW.js 壳（`nw.dll`/`icudtl.dat`/`locales/*.pak`）+ `www/`；`js/rpg_core.js`=MV、`rmmz_core.js`=MZ。
@@ -521,6 +524,12 @@ SPITE / Swipe Right / 常識改変学園 / あまねぇ / 高慢妻陥落！！ 
     `.hg3`；逐键 diff 后真相是 `ONLY IN RAW: ['.hg3']`、`ONLY IN FINAL: ['.png']`。大字典一律逐键 diff。
   - **偶发 ffprobe 失败**：全量 verify 只在 `raw/pcm_DD/dd_02_ch08_019.OGG` 上失败一次，但该文件直接探
     rc=0、连探 5 次全过、最后一页 CRC 也对 → 是偶发。`ffprobe_ex()` 的重试正好覆盖。
+
+### Artemis(iMel，`Toshiue Kanojo` 实测，2026-11-02)
+- 判定：`iarsys64.dll` / `iarsys32.dll` / `iarsys.dll` + `.pfs` 分卷封包（D:\HY 深度 3 普查 8/8 共现）。`.pfs` 头 `706638`（=pf8），分卷形如 `<base>.pfs.NNN`（Amakano3 还有 .000/.001/.002/.003/.005）。
+- 工具：`_pfs_extract.py`（按 `SHA1(索引区)` 取 key，逐包解密，按包名进 `raw/<包名>/`；GARbro 能解 pf8，非坑 1 假阴性）。分卷不是独立封包，每包一个子目录，跨包重名 ~70。
+- orchestrator 链路（第 10 条）：`stage_extract_artemis` 调 `_pfs_extract.py` 产出 3977 个归档条目，再由 orchestrator 复制 31 个散装媒体（`.dat/.jpg/mp3` 等），共 4008 文件，对账口径拆分——`_pfs_extract.py` 只对账归档子目录（3977），散装媒体由 orchestrator 层对账（4008），两者口径不混淆。
+- 实测：Toshiue Kanojo detect=Artemis score=90（fired `artemis_pfs`、`artemis_runtime`）；3 个 .pfs，3977 + 31 = 4008，diff=0；verify 图片 1007/1007、音频 2597/2597、视频 1/1，失败 0；manifest 写入，全链 235.5s，退出码 0。
 
 ### ExHIBIT / Retouch（`夕凪荘` 实测，2026-10-26）
 - 判定：`ExHIBIT.JP`/`RESIDENT.JP` + `.gyu`（魔数 `GYU\x1a`）/ `.grp` / `.rld` + `moonstone.TTE`。

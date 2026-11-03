@@ -347,7 +347,16 @@ AssetStudio 用同目录的 `fmod.dll` 解 FSB5，但成功率很低且**静默�
 | `_as_summary.py` | 汇总 AssetStudio JSON 枚举结果（按类型统计） |
 | `_scan_unity_video.py` | 用 mmap 在 Unity 大数据文件里找视频魔数（带上下文，便于判假阳性） |
 
+### 8.9 ⭐ 临时目录绝不能写进游戏目录
+
+**现象**：`orchestrator` 对 `Happiness Double Room` 跑 Unity 链路时，`_unity_extract.py` 用 `data_dir.parent / f"_json_{t}"` 把临时目录建在游戏根目录 `D:HYHappiness Double Room_json_Texture2D`，受保护/只读游戏目录下 `mkdir` 直接抛 `PermissionError: [WinError 5] 拒绝访问`，与 Unity/AssetStudio 版本无关。
+
+**修法**：`tmp_root=ctx.work_dir/"unity"`，`_json_*/_conv_*/Audio_work` 等 AssetStudio 暂存目录全部落在输出侧（`ctx.work_dir`/`out_dir` 下），**严禁 `data_dir.parent`**。新测试 `test_orchestrator.py::test_unity_scratch_never_writes_into_game_dir` 已放宽：保留“临时目录绝不能在游戏目录”，仅对 `_json_*/_conv_*` 要求在 `out_dir` 或 `work_dir` 下。
+
+> **结论**：临时产物一律落输出侧；游戏根目录只读不写（避免污染原包，也避免权限拦截）。
+
 ---
+
 
 ## 9. Ren'Py 分支首次实操（`My Best Deal v4.7`，2026-10-14）
 
@@ -1124,6 +1133,15 @@ orchestrator 新增**阶段 1.5 `case-lookup`**，位于 `detect` 之后、`IMPL
 ② 真实目录上跑阶段：`兼职人妻` 命中 3 个 KiriKiri 变体、SPITE 命中 `4955589831f2-Tyrano-Electron`。
 全量 **493 passed / 9 skipped**，golden 零漂移。
 
+
+### 18.3 Artemis 链路真机证据（`Toshiue Kanojo`，2026-11-02）
+
+- 判定：`iarsys64.dll` / `iarsys32.dll` / `iarsys.dll` + `.pfs` 分卷封包（D:\HY 深度 3 普查 8/8 共遇）；`.pfs` 头 `706638` (=pf8)，分卷形如 `<base>.pfs.NNN`（Amakano3 还有 `.000/.001/.002/.003/.005`）。
+- 工具：`_pfs_extract.py`，按 `SHA1(索引区)` 取 key，逐包解密，按包名落 `raw/<包名>/`。GARbro 能解 pf8，不属坑 1 假阴性。分卷不是独立封包，每包一个子目录，跨包重名约 70。
+- orchestrator 链路（第 10 条）：`stage_extract_artemis` 调 `_pfs_extract.py` 产出归档条目 3977，再由 orchestrator 复制散装媒体 31 个（`.dat/.jpg/mp3`），共 4008 文件。对账口径拆分——`_pfs_extract.py` 只对账归档子目录 3977，散装媒体由 orchestrator 层对账 4008，两者口径不混淆。
+- 实测：`Toshiue Kanojo` detect=Artemis score=90（fired `artemis_pfs`、`artemis_runtime`）；3 个 `.pfs`，3977 + 31 = 4008，diff=0；verify 图片 1007/1007、音频 2597/2597、视频 1/1，失败 0；manifest 写入，全链 235.5s，退出码 0。case-lookup 命中 `d51d21d26882`（manifest 来源，expected_total=4008）。
+
+---
 ---
 
 ## 19. Windows 打包可行性（PyInstaller 冻结实测，2026-11-01）

@@ -320,7 +320,9 @@ def main(argv: list[str] | None = None) -> int:
 
     total_ok = sum(s["ok"] for s in stats)
     total_fail = sum(s["fail"] for s in stats)
-    actual = sum(1 for p in out_root.rglob("*") if p.is_file())
+    # actual 只统计本工具自己写入的归档子目录（out_root/<归档>/），与 exp["total"]（仅归档条目）口径一致。
+    # orchestrator 后续会把散装媒体复制进 raw/，那部分的对账由 orchestrator 层完成，不应混进这里。
+    actual = sum(1 for arc in exp["arcs"] for p in (out_root / arc).rglob("*") if p.is_file())
     if exp["unlistable"]:
         print(f"\n合计 ok {total_ok} fail {total_fail}；{len(exp['unlistable'])} 个归档列不出条目，未对账")
     else:

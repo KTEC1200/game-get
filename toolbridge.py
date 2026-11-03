@@ -278,7 +278,17 @@ def _load_config() -> dict:
     """读 toolbridge.json。找不到/坏掉都静默返回 {}——配置是可选增强，不能拖垮主流程。"""
     here = Path(__file__).resolve().parent
     merged: dict = {}
-    for cand in (here / CONFIG_NAME, Path.home() / ".toolbridge.json"):
+    def _home_dir() -> Path:
+        """用户主目录；当前 DSH 会话下 expanduser('~') 可能抛 RuntimeError，兜底到 %USERPROFILE% / ~ 字符串本身。"""
+        try:
+            h = Path.home()
+            if str(h) != "~":
+                return h
+        except Exception:
+            pass
+        up = os.environ.get("USERPROFILE") or os.environ.get("HOME")
+        return Path(up) if up else Path("~")
+    for cand in (here / CONFIG_NAME, _home_dir() / ".toolbridge.json"):
         try:
             if cand.is_file():
                 data = json.loads(cand.read_text(encoding="utf-8"))
