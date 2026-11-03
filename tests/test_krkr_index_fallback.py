@@ -29,7 +29,9 @@ def setup_fallback(tmp_path, monkeypatch):
     (stage / 'game.exe').write_bytes(b'fake')
     monkeypatch.setattr(kae, 'STAGE_ROOT', str(stage.parent))
     monkeypatch.setattr(kae, 'log', lambda *args: None)
-    monkeypatch.setattr(kae, 'pids_by_name', lambda name: [123])
+    # 批次 C5 起 krkr 链路不再按进程名找 game.exe（会误杀别人的进程），
+    # 改成按镜像绝对路径匹配 —— 这里假造「stage 里那个 game.exe 正在跑」。
+    monkeypatch.setattr(kae, 'pids_by_exe_path', lambda target: [123])
     monkeypatch.setattr(kae, 'find_ui_window', lambda pid: None)
     monkeypatch.setattr(kae.subprocess, 'Popen', lambda *a, **kw: None)
     monkeypatch.setattr(kae.subprocess, 'run', lambda *a, **kw: None)

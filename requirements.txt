@@ -1,6 +1,9 @@
 # 运行时依赖（从源码跑 / 构建都够用）
 Pillow
 pycryptodome
+# CatSystem2 的 Blowfish 分块解密走 numpy 向量化快路径；缺了会自动退回纯 Python
+# （结果一样，但 2 GB 级的 .int 会从分钟级变成小时级）——README 的运行环境依赖里也列了它。
+numpy
 # GUI 拖拽增强（可选；缺了 gui.py 自动退化为「浏览 + 粘贴路径」）
 tkinterdnd2
 # 构建（python build_exe.py --installer）

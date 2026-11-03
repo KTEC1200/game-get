@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""`cases/` 案例库的测试。
+r"""`cases/` 案例库的测试。
 
 锁住三件事：
   1. **纯函数**：`_case_id` 确定性 + discriminator 生效；`_summarize` 分类正确；

@@ -1243,3 +1243,67 @@ python -u _spike_pkg/run_probe.py
   排查过程见 `antivirus-false-positives.md` §5；**卸载键/快捷方式两步要真实桌面会话验证**。
 - **Git Bash 旗标改写坑**：`/SILENT` 会被 MSYS 路径转换改成 `C:/Program Files/Git/SILENT`
   → 安装器变交互模式（弹窗）。给原生 exe 传旗标一律 `MSYS_NO_PATHCONV=1`。
+
+## 20. 软件加固实测（2026-11-03）——假绿/假红的根因与修复证据
+
+本轮目标是把「纪律只落地一半」的部分收口。架构师 + QA 双线只读审计出 **P0 3 / P1 9 / P2 12**，
+修复按 A（交付正确性）/ B（可用性安全）/ C（性能清场）三批落地，QA 独立复验两次打回重做。
+版本 0.1.0 → 0.1.1。这里只记**实测证据**，行为清单见 AGENTS.md。
+
+### 20.1 P0-1「失败运行打印上一轮成功数字」的复现
+把 `Happiness Double Room/png` 改名制造验收失败，盘上留有上一轮成功 manifest：
+- 修前：退出码 1，屏幕却报「3500 个文件 / 0 失败」（读的是旧文件）；
+- 修后：失败运行落盘 `ok:false, error:"verify-failed", counts.final.total=1`（本轮实测值），
+  CLI 打印「失败原因： verify-failed」，**绝不回读磁盘**（`_result_manifest` 取不到就明说）。
+回归：`test_run_failure_overwrites_stale_manifest_on_disk`（预置 final=3500 的旧文件，断言落盘是 1）。
+
+### 20.2 验收吞吐（3500 文件 / 1441 音频，`_work_probe/bench_stage_verify.py`）
+| jobs | 耗时 | 相对 |
+|---|---|---|
+| 1 | 188.02s | 1.00× |
+| 4 | 85.38s | 2.20× |
+| 8 | **68.38s** | **2.75×** |
+三档 counts/detail 逐字一致；`test_parallel_verify_matches_serial_byte_for_byte` 钉住「并行不改变
+结论与顺序」——这条是并行化唯一正确性屏障，删它=放弃并行正确性。
+
+### 20.3 Unity Texture2D 的两个口径（都是实测）
+- `My Wife Wants to Be a Professional Cosplayer`：Texture2D JSON 枚举 460 / Convert 455（差 5）。
+- `Happiness Double Room`：**1045 枚举 / 1044 导出（差 1，0.1%）**。
+旧写法 `expected = 总数 − 缺口` 让缺口任意大；新写法：缺口不削减 expected、
+非 Texture2D 类严格相等、总短缺必须恰等于 Texture2D 缺口、比例 >2% 或 >20 个才放行。
+
+### 20.4 golden 基线的「绝对路径」病（QA 在副本里发现）
+`tests/golden_detect.json` 曾存 `D://K//deepseek//_fixtures//unity_game//MyGame_Data`，
+`test_fixture_matches_golden` 逐字比对 → **仓库挪个位置必红**（QA 在 `_work_qa/pin/` 副本实测 1 failed）。
+修复：`make_golden.normalise_paths` 把仓库内绝对路径换成 `<repo>/<相对 posix 路径>`（仓库外的
+`D:/HY/...` 原样保留，那些是本机事实），生成/比对两侧共用同一函数。
+验收方式（**不能用 grep**，JSON 里是双反斜杠、正则匹配不上——恒 0 假绿）：
+把 `tests/ rules/ cases/ _fixtures/ *.py pytest.ini` 拷到别的路径，跑 `pytest tests/test_dispatch.py -q` → 34 passed。
+
+### 20.5 本机删除守卫与 pytest 的三重坑（都会假绿/假红，花了半天才定位）
+1. `--basetemp` 指到仓库所在盘 → 守卫拦测试内部清理 → 5 条无关用例假失败
+   （`SHFileOperationW 0x2`；守卫对 OS TEMP 直接放行，对仓库盘 fail-closed）。
+2. pytest 退出清理临时目录撞守卫 → **测试全绿但 exit=1**（sitecustomize 在 rmtree 里
+   `raise SystemExit(1)`，`ignore_errors=True` 拦不住 BaseException）。
+   → 基线判定一律 `python tests/run_all.py`（junitxml 的 failures/errors 才是真相）。
+3. `%TEMP%\pytest-of-<user>\` 会**无限积累**：本轮实测已堆到 **35 GB**（含 preflight 测试的
+   1 GiB 稀疏文件 × 多轮）——守卫频繁触发、磁盘告急的根源都在这，已清空一次；
+   `pytest.ini` 的 `tmp_path_retention_policy = none` 让每轮结束即删，不再积累。
+4. 两个 pytest 进程并发（共用编号目录）→ 成片 `FileNotFoundError`，像 155 条真失败。
+
+### 20.6 GUI 轮询器被「没验成」的摘要打死（QA+架构师实测，批次引入的回归）
+`verify.media_minutes` 在没验成的结局里是 **null**；`f"{ver.get('media_minutes', 0):.1f}"`
+对 None 抛 TypeError → `_poll` 的 `after()` 在异常路径上永远执行不到 → 摘要不弹、
+队列没人消费、再点开始也看不到结果，**只能重启程序**。触发面：空产物、verify 边界取消
+（批次 B 新加的取消按钮恰好命中）。修法：文案抽成模块级 `summarize_text()` 纯函数并显式
+区分「未统计」，`_poll` 事件异常只记日志；**manifest 侧 null 保持不动**（null=没测过 ≠ 0.0=测过是 0）。
+护栏用 `App.__new__` 造壳（不建真 Tk），修前红（TypeError + after 0 次）修后绿——
+**本机 `tk_root` fixture 约 11/12 的运行会撞「无可用显示」skip，依赖真 Tk 的护栏等于没写**。
+
+### 20.7 工程纪律沉淀（这轮反复出现的病，三条）
+1. **「测试加了」≠「测试有用」**：本会话出现 3 次「绿着但没验到东西」（盲杀进程的 fixture、
+   永久 skip 的 case lookup、依赖显示的 GUI 测试）。要求：新增护栏必须附**修前红/修后绿**两次输出。
+2. **自报数字必须独立复核**：工程师报「golden 已修」用的是 grep（假绿）；QA 抓回来重做。
+   同一session里「写的人自己也信了」的验收命令，风险最高。
+3. **成员会犯「凭名字推断、没跟到定义」的错**（QA 自己错了两次）：定案前要求给出
+   可复现命令，而不是结论。

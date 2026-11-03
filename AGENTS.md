@@ -23,7 +23,8 @@
 
 > **🚀 接手顺序（新会话只做这三步）**
 > ① 读本文档「状态 / 下一步 / ⚠️ 五个坑」；
-> ② 跑基线：`python -m pytest tests -q`（2026-11-02 收尾：**541 passed / 9 skipped**）+ `python tests/make_golden.py --check`（应零漂移）；
+> ② 跑基线：`C:\Python314\python.exe tests\run_all.py`（**不要用裸 `python`**，它没有 pytest；2026-11-03 收尾：见 §「2026-11-03 软件加固」的最终数字）
+>    + `C:\Python314\python.exe tests\make_golden.py --check`（应零漂移）；
 > ③ 按「下一步」当前项开工。**改完先回写本文档 + `verified-findings.md`，再清临时产物，最后提交。**
 
 ## 文件索引（按需读，别全读）
@@ -664,3 +665,51 @@ SPITE / Swipe Right / 常識改変学園 / あまねぇ / 高慢妻陥落！！ 
   （第一次 Unity 复跑就是这样在「数 JSON」之后 8 秒死掉的，看起来像 AssetStudio 崩）。
   → 代码里临时目录一律「**唯一名 + 尽力清理**」（`_drop()` 吞 BaseException），绝不「先删后建」；
   残留的 `_work/unity/_json_*`、`_conv_*` 每个几 MB，批量清用 bash `rm -rf`（工具侧会申请提权）。
+
+## 2026-11-03 软件加固（探测 → 收口 → 优化）
+
+交接时 v0.1.0 已能跑通 9 条链路，但「纪律只落地了一半」。本轮用 架构师+QA 双线只读审计列出
+**P0 3 / P1 9 / P2 12** 条隐患（每条带 file:line 证据，两条 P0 当场实测复现），然后按批次修复：
+**批次 A 交付正确性 → 批次 B 可用性/安全 → 批次 C 性能/清场**，QA 全程独立复验（含两次打回）。
+版本号升至 **v0.1.1**。修复明细见 `verified-findings.md` §20，这里只留结论与环境坑。
+
+### 修掉的真问题（按影响排序，全部带回归测试）
+1. **失败运行会打印上一轮的成功数字**（P0，实测复现）：manifest 现在**唯一出口** `_write_manifest`，
+   所有非 0 退出统一走 `_finish_failure`；`main()` 只认 `_result_manifest()`，绝不回读磁盘。
+2. **阶段异常穿透**（P0）：`_run_stage` 兜 `Exception`（Ctrl+C 仍穿透）；`toolbridge.drop_tree`
+   只重抛 `KeyboardInterrupt`，`SystemExit` = 删除失败（守卫语义）；`gui._worker` 兜 BaseException
+   并保证补一条 `done`。三处各错一点会合谋成「GUI 永久卡死 + manifest 不落盘」。
+3. **Unity Texture2D 缺口自洽**（P0）：缺口不再削减 expected，改 2%/20 阈值闸门，
+   非 Texture2D 类必须逐类严格相等。
+4. **KiriKiri 静默漏包**（P1）：任一 xp3 列不出 → 判失败并进 `manifest.source.unsupported`。
+5. **验收串行 188s**（P1/性能）：线程池默认 8（`--verify-jobs` / `GALUNPACK_VERIFY_WORKERS`），
+   结果按下标回填、按原序聚合 —— **jobs=1 与 jobs=8 的 manifest 逐字节一致**（有测试钉住）。
+   实测 3500 文件：188.02s → **68.38s（2.75×）**。
+6. **磁盘余量预检**（P1，文档承诺过但代码里没有）：新 `preflight` 阶段三档结论；
+   `--reuse-raw` 跳过。
+7. **GUI 取消 / 关窗 / 摘要**（P1）：取消按钮（阶段边界生效）、关窗确认、摘要走本轮 manifest。
+8. **GUI 轮询器会被「没验成」的摘要打死**（P1，QA/架构师实测）：`media_minutes=null` →
+   `TypeError` → `_poll` 不再重挂 `after` → 界面永久「运行中」。渲染层改为「媒体未统计」，
+   `_poll` 事件异常只记日志；**manifest 里的 null 保持不动**（null=没测过 ≠ 0.0=测过是 0）。
+9. **音频枚举超时冒充「没有音频」**（P1）：返回 None → stage 判失败「地面真相未知」。
+10. **krkr 按进程名盲杀 game.exe**（P1）：改按镜像路径匹配（ctypes QueryFullProcessImageNameW）。
+11. **golden 基线写死 `D:/K/deepseek` 绝对路径**（P1，QA 在副本里发现）：归一化为 `<repo>/...`，
+    生成/比对两侧共用 `make_golden.normalise_paths`；**换目录必红的护栏恢复成真的护栏**。
+12. 其它：manifest 单次写盘、`--strict` 真语义、`verify-no-products` 错误码、`manifest_written` 标记、
+    CLI 验收归因五分支、重复测试去重、两处无效转义、`tests/run_all.py`。
+
+### ⚠️ 本机环境坑（新增 4 条，都会制造假绿/假红）
+- **pytest 的 `--basetemp` 不要指到仓库所在盘**：删除守卫会拦掉测试内部的清理动作，
+  制造 5 条与代码无关的假失败（实测：`test_audio_collect2` / `test_krkr_index_fallback` / 3 条 unity）。
+- **pytest 退出码在本机不可信**：全绿也可能 exit=1（退出清理撞守卫）。基线一律
+  `C:/Python314/python.exe tests\run_all.py`（按 junit 的 failures/errors 判，脚本会自己说明）。
+- **验收 JSON 别用 grep**：JSON 里反斜杠是双写，`grep 'D://K'` 恒 0 —— 会把「没修」看成「已修」。
+  用 `json.load` + 递归遍历字符串值。
+- **不要并发跑两个 pytest**（共用 `%TEMP%\pytest-of-<user>\` 的编号目录，互相删对方 tmp →
+  成片的 `FileNotFoundError`，看起来像 155 条真失败）。
+
+### 未做（明确留给下一轮，别当成遗漏）
+- raw 非空重跑（`--overwrite` 开关）、GUI 默认输出目录口径、Unity 子进程透出 rc/env、
+  `close_all_explorers()` 收窄到 stage 相关窗口、`find_tool` 配置缓存、`source.archives` 键名统一、
+  Unity 合并路径拍平、manifest 加 `verify.status` 单值枚举（前置：verify 块补 4 字段 + 抽纯函数）。
+- 引擎侧：加密 krkr 剩余约 7 部（需用户放样本）、E-mote、夕凪荘 BGM。

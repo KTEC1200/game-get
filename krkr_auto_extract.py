@@ -24,6 +24,7 @@ from datetime import datetime
 from pathlib import Path
 
 import _xp3_carve
+import toolbridge as tb
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
@@ -54,24 +55,85 @@ def log(msg):
         f.write(datetime.now().strftime("[%H:%M:%S.%f")[:-3] + "] " + str(msg) + "\n")
     print(str(msg).encode("ascii", "replace").decode("ascii"), flush=True)
 
-def pids_by_name(name):
-    TH32CS_SNAPPROCESS = 0x2
-    class PE(ctypes.Structure):
-        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
-                    ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
-                    ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
-                    ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long),
-                    ("dwFlags", wintypes.DWORD), ("szExeFile", wintypes.WCHAR * 260)]
-    snap = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
-    res = []
-    e = PE(); e.dwSize = ctypes.sizeof(PE)
-    ok = kernel32.Process32FirstW(snap, ctypes.byref(e))
-    while ok:
-        if e.szExeFile.lower() == name.lower():
-            res.append(e.th32ProcessID)
-        ok = kernel32.Process32NextW(snap, ctypes.byref(e))
-    kernel32.CloseHandle(snap)
-    return res
+def _same_exe_path(a: str, b: str) -> bool:
+    """两个镜像路径是否指向同一个可执行文件（Windows 语义：大小写不敏感、斜杠统一）。
+
+    纯函数、单独抽出来是为了能测：这条判据是「杀进程」的唯一依据，判错了就是误杀别人的
+    程序；判漏了就是杀掉自己刚起的游戏。两种错都很贵，所以它必须有测试。
+    """
+    if not a or not b:
+        return False
+    return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+
+
+def _enum_pids() -> list[int]:
+    """EnumProcesses：拿全机器的 pid 列表（psapi；缓冲不够就翻倍重试）。"""
+    psapi = ctypes.windll.psapi
+    cap = 4096
+    for _ in range(3):
+        arr = (wintypes.DWORD * cap)()
+        needed = wintypes.DWORD()
+        if not psapi.EnumProcesses(ctypes.byref(arr), ctypes.sizeof(arr),
+                                   ctypes.byref(needed)):
+            raise OSError("EnumProcesses 失败")
+        n = needed.value // ctypes.sizeof(wintypes.DWORD)
+        if n < cap:                                  # 没填满 = 拿全了
+            return [arr[i] for i in range(n)]
+        cap *= 2
+    return [arr[i] for i in range(cap)]
+
+
+def _process_image_path(pid: int) -> str | None:
+    """QueryFullProcessImageNameW：取进程完整镜像路径；打不开/查不到返回 None。
+
+    用 PROCESS_QUERY_LIMITED_INFORMATION 而不是 QUERY_INFORMATION：前者在
+    Vista+ 对多数同用户进程可用，权限要求最低；系统进程读不到就返回 None，
+    由调用方跳过（**绝不**退回按名字匹配——那正是要修的毛病）。
+    """
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return None
+    try:
+        size = wintypes.DWORD(32768)
+        buf = ctypes.create_unicode_buffer(size.value)
+        if not kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+            return None
+        return buf.value or None
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def pids_by_exe_path(target) -> list[int]:
+    """按**完整镜像路径**找进程（`pids_by_name` 的安全替代）。
+
+    为什么必须换（批次 C5，2026-11-03）：旧实现 `pids_by_name("game.exe")` + 
+    `taskkill /F /PID` 会杀掉**全机器上任何**叫 game.exe 的进程——别的 galgame、模拟器、
+    甚至用户自己的调试目标都会被牵连。同名的 exe 每天都有几十个，名字根本不是身份。
+    这里只认「镜像绝对路径与 stage 里的那份一致」，查不到路径的 pid 跳过并汇总记一笔，
+    绝不按名字兜底。
+    """
+    want = str(target)
+    out: list[int] = []
+    unreadable = 0
+    try:
+        my_pid = kernel32.GetCurrentProcessId()
+        for pid in _enum_pids():
+            if pid == my_pid:
+                continue
+            path = _process_image_path(pid)
+            if path is None:
+                unreadable += 1                       # 系统进程/权限不足：跳过，不猜
+                continue
+            if _same_exe_path(path, want):
+                out.append(pid)
+    except OSError as exc:
+        log("ERROR: 枚举进程失败: %s" % exc)
+        return out
+    if unreadable:
+        log("pids_by_exe_path: %d 个进程读不到镜像路径，已跳过（不按名字兜底）" % unreadable)
+    return out
+
 
 def wnd_text(hwnd):
     n = user32.GetWindowTextLengthW(hwnd)
@@ -270,15 +332,19 @@ def main(argv: list[str] | None = None) -> int:
     # ---- 1. stage ----
     # 复制除 *.xp3 外的所有文件（plugin/*.tpm、*.cf 等引擎必需），xp3 用硬链接零拷贝
     stage = os.path.join(STAGE_ROOT, "auto")
-    if args.reuse_stage and os.path.isdir(stage) and os.path.isfile(os.path.join(stage, "game.exe")):
+    stage_exe = os.path.join(stage, "game.exe")     # 本链路唯一认的「游戏进程」身份
+    if args.reuse_stage and os.path.isdir(stage) and os.path.isfile(stage_exe):
         log("reusing existing stage: %s" % stage)
     else:
-        for p in pids_by_name("game.exe"):
+        for p in pids_by_exe_path(stage_exe):
             subprocess.run(["taskkill", "/F", "/PID", str(p)], capture_output=True)
             time.sleep(0.5)
-        if os.path.isdir(stage):
-            shutil.rmtree(stage, ignore_errors=True)
-            time.sleep(0.5)
+        if os.path.isdir(stage) and not tb.drop_tree(stage):
+            # 清不掉就明确失败，别硬往下走：残留的旧 stage 里有上一次的 xp3 硬链接，
+            # 复制/硬链接混进去后 KrkrExtract 会拖错包，产物对不上索引，比直接报错难查得多。
+            log("ERROR: 无法清理 stage 目录（受保护目录或删除守卫）：%s" % stage)
+            return 3
+        time.sleep(0.5)
         os.makedirs(stage, exist_ok=True)
         exes = [f for f in os.listdir(game_dir) if f.lower().endswith(".exe") and "krkr" not in f.lower()]
         assert len(exes) == 1, "expected 1 game exe, got %r" % exes
@@ -304,19 +370,20 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---- 2. inject（reuse-stage 只跳过文件搬运；游戏进程永远清干净重注入，
     #          否则上一次失败留下的 UI 窗口会叠在新窗口上面互相遮挡）----
-    for p in pids_by_name("game.exe"):
+    for p in pids_by_exe_path(stage_exe):
         subprocess.run(["taskkill", "/F", "/PID", str(p)], capture_output=True)
         time.sleep(0.5)
-    subprocess.Popen([os.path.join(stage, "KrkrExtract.Lite.exe"), os.path.join(stage, "game.exe")], cwd=stage)
+    subprocess.Popen([os.path.join(stage, "KrkrExtract.Lite.exe"), stage_exe], cwd=stage)
     pid = None
     for _ in range(60):
-        if pids_by_name("game.exe"):
-            pid = pids_by_name("game.exe")[0]
+        found = pids_by_exe_path(stage_exe)
+        if found:
+            pid = found[0]
             break
         time.sleep(0.2)
     assert pid, "game process never appeared"
     time.sleep(5)
-    others = [p for p in pids_by_name("game.exe") if p != pid]
+    others = [p for p in pids_by_exe_path(stage_exe) if p != pid]
     if others:
         log("killing %d stray game instances" % len(others))
         for p in others:
@@ -453,14 +520,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.out:
         dst = os.path.join(args.out, "KrkrExtract_Output")
         os.makedirs(args.out, exist_ok=True)
-        if os.path.isdir(dst):
-            shutil.rmtree(dst, ignore_errors=True)
+        if not tb.drop_tree(dst):
+            # shutil.move 到已存在的目录会**静默嵌入一层**（dst/KrkrExtract_Output/...），
+            # orchestrator 那边再搬一次就变成 png/png/。宁可失败并留好产物路径。
+            log("ERROR: 目标已存在且删不掉，放弃搬移以免嵌层：%s" % dst)
+            log("产物仍留在：%s" % outdir)
+            return 1
         shutil.move(outdir, dst)
         log("moved output to %s" % dst)
 
     if not args.keep_stage:
         close_all_explorers()
-        for p in pids_by_name("game.exe"):
+        for p in pids_by_exe_path(stage_exe):
             subprocess.run(["taskkill", "/F", "/PID", str(p)], capture_output=True)
     return 0
 

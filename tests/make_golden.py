@@ -19,6 +19,7 @@ galgame_dispatch.scan()，把「引擎 + 得分 + 是否有警告」固化成 JS
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -29,6 +30,21 @@ import galgame_dispatch as gd  # noqa: E402
 
 FIXTURES = ROOT / "_fixtures"
 GOLDEN = Path(__file__).resolve().parent / "golden_detect.json"
+
+#: 归一化后的仓库根占位符（见 `normalise_paths`）。
+REPO_PLACEHOLDER = "<repo>"
+
+_ROOT_PATTERN = re.compile(
+    "|".join(re.escape(v) for v in {
+        str(ROOT),
+        str(ROOT).replace("\\", "/"),
+        str(ROOT).replace("/", "\\"),
+    }),
+    re.IGNORECASE,
+)
+
+#: 路径 token 的结束符：越过它就说明已经离开这个路径片段了。
+_PATH_STOP = set(" \t\r\n\"',)]};<>|")
 
 # 真实样本：(路径, 期望引擎)。路径不存在时默认跳过。
 # 12 个已跑通样本里 `My Best Deal` 已从磁盘消失，用 Swipe Right 覆盖 Ren'Py 分支。
@@ -46,6 +62,43 @@ REAL_SAMPLES: list[tuple[str, str]] = [
     (r"D:\HY\教师催眠1", "KiriKiri"),
     (r"D:\HY\Toshiue Kanojo", "Artemis"),
 ]
+
+
+def normalise_paths(value):
+    """把快照里**位于仓库内**的绝对路径换成 `<repo>/<相对 posix 路径>`。
+
+    为什么必须做（批次 C6，2026-11-03）：基线里存着
+    `D:\\K\\deepseek\\_fixtures\\unity_game\\MyGame_Data`，于是 `test_fixture_matches_golden`
+    靠逐字比对，只要仓库不在 `D:\\K\\deepseek`（clone 到别的盘、CI 的工作目录、QA 的副本）
+    这条就必红——而它保护的东西（detect 能找出 `_Data` 目录）与仓库装在哪毫无关系。
+    一条会随环境变红的「回归护栏」很快就没人看了。
+
+    仓库外的路径（真实样本 `D:\\HY\\...`）**原样保留**：那是本机事实，样本缺失时本来就跳过。
+    生成与比对两侧都过这个函数，所以基线里存的、和现场算出来的，是同一套归一化口径。
+    """
+    if isinstance(value, dict):
+        return {k: normalise_paths(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [normalise_paths(v) for v in value]
+    if isinstance(value, str):
+        return _normalise_str(value)
+    return value
+
+
+def _normalise_str(s: str) -> str:
+    """把字符串里出现的「仓库根 + 后续路径片段」整体替换成 `<repo>/...`（斜杠统一成 /）。"""
+    out = s
+    pos = 0
+    while True:
+        m = _ROOT_PATTERN.search(out, pos)
+        if m is None:
+            return out
+        tail = out[m.end():]
+        cut = next((i for i, ch in enumerate(tail) if ch in _PATH_STOP), len(tail))
+        rest = tail[:cut].lstrip("\\/").replace("\\", "/")
+        new = f"{REPO_PLACEHOLDER}/{rest}" if rest else REPO_PLACEHOLDER
+        out = out[:m.start()] + new + tail[cut:]
+        pos = m.start() + len(new)
 
 
 def _snap_one(rep) -> dict[str, object]:
@@ -99,7 +152,9 @@ def snapshot_real() -> dict[str, object]:
 
 
 def snapshot() -> dict[str, object]:
-    return {"fixtures": snapshot_fixtures(), "real": snapshot_real()}
+    # 归一化在**最外层**做一次：facts / evidence 里都可能出现绝对路径，
+    # 逐个来源去归一化必然漏（漏掉的那个就是将来换机器变红的那个）。
+    return normalise_paths({"fixtures": snapshot_fixtures(), "real": snapshot_real()})
 
 
 def _diff(label: str, want: object, cur: object) -> bool:

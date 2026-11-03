@@ -83,6 +83,70 @@ def pick_game_dir(raw: str) -> Path | None:
     return None
 
 
+def should_confirm_close(running: bool) -> bool:
+    """关窗时要不要先弹确认：**只在运行中**才问。
+
+    为什么问：工作线程是 daemon，直接 destroy 会把解包掐死在写文件的中间
+    （留下几 GB 半截 raw，且没有 manifest 说明它是什么）。运行中关窗的正确动作是
+    「置取消位 → 等当前阶段边界停下 → manifest 落盘 → 再关」，用户点确定只是在授权
+    这个流程，不是立刻杀进程。空闲时关窗当然不该多问一句（那只是烦人）。
+    """
+    return bool(running)
+
+
+def summarize_text(rc: int, man: dict) -> str | None:
+    """把一轮结果拼成「交付了多少 / 对账有没有差 / 验收结果」的人话摘要。
+
+    抽成模块级纯函数的原因（批次 C 收口，2026-11-03）：摘要里任何一个数字格式化
+    抛异常，都会顺着 `_poll` 把 Tk 轮询器打死——表现为摘要不弹、日志不再滚动、
+    再点「开始」跑完了也永远看不到结果，只能重启程序。实测触发点：
+    `verify.media_minutes` 在「没验成」的结局里是 **null**（key 存在、值为 None），
+    `f"{ver.get('media_minutes', 0):.1f}"` 的默认值 0 对 None 不生效 → TypeError。
+    所以这里必须显式区分「验过（有分钟数）」和「没验成（未统计）」，
+    **数据侧保持 null 不动**：null = 没测过，0.0 = 测过、是 0，两者不能混。
+
+    `man` 可能是 run() 的**包装 dict**（失败形态 `{error, stages, manifest}`），
+    先过 `orch._result_manifest` 取本轮 manifest；取不到就返回 None，
+    由调用方（`_summarize`）决定「本轮失败」怎么展示。
+    """
+    import orchestrator as orch
+
+    real = orch._result_manifest(man or {})
+    if real is None:
+        return None
+    man = real
+    counts = man.get("counts") or {}
+    final = counts.get("final") or {}
+    rec = man.get("reconcile") or {}
+    ver = man.get("verify") or {}
+    lines = [
+        f"引擎：{man.get('engine')}    退出码：{rc}",
+        f"交付（final）：{final.get('total', '?')} 个文件",
+    ]
+    if man.get("error"):
+        # 失败原因排在对账/验收之前：用户第一眼要知道「为什么红」
+        why = {"cancelled": "用户取消"}.get(man.get("error"), man.get("error"))
+        lines.append(f"失败原因：{why}（详见日志与 manifest 的 stages）")
+    if rec.get("method") != "no-index-available" and rec.get("diff") is not None:
+        lines.append(f"对账：索引 {rec.get('expected')} vs 落盘 {rec.get('actual')} "
+                     f"（diff={rec.get('diff')}）")
+    else:
+        lines.append("对账：无索引地面真相，未对账")
+    # media_minutes 为 None（没验成）时显示「未统计」而不是 0.0：
+    # 0.0 分钟会被读成「验了、真的 0 分钟」，与「没验」是两种事实。
+    minutes = ver.get("media_minutes")
+    media = (f"{minutes:.1f} 分钟" if isinstance(minutes, (int, float)) and not isinstance(minutes, bool)
+             else "媒体未统计")
+    lines.append(f"验收：图片 {ver.get('image_ok')}/{ver.get('image_fail')}失败 · "
+                 f"音频 {ver.get('audio_ok')}/{ver.get('audio_fail')}失败 · "
+                 f"视频 {ver.get('video_ok')}/{ver.get('video_fail')}失败 · {media}")
+    if ver.get("nonmedia"):
+        # 「没验」也是信息：非媒体文件不计失败，但要让用户知道有多少没看
+        lines.append(f"另有 {ver.get('nonmedia')} 个非媒体文件未验收"
+                     f"（按扩展名见 manifest.verify.nonmedia_by_ext）")
+    return "\n".join(lines)
+
+
 class App:
     """主窗口。`poll()` 只在主线程跑（root.after 驱动），worker 只往 self.q 塞。"""
 
@@ -117,6 +181,9 @@ class App:
                         variable=self.var_gui).pack(side="left")
         self.btn_run = ttk.Button(opt, text="开始解包", command=self._start)
         self.btn_run.pack(side="right")
+        self.btn_cancel = ttk.Button(opt, text="取消", command=self._cancel,
+                                     state="disabled")
+        self.btn_cancel.pack(side="right", padx=(0, 6))
         self.btn_open = ttk.Button(opt, text="打开输出目录", command=self._open_out,
                                    state="disabled")
         self.btn_open.pack(side="right", padx=(0, 6))
@@ -142,9 +209,28 @@ class App:
             self.var_status.set("就绪（未装 tkinterdnd2，拖拽不可用：浏览或粘贴路径）")
 
         self._last_out: Path | None = None
+        #: 取消位（每次运行换一个新的 Event；传给 run 的是 is_set 而不是 Event 本身，
+        #: 免得编排层为了「读一个标志」依赖 threading）
+        self._cancel_ev = threading.Event()
+        self._close_when_done = False        # 关窗时点了「确定」→ 跑完再 destroy
+        self._crashed = False                # 工作线程挂了（状态条别被后续 done 覆盖）
+        root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(100, self._poll)
 
     # ---- 交互回调（主线程） ----
+
+    def _on_close(self) -> None:
+        """关窗：运行中先确认，再走「取消 → 收尾 → 关窗」。"""
+        if should_confirm_close(self.running):
+            if not messagebox.askyesno(
+                    "Galgame Unpacker",
+                    "正在解包，确定要中止吗？\n\n"
+                    "已完成的产物会保留，本轮 manifest 仍会写出（error=cancelled）。"):
+                return
+            self._close_when_done = True
+            self._cancel()
+            return
+        self.root.destroy()
 
     def _on_drop(self, event) -> None:                      # noqa: ANN001
         game = pick_game_dir(event.data)
@@ -180,15 +266,29 @@ class App:
             messagebox.showerror("Galgame Unpacker", "游戏目录不存在")
             return
         out = Path(self.var_out.get().strip().strip('"') or default_out_dir(game))
+        self._cancel_ev = threading.Event()      # 每次运行一个新位，别带上一轮的状态
+        self._close_when_done = False
+        self._crashed = False
         self.running = True
         self.btn_run.configure(state="disabled")
+        self.btn_cancel.configure(state="normal")
         self.btn_open.configure(state="disabled")
         self.var_status.set(f"运行中：{game.name}")
         self._log_clear()
         self._last_out = out
+        # 第一行就告诉用户产物落在哪：跑十几分钟的活儿，最常被问的就是这个
+        self._log(f"输出目录：{out}")
         threading.Thread(target=self._worker,
-                         args=(game, out, bool(self.var_gui.get())),
+                         args=(game, out, bool(self.var_gui.get()), self._cancel_ev),
                          daemon=True).start()
+
+    def _cancel(self) -> None:
+        """置取消位。编排层在**阶段边界**停下，已完成阶段的产物保留可续跑。"""
+        if not self.running:
+            return
+        self._cancel_ev.set()
+        self.btn_cancel.configure(state="disabled")
+        self.var_status.set("正在取消…（停在当前阶段边界）")
 
     # ---- 日志/队列（poll 在主线程） ----
 
@@ -216,53 +316,89 @@ class App:
                     rc, man = item[1], item[2]
                     self.running = False
                     self.btn_run.configure(state="normal")
+                    self.btn_cancel.configure(state="disabled")
                     self.btn_open.configure(state="normal")
-                    self.var_status.set(f"完成，退出码 {rc}")
+                    if not self._crashed:
+                        # 崩溃时别再写「完成，退出码 1」——那会把「线程挂了」说成「跑完了」
+                        self.var_status.set(f"完成，退出码 {rc}")
                     self._summarize(rc, man)
+                    if self._close_when_done:
+                        # 关窗请求已经等在这里：manifest 写完、摘要弹过，现在才真关。
+                        self.root.destroy()
+                        return
                 elif kind == "crash":
+                    # 只记日志与状态，**不**在这里 destroy：worker 保证随后一定补一条
+                    # ("done", 1, {"error": "worker-aborted"})，由它统一收敛（按钮恢复、
+                    # 摘要照常弹、关窗请求也照常执行）。两个分支都 destroy 会漏掉摘要。
                     self.running = False
+                    self._crashed = True
                     self.btn_run.configure(state="normal")
+                    self.btn_cancel.configure(state="disabled")
                     self.var_status.set("运行异常（看日志）")
                     self._log(item[1])
         except queue.Empty:
             pass
-        self.root.after(100, self._poll)
+        except Exception:                                   # noqa: BLE001
+            # 单条事件处理失败**不许**杀死轮询器（批次 C 收口，2026-11-03 实测）：
+            # `_summarize` 遇到 `media_minutes=None` 抛 TypeError，原来 `after()`
+            # 在 try 末尾、异常先冲出函数 → `after` 永远执行不到 → 轮询停摆、队列
+            # 从此没人消费（摘要不弹、再点开始也看不到结果，只能重启程序）。
+            # 吞掉并写日志，下一条事件照常处理；异常细节进日志面板便于复盘。
+            try:
+                self._log("[错误] 界面事件处理失败（轮询继续）：\n"
+                          + traceback.format_exc())
+            except Exception:                               # noqa: BLE001
+                pass
+        finally:
+            try:
+                self.root.after(100, self._poll)
+            except tk.TclError:
+                # 窗口已销毁（用户关窗）：轮询自然终止，别让收尾再抛一次。
+                pass
 
     def _summarize(self, rc: int, man: dict) -> None:
-        """跑完弹一行人话：交付了多少、验了多少、对账有没有差。"""
-        counts = man.get("counts") or {}
-        final = counts.get("final") or {}
-        rec = man.get("reconcile") or {}
-        ver = man.get("verify") or {}
-        lines = [
-            f"引擎：{man.get('engine')}    退出码：{rc}",
-            f"交付（final）：{final.get('total', '?')} 个文件",
-        ]
-        if rec.get("method") != "no-index-available" and rec.get("diff") is not None:
-            lines.append(f"对账：索引 {rec.get('expected')} vs 落盘 {rec.get('actual')} "
-                         f"（diff={rec.get('diff')}）")
-        else:
-            lines.append("对账：无索引地面真相，未对账")
-        lines.append(f"验收：图片 {ver.get('image_ok')}/{ver.get('image_fail')}失败 · "
-                     f"音频 {ver.get('audio_ok')}/{ver.get('audio_fail')}失败 · "
-                     f"视频 {ver.get('video_ok')}/{ver.get('video_fail')}失败 · "
-                     f"{ver.get('media_minutes', 0):.1f} 分钟")
-        detail = "\n".join(lines)
-        self._log("\n" + detail)
+        """跑完弹一行人话：交付了多少、验了多少、对账有没有差。
+
+        文案拼装全部在模块级 `summarize_text`（纯函数，tests 锁得住、不依赖显示）；
+        这里只负责「写进日志面板 + 弹窗」。取不到本轮 manifest 时明确说失败，
+        别装成 0 个文件。
+        """
+        text = summarize_text(rc, man)
+        if text is None:
+            res = man or {}
+            err = res.get("error") or "未知（本轮未产出 manifest）"
+            detail = f"本轮失败：{err}（本轮未产出 manifest，详见日志）"
+            self._log("\n" + detail)
+            messagebox.showwarning("Galgame Unpacker", detail)
+            return
+        self._log("\n" + text)
         if self._last_out:
             self._log(f"manifest：{self._last_out / 'manifest.json'}")
         (messagebox.showinfo if rc == 0 else messagebox.showwarning)(
-            "Galgame Unpacker", detail)
+            "Galgame Unpacker", text)
 
     # ---- 工作线程（不碰任何 Tk） ----
 
-    def _worker(self, game: Path, out: Path, allow_gui: bool) -> None:
+    def _worker(self, game: Path, out: Path, allow_gui: bool,
+                cancel_ev: threading.Event) -> None:
+        """跑一次全链，并**保证**最后一定有一条结果入队。
+
+        为什么是 `except BaseException` + `finally` 兜一条 `done`（批次 C7，2026-11-03）：
+        工作线程是 daemon，它一旦异常退出，`("done", …)` 就永远不会入队 —— GUI 停在
+        「运行中」、开始/取消按钮全灰、取消键也点不动。实测就是这么死的：
+        `toolbridge.drop_tree` 重抛 `SystemExit`（删除守卫拒绝删除时抛它），
+        `except Exception` 拦不住，线程静默消失。
+        所以这里兜 BaseException，并且**无论走哪条路**都补一条 `done` 让主线程收敛。
+        （`KeyboardInterrupt` 同样兜住：它是主线程的事，工作线程里没人接。）
+        """
+        crashed = False
         try:
             import orchestrator as orch
             ctx = orch.Ctx(game_dir=game, out_dir=out,
                            work_dir=out / "_work",
                            manifest_path=out / "manifest.json",
-                           allow_gui=allow_gui)
+                           allow_gui=allow_gui,
+                           should_stop=cancel_ev.is_set)
             orig_log = ctx.log
 
             def sink(stage: str, msg: str) -> None:
@@ -272,10 +408,18 @@ class App:
                 self.q.put(("stage", stage))
 
             ctx.log = sink                                  # type: ignore[method-assign]
-            rc, man = orch.run(ctx)
-            self.q.put(("done", rc, man))
-        except Exception:                                    # noqa: BLE001
+            rc, res = orch.run(ctx)
+            # 原样把 run() 的返回交给主线程：成功是 manifest 本身、失败是带 error 的包装，
+            # 由 `_summarize` 统一走 `_result_manifest` 拆（拆不出来才说「本轮未产出」）。
+            self.q.put(("done", rc, res))
+        except BaseException:                                # noqa: BLE001 —— 见 docstring
+            crashed = True
             self.q.put(("crash", traceback.format_exc()))
+        finally:
+            if crashed:
+                # 兜底：哪怕上面拿不到 rc/manifest，也要让主线程把「运行中」收敛掉。
+                self.q.put(("done", 1, {"error": "worker-aborted", "manifest": None,
+                                        "stages": []}))
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""orchestrator.py —— detect → case-lookup → extract → postprocess → verify → manifest 一条命令跑完。
+"""orchestrator.py —— detect → case-lookup → preflight → extract → postprocess → verify → manifest 一条命令跑完。
 
 `case-lookup`（阶段 1.5）按指纹签名查 `cases/` 案例库，**只报告历史解法与坑，不接管决策**：
 对账的地面真相永远是编排器自己从归档索引算出来的数，案例里的 expected_total 不参与对账。
@@ -33,6 +33,10 @@
   3. 验收看产物：图片走 Pillow verify()，音视频走 toolbridge.ffprobe（带扩展名白名单）。
   4. counts 分 raw / final / converted 三段（software-plan §2 定案）。
   5. 每个阶段都落日志到 _work/，失败时能只读日志复盘。
+  6. 跑之前先问盘（preflight）：解包体积≈原包，盘不够会在中途炸并留下几 GB 半成品；
+     宁可一开始就说「需要 X GB、可用 Y GB」。
+  7. 失败的运行也写 manifest（`ok:false` + `error`）：交付记录必须能看出「这次没成」，
+     不许让磁盘上留着上一次成功那份、被下游当成结论。
 """
 from __future__ import annotations
 
@@ -40,12 +44,15 @@ import argparse
 import contextlib
 import io
 import json
+import os
 import shutil
 import sys
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -93,6 +100,11 @@ AV_EXT = {".mp4", ".mkv", ".avi", ".webm", ".mov", ".wmv", ".flv", ".mpg", ".mpe
 IMPLEMENTED = ("Ren'Py", "KiriKiri", "RPG Maker", "Yu-Ris", "AdvHD", "ExHIBIT",
                "CatSystem2", "Unity", "Artemis")
 
+#: verify 的默认并发度（批次 C1）。瓶颈是子进程启动与磁盘头读取，不是 CPU：
+#: 实测单文件 ffprobe ≈114ms，8 路把等待重叠掉就够；再加只会让同一块盘互相抢。
+#: 环境变量 `GALUNPACK_VERIFY_WORKERS` 可覆盖，`--verify-jobs 1` 则完全串行。
+VERIFY_WORKERS = 8
+
 
 # ---------------------------------------------------------------- 结构
 
@@ -120,6 +132,16 @@ def _run_sibling(mod, argv: list[str]) -> tuple[int, str]:
         traceback.print_exc(file=buf)
         rc = 1
     return int(rc or 0), buf.getvalue()
+
+
+def _never_stop() -> bool:
+    """`Ctx.should_stop` 的默认实现：CLI 与测试永远不取消。
+
+    用命名函数而不是 `lambda: False`：dataclass 的默认值在类创建时求值，写 lambda
+    会让每个实例共享同一个匿名对象，报错时看到的是 `<function <lambda> at 0x...>`
+    —— 排查「谁把 should_stop 换掉了」时完全没用。
+    """
+    return False
 
 
 @dataclass
@@ -151,6 +173,16 @@ class Ctx:
     # CatSystem2 用它：HG-3 转出的 PNG 进了 png/，raw 里那份中间产物不该再算一次交付。
     # 按**路径**而不是按扩展名 —— 引擎把扩展名混淆过，照扩展名排除必然漏。
     consumed: list[str] = field(default_factory=list)
+    # 取消钩子（GUI 的「取消」按钮）：返回 True = 用户要求中止。
+    # 默认永不取消，CLI 与测试完全不受影响。run() 只在**阶段边界**和 verify 的文件循环里
+    # 检查 —— 解包器内部没法半途安全中断（外部工具正在跑、产物正写到一半），
+    # 硬中断只会留下没对账的半成品，比「再等一会儿」更糟。
+    should_stop: Callable[[], bool] = _never_stop
+    #: verify 的并发度（`--verify-jobs`）。None = 走 `resolve_verify_jobs()` 的
+    #: 「环境变量 → 默认 8」链路；1 = 完全串行（回退档，行为与并行化之前一致）。
+    verify_jobs: int | None = None
+    #: `--strict`：对账没有地面真相、或验收没执行，也算失败（见 run() 里的说明）。
+    strict: bool = False
 
     @property
     def raw_dir(self) -> Path:
@@ -172,6 +204,34 @@ def _count(root: Path, exts: set[str] | None = None) -> tb.Products:
 
 def _by_ext_round(prod: tb.Products) -> dict:
     return {k: v for k, v in sorted(prod.by_ext.items())}
+
+
+#: 「尽力清理」的唯一实现在 toolbridge（批次 B3，2026-11-03）。这里只做外观别名：
+#: 本文件内部以及测试都用 `orch.drop_tree(...)` 这个名字，别再抄第二份实现——
+#: 抄出来的第二份一定会和第一份在「吞什么、重抛什么」上分叉
+#: （现在的契约：只重抛 KeyboardInterrupt，SystemExit 也算「没删干净 → False」）。
+drop_tree = tb.drop_tree
+
+
+def _move_dir_clean(src: Path, dst: Path) -> str | None:
+    """把 `src` 整目录搬成 `dst`，**保证不会嵌层**；成功返回 None，失败返回原因。
+
+    坑：`shutil.move(src, dst)` 在 `dst` 已存在时不会报错，而是把 `src` 塞成
+    `dst/<src.name>/...`。对 KiriKiri GUI 链路来说结果就是 `png/png/*.png`：
+    交付清单多一层路径、对账总数照样自洽 —— 属于「无声的错」。
+    所以搬之前一律先把目标清掉；清不掉就明确失败，不硬搬。
+
+    单独一个函数是因为这条路径有两处要用（`data → raw/`、`png → png/`），
+    而「目标已存在」这个坑已经踩过两次。
+    """
+    if not drop_tree(dst):
+        return (f"目标目录已存在且删不掉，放弃搬移以免嵌层: {dst}"
+                f"（可能是受保护目录或安全删除守卫拦住了）")
+    try:
+        shutil.move(str(src), str(dst))
+    except OSError as exc:
+        return f"搬移失败 {src} -> {dst}: {type(exc).__name__}: {exc}"
+    return None
 
 
 # ---------------------------------------------------------------- 阶段 1: detect
@@ -261,6 +321,131 @@ def stage_case_lookup(ctx: Ctx, detect_data: dict | None = None,
         st.detail = (f"命中 {len(res['candidates'])} 个案例"
                      f"（签名 {res['signature']}）：{names}")
         ctx.log("case-lookup", json.dumps(res, ensure_ascii=False, indent=2))
+    return st
+
+
+# ---------------------------------------------------------------- 阶段 1.8: 磁盘预检
+
+#: 预检的估算系数（批次 B1，2026-11-03）。
+#: 为什么是 1.15 + 512MiB：RPA/XP3 这类包多是裸存，解包体积≈原包，但 `.tlg`→PNG、
+#: `.hg3`→PNG 转换后通常变大，还要留 manifest/日志/AssetStudio 临时目录；
+#: 15% 是转换膨胀的余量，512MiB 是「小样本也有地方折腾」的固定地板。
+#: 加密 KiriKiri 再叠加一倍（`--allow-gui` 要在 ASCII stage 里放第二份，`krkr_auto_extract` 段）。
+PREFLIGHT_OVERHEAD_RATIO = 1.15
+PREFLIGHT_RESERVE_BYTES = 512 * 1024 * 1024
+
+#: 可用空间低于「需要量」的这个比例就判失败（不是「差不多就行」：写满盘的后果是
+#: 半成品 + 退出码 1，用户得先猜是哪一步炸的）。
+PREFLIGHT_MIN_FREE_RATIO = 0.5
+
+
+def _tree_bytes(root: Path) -> int:
+    """递归求目录体积（字节）。单项 `OSError` 跳过，不让坏链接/权限拒炸掉预检。
+
+    用 `os.scandir` 手写而不是 `rglob`：真实样本里 CJK 长路径、杀软占用的文件、
+    断掉的符号链接都是常态，任何一个 OSError 都不该让编排在**开始解包之前**崩掉。
+    数出来的是**下限**（跳过的项不计），预检只用它做量级判断，不需要精确。
+    """
+    total = 0
+    stack = [str(root)]
+    while stack:
+        cur = stack.pop()
+        try:
+            with os.scandir(cur) as it:
+                for entry in it:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            total += entry.stat(follow_symlinks=False).st_size
+                    except OSError:                        # 单项坏掉就跳过这一项
+                        continue
+        except OSError:                                    # 整个目录读不了就跳过
+            continue
+    return total
+
+
+def _gb(n: int | None) -> str:
+    """字节 → 人话（GB，两位小数）。`None` 显示成「未知」，不装作 0。"""
+    if n is None:
+        return "未知"
+    return f"{n / (1024 ** 3):.2f} GB"
+
+
+def stage_preflight(ctx: Ctx) -> Stage:
+    """解包前的磁盘余量预检（software-plan 风险表承诺过、代码里一直缺的那一条）。
+
+    为什么值得一个阶段：大样本解包体积≈原包，盘不够时会在**中途**失败，
+    留下几 GB 半成品；用户看到的是一句工具报错，而不是「你的 D 盘只剩 3 GB」。
+    预检把这件事提前到「还没动一个文件」的时候说清楚。
+
+    三档结论：
+      · 可用 < 需要的一半      → `ok=False`（继续跑必然写到中途炸）
+      · 一半 ≤ 可用 < 需要     → `ok=True` 但标「余量偏紧」并 WARN（也许能跑完，别赌）
+      · 可用 ≥ 需要            → 正常放行
+
+    游戏目录不存在/为空时**直接放行**：测试与 `--engine` 强制指定都大量使用这种 ctx，
+    预检不该成为「没样本就不能跑」的新门槛。
+    `--reuse-raw` 复用时也直接放行：不重新解包，就不该按整份源体积卡盘（见函数内注释）。
+    """
+    st = Stage("preflight")
+    t0 = time.time()
+    source_bytes = _tree_bytes(ctx.game_dir)
+    if ctx.reuse_raw:
+        # 复用模式**不重新解包**：磁盘只需要放 raw 的复制与对账产物，不该按整份源体积卡。
+        # 而「拿着已解好的 raw 在空间紧张的盘上复跑」恰恰是想省空间的场景，
+        # 拿 1.15 倍源体积去挡它等于把最需要复用的人挡在门外。
+        st.ok = True
+        st.detail = "复用模式，跳过余量预检"
+        st.data = {"source_bytes": source_bytes, "required_bytes": None, "free_bytes": None,
+                   "reused_from": str(ctx.reuse_raw)}
+        st.seconds = time.time() - t0
+        return st
+    if source_bytes <= 0:
+        st.ok = True
+        st.detail = "游戏目录为空或不可读，跳过余量预检"
+        st.data = {"source_bytes": source_bytes, "required_bytes": None, "free_bytes": None}
+        st.seconds = time.time() - t0
+        return st
+
+    required = int(source_bytes * PREFLIGHT_OVERHEAD_RATIO) + PREFLIGHT_RESERVE_BYTES
+    if ctx.allow_gui:
+        # 加密 KiriKiri：ASCII stage 里要放第二份（xp3 优先硬链接，跨卷时才真拷）
+        required += source_bytes
+
+    # 输出目录此时可能还不存在：往上找到第一个存在的祖先再问磁盘。
+    probe = ctx.out_dir
+    while not probe.exists() and probe.parent != probe:
+        probe = probe.parent
+    try:
+        free = shutil.disk_usage(probe).free
+    except OSError as exc:
+        st.ok = True
+        st.detail = f"读不到输出盘余量（{type(exc).__name__}: {exc}），跳过预检"
+        st.data = {"source_bytes": source_bytes, "required_bytes": required,
+                   "free_bytes": None}
+        st.seconds = time.time() - t0
+        return st
+
+    st.data = {"source_bytes": source_bytes, "required_bytes": required, "free_bytes": free}
+    if free < required * PREFLIGHT_MIN_FREE_RATIO:
+        st.ok = False
+        st.detail = (f"输出盘余量不足：需要约 {_gb(required)}（游戏 {_gb(source_bytes)}，"
+                     f"含转换与临时开销），可用 {_gb(free)}。"
+                     f"请换到更大的盘，或清出空间后重跑。")
+        ctx.log("preflight", f"[ERROR] free={free} required={required} "
+                             f"source={source_bytes} out={ctx.out_dir}")
+    elif free < required:
+        st.ok = True
+        st.detail = (f"余量偏紧：需要约 {_gb(required)}，可用 {_gb(free)}"
+                     f"（游戏 {_gb(source_bytes)}），大样本可能中途写满")
+        ctx.log("preflight", f"[WARN] 余量偏紧 free={free} required={required}")
+    else:
+        st.ok = True
+        st.detail = (f"磁盘余量充足：需要约 {_gb(required)}，可用 {_gb(free)}"
+                     f"（游戏 {_gb(source_bytes)}）")
+        ctx.log("preflight", f"free={free} required={required} source={source_bytes}")
+    st.seconds = time.time() - t0
     return st
 
 
@@ -381,11 +566,13 @@ def stage_extract_kirikiri(ctx: Ctx) -> Stage:
         if xp3s:
             expected = 0
             listable = True
+            unlistable: list[str] = []
             per_archive = []
             for xp3 in xp3s:
                 ok, entries, _out = tb.garbro_list(xp3)
                 if not ok:
                     listable = False
+                    unlistable.append(xp3.name)
                     per_archive.append({"archive": xp3.name, "expected": None,
                                         "got": None, "listable": False})
                     continue
@@ -393,6 +580,14 @@ def stage_extract_kirikiri(ctx: Ctx) -> Stage:
                 per_archive.append({"archive": xp3.name, "expected": entries,
                                     "got": None, "listable": True})
             st.data["archives"] = per_archive
+            if unlistable:
+                # 复用模式下不重导，所以这里不判失败（产物是既有事实），但**必须显式报出**
+                # 哪些包没对上地面真相 —— 靠 manifest.source.unsupported 落盘，别只躺在日志里。
+                st.data["unsupported"] = [
+                    {"archive": n, "reason": "GARbro 列不出条目（地面真相缺失，未对账）"}
+                    for n in unlistable]
+                ctx.log("extract", f"  [WARN] {len(unlistable)} 个 xp3 列不出条目，未对账: "
+                                   f"{', '.join(unlistable)}")
             if listable:
                 st.data["expected_total"] = expected
                 if actual != expected:
@@ -433,11 +628,16 @@ def stage_extract_kirikiri(ctx: Ctx) -> Stage:
             st.seconds = time.time() - t0
             return st
         data_dir = kout / "data" if (kout / "data").is_dir() else kout
-        if ctx.raw_dir.exists():
-            shutil.rmtree(ctx.raw_dir, ignore_errors=True)
-        shutil.move(str(data_dir), str(ctx.raw_dir))
-        if (kout / "png").is_dir():
-            shutil.move(str(kout / "png"), str(ctx.png_dir))
+        # 搬之前先清目标（`_move_dir_clean` 内部保证「不会嵌层」）。两条搬移共用同一个
+        # 失败出口：任一条搬不干净就判失败，不让产物停在「搬了一半」的状态。
+        err = _move_dir_clean(data_dir, ctx.raw_dir)
+        if err is None and (kout / "png").is_dir():
+            err = _move_dir_clean(kout / "png", ctx.png_dir)
+        if err:
+            st.detail = f"GUI 链路产物落盘失败：{err}"
+            st.data["move_error"] = err
+            st.seconds = time.time() - t0
+            return st
         st.ok = True
         st.data.update({"mode": "gui", "raw_total": _count(ctx.raw_dir).total})
         st.detail = f"GUI 链路完成，raw {st.data['raw_total']} 个文件"
@@ -447,9 +647,14 @@ def stage_extract_kirikiri(ctx: Ctx) -> Stage:
     # 静态可解：逐包 garbro -x，产出落到 raw/<stem>/
     per_archive = []
     expected_total = 0
+    unlistable: list[str] = []
     for xp3 in xp3s:
         ok, entries, out = tb.garbro_list(xp3)
         if not ok:
+            # 列不出条目 = 这个包的地面真相缺失。绝不能「跳过它、只拿其余包对账」：
+            # 那样 expected 少算了却仍然 0 差，等于把漏导洗成通过（2026-11-03 审计 A4）。
+            unlistable.append(xp3.name)
+            ctx.log("extract", f"$ garbro -l {xp3.name}\n{out[:2000]}")
             per_archive.append({"archive": xp3.name, "expected": None, "got": 0,
                                 "listable": False})
             continue
@@ -470,6 +675,15 @@ def stage_extract_kirikiri(ctx: Ctx) -> Stage:
     st.data.update({"mode": "static", "archives": per_archive,
                     "expected_total": expected_total, "actual_total": actual_total,
                     "reconcile_ok": actual_total == expected_total})
+    if unlistable:
+        # 已导出的包照旧留在 raw 里（重跑很贵，别白扔），但**本轮判失败并点名是哪个包**：
+        # 「有意排除」必须显式报出，而且要走 manifest.source.unsupported 落盘。
+        st.data["unsupported"] = [{"archive": n, "reason": "GARbro 列不出条目（地面真相缺失）"}
+                                  for n in unlistable]
+        st.detail = (f"{len(unlistable)}/{len(xp3s)} 个 xp3 列不出条目："
+                     f"{', '.join(unlistable)}；这些包无法对账，本轮判失败")
+        st.seconds = time.time() - t0
+        return st
     st.seconds = time.time() - t0
     if actual_total != expected_total:
         st.detail = f"对账失败：GARbro 条目 {expected_total} vs 落盘 {actual_total}"
@@ -1093,6 +1307,15 @@ def stage_extract_cs2(ctx: Ctx) -> Stage:
 
 # ---------------------------------------------------------------- Unity
 
+#: Texture2D 已知缺口的放行阈值（审计 A3，2026-11-03 定案）。
+#: AssetStudio 的 JSON 枚举会列出引用型资产、Convert 不导出，所以「导出数 < 枚举数」是常态
+#: （Happiness Double Room 实测 460/455）。但常态不等于可以无限放过：
+#: 比例超 2% 或绝对数超 20 就必须红灯（AssetStudio 换版本、纹理被裁、路径写错都会先表现在这里）。
+#: 两个条件是**或**：小样本游戏（几十张图）靠比例拦，大样本靠绝对数拦。
+UNITY_TEXTURE2D_GAP_RATIO = 0.02
+UNITY_TEXTURE2D_GAP_ABS = 20
+
+
 def _unity_data_dir(game_dir: Path) -> Path | None:
     """找 Unity 的 `<游戏名>_Data` 目录。
 
@@ -1141,9 +1364,29 @@ def stage_extract_unity(ctx: Ctx) -> Stage:
         audio_got = got["by_type"].get("AudioClip", 0)
         audio_exp = exp["by_type"].get("AudioClip", 0)
         audio_dir = ctx.raw_dir / "Audio"
+        # `enumerate_names` 的三种结局必须分开处理（批次 C11）：
+        #   None  = 枚举失败（超时/工具没起来）→ 地面真相未知；
+        #   []    = 枚举成功但一个名字都没有 → 与「JSON 说有 N 个」自相矛盾；
+        #   [...] = 正常，可按名字对账。
+        # 旧实现把前两种都变成 []，于是 expected 被算成 0、对账 0 差、验收 0 失败——
+        # 一作 1441 条音频没解出来，交付记录却是全绿的。
         names = (_as_audio_collect2.enumerate_names(data_dir, as_exe,
                                                     ctx.work_dir / "unity")
                  if audio_exp > 0 else [])
+        if names is None:
+            st.ok = False
+            st.detail = (f"音频名字枚举超时/失败，地面真相未知（ByType JSON 说有 "
+                         f"{audio_exp} 个 AudioClip）；对账不可信，判失败")
+            st.data["audio_enum"] = "failed"
+            st.seconds = time.time() - t0
+            return st
+        if not names and audio_exp > 0:
+            st.ok = False
+            st.detail = (f"音频名字枚举返回 0 条，但 JSON 枚举说有 {audio_exp} 个 AudioClip"
+                         f"（互相矛盾）；对账不可信，判失败")
+            st.data["audio_enum"] = "empty-but-expected"
+            st.seconds = time.time() - t0
+            return st
         if names:
             # 逐条枚举才是真地面真相：ByType 的 JSON 导出会让同名资产互相覆盖而少数
             if len(names) != audio_exp:
@@ -1162,12 +1405,8 @@ def stage_extract_unity(ctx: Ctx) -> Stage:
             st.data["audio_missing"] = len(res["missing"])
             ctx.log("extract", f"音频补齐后 {audio_got}/{audio_exp}，"
                                f"runs={res['runs']}，缺 {len(res['missing'])}")
-        elif audio_exp > 0 and audio_got < audio_exp:
-            # 枚举失败才退回前缀分组（覆盖不全，但对账仍会拦下来）
-            ctx.log("extract", "音频名字枚举失败，退回前缀分组多轮累积...")
-            rc, out = _run_sibling(_as_audio_collect2, [str(data_dir), str(audio_dir)])
-            ctx.log("extract", f"$ _as_audio_collect2.py rc={rc}\n{out}")
-            audio_got = len(list(audio_dir.rglob("*.wav")))
+        # 旧的「退回前缀分组多轮累积」分支已删（C11）：它只在枚举失败时有用，而枚举失败
+        # 现在直接判失败。留着它等于留一条「静默降级」的后门——正是这次要堵的东西。
         if audio_exp > 0:
             got["by_type"]["AudioClip"] = audio_got
             got["total"] = sum(got["by_type"].values())
@@ -1189,29 +1428,53 @@ def stage_extract_unity(ctx: Ctx) -> Stage:
             archives.append({"archive": t, "expected": None, "got": got_n})
 
     # Texture2D 已知缺口：AssetStudio 的 JSON 枚举会列出所有资产（含引用型），
-    # 但 Convert 只导出可直接使用的资产。本作实测 5 个（460 枚举 / 455 导出）。
-    # 这不是 bug，是 AssetStudio 的行为——ground truth 是 JSON 枚举，但交付口径
-    # 是 Convert 导出。缺口必须显式算出来并对账，不能静默放过。
+    # 但 Convert 只导出可直接使用的资产（Happiness Double Room 实测 460 枚举 / 455 导出）。
+    #
+    # 2026-11-03 修（审计 A3）：缺口**绝不参与 expected 的削减**。原实现
+    # `expected = 总数 − 缺口`，等于让缺口自己迁就自己：导出少 5 个就把期望也减 5，
+    # 无论少多少都 0 差 —— 这正是「无声的漏验」。现在改成两条硬约束：
+    #   1. 缺口只允许出现在 Texture2D 这一类，其它类必须逐类严格相等；
+    #   2. Texture2D 缺口必须在阈值内（比例 ≤ 2% 且绝对数 ≤ 20），超了判失败
+    #      —— 常态 5 个放行但**显式报出**，AssetStudio 行为一变就立刻红灯。
+    got_by_type = {a["archive"]: a["got"] for a in archives}
     texture2d_exp = exp["by_type"].get("Texture2D", 0)
-    texture2d_actual = len(list((ctx.raw_dir / "Image_Texture2D").rglob("*"))) if (ctx.raw_dir / "Image_Texture2D").is_dir() else 0
+    texture2d_actual = got_by_type.get("Texture2D", 0)
     texture2d_gap = texture2d_exp - texture2d_actual
-    adjusted_expected = expected_total - texture2d_gap
+    texture2d_ratio = (texture2d_gap / texture2d_exp) if texture2d_exp else 0.0
+    gap_over = texture2d_gap > 0 and (texture2d_ratio > UNITY_TEXTURE2D_GAP_RATIO
+                                      or texture2d_gap > UNITY_TEXTURE2D_GAP_ABS)
+
+    # 非 Texture2D 的类不允许有任何差：否则「图片少 5 张」会被记成 Texture2D 缺口混过去。
+    type_mism = [f"{t}：枚举 {exp['by_type'].get(t, 0)} vs 落盘 {got_by_type.get(t, 0)}"
+                 for t in unity.UNITY_TYPES
+                 if t != "Texture2D"
+                 and got_by_type.get(t, 0) != exp["by_type"].get(t, 0)]
+    # 总账：落盘比枚举少的部分必须**恰好**等于 Texture2D 缺口，多出来的短缺无处解释。
+    shortfall = expected_total - actual_total
 
     st.data["json_total"] = expected_total
-    st.data["expected_total"] = adjusted_expected
+    st.data["expected_total"] = expected_total      # 缺口不削减期望值（见上）
     st.data["actual_total"] = actual_total
     st.data["archives"] = archives
     st.data["json_counts"] = exp["by_type"]
     st.data["texture2d_gap"] = texture2d_gap
 
-    if actual_total != adjusted_expected:
+    if gap_over:
         st.ok = False
-        st.detail = (f"对账失败：期望 {adjusted_expected}（JSON {expected_total} − Texture2D 缺口 {texture2d_gap}）"
-                     f" vs 落盘 {actual_total}"
-                     f"（JSON 枚举 {exp['by_type']}）")
+        st.detail = (f"对账失败：AssetStudio 只导出了 {texture2d_actual}/{texture2d_exp} 个 "
+                     f"Texture2D（缺口 {texture2d_gap} 个，占 {texture2d_ratio:.1%}，超过阈值 "
+                     f"{UNITY_TEXTURE2D_GAP_RATIO:.0%}/{UNITY_TEXTURE2D_GAP_ABS} 个）")
+    elif type_mism:
+        st.ok = False
+        st.detail = ("对账失败：缺口只允许出现在 Texture2D，但 " + "；".join(type_mism[:3]))
+    elif shortfall != texture2d_gap:
+        st.ok = False
+        st.detail = (f"对账失败：JSON 枚举 {expected_total} vs 落盘 {actual_total}"
+                     f"（差 {shortfall}，但 Texture2D 缺口只能解释 {texture2d_gap}）")
     else:
         st.ok = True
-        gap_note = f"，Texture2D 已知缺口 {texture2d_gap}" if texture2d_gap > 0 else ""
+        gap_note = (f"，Texture2D 已知缺口 {texture2d_gap} 个"
+                    f"（{texture2d_actual}/{texture2d_exp}）" if texture2d_gap > 0 else "")
         st.detail = (f"JSON 枚举 {expected_total} 个资产，Convert 导出 {actual_total} 个文件"
                      f"{gap_note}，对账 0 差")
     st.seconds = time.time() - t0
@@ -1610,6 +1873,77 @@ def _final_files(ctx: Ctx) -> list[tuple[Path, str]]:
     return manifest.iter_final_files(ctx.raw_dir, ctx.png_dir, CONVERTIBLE, ctx.consumed)
 
 
+def _probe_one(p: Path, label: str) -> dict:
+    """探**一个**产物，返回一条不可变的事实（kind / ok / fail / duration）。
+
+    抽出来是为了并行化时「串行 = 并行」在实现上就是同一段代码 —— 两条路径不可能漂移
+    （这是结果能进回归的前提）。约束：**纯函数**，不碰 ctx、不写日志、不改任何全局状态；
+    worker 线程只负责算，写日志与聚合留给主线程。
+
+    kind 取值：zero / image / audio / video / nonmedia / probe-error。
+    """
+    ext = p.suffix.lower()
+    # 0 字节文件先看是不是源本身声明的空占位（AGENTS.md Ren'Py 段：
+    # 「0 字节文件要先查索引」——源包声明 0 长度属正常，不是解包 bug）。
+    # 通用链路拿不到索引，所以这里先单列不算失败，末尾用比例护栏兜底。
+    try:
+        is_empty = p.stat().st_size == 0
+    except OSError:
+        is_empty = False
+    if is_empty:
+        return {"kind": "zero", "ok": True, "fail": None, "duration": 0.0}
+    if ext in IMG_EXT:
+        try:
+            from PIL import Image
+            with Image.open(p) as im:
+                im.verify()
+            return {"kind": "image", "ok": True, "fail": None, "duration": 0.0}
+        except Exception as exc:                               # noqa: BLE001
+            return {"kind": "image", "ok": False, "duration": 0.0,
+                    "fail": f"[image] {label} :: {type(exc).__name__}: {exc}"}
+    if ext in AV_EXT:
+        info, why = tb.ffprobe_ex(p)
+        if info is None:
+            # 带上原因：`ffprobe 无结果` 把「文件真坏」「子进程没起来/超时」
+            # 「JSON 里没有音视频流」混成一句，看日志的人无从判断该不该慌。
+            return {"kind": "audio", "ok": False, "duration": 0.0,
+                    "fail": f"[av] {label} :: ffprobe 无结果——{why}"}
+        return {"kind": "video" if info["kind"] == "video" else "audio",
+                "ok": True, "fail": None, "duration": info.get("dur") or 0.0}
+    return {"kind": "nonmedia", "ok": True, "fail": None, "duration": 0.0}
+
+
+def _probe_one_safe(p: Path, label: str) -> dict:
+    """`_probe_one` 的兜底版：探测本身抛异常 → 降级成一条失败事实。
+
+    为什么必须在 worker 里兜住：线程池里一个 future 抛异常，`future.result()` 会把异常
+    重新抛到主线程，整个 verify 阶段就没了——一个坏文件不该让 3499 个文件白验。
+    """
+    try:
+        return _probe_one(p, label)
+    except Exception as exc:                                   # noqa: BLE001
+        return {"kind": "probe-error", "ok": False, "duration": 0.0,
+                "fail": f"[probe] {label} :: {type(exc).__name__}: {exc}"}
+
+
+def resolve_verify_jobs(ctx: Ctx) -> int:
+    """决定 verify 的并发度：`--verify-jobs` > 环境变量 > 默认 8。
+
+    为什么默认 8：瓶颈是**子进程启动 + 磁盘**（实测单文件 ffprobe ≈114ms，几乎全是
+    `CreateProcess` 与文件头读），8 路足够把等待重叠掉；再往上加对机械硬盘只会互相抢。
+    `1` 是保底档：完全不进线程池，行为与并行化之前逐字一致（用作回退与回归基准）。
+    """
+    if ctx.verify_jobs is not None:
+        return max(1, int(ctx.verify_jobs))
+    raw = os.environ.get("GALUNPACK_VERIFY_WORKERS", "").strip()
+    if raw:
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            ctx.log("verify", f"[WARN] GALUNPACK_VERIFY_WORKERS={raw!r} 不是整数，用默认值")
+    return VERIFY_WORKERS
+
+
 def stage_verify(ctx: Ctx) -> Stage:
     st = Stage("verify")
     t0 = time.time()
@@ -1624,58 +1958,107 @@ def stage_verify(ctx: Ctx) -> Stage:
     files = _final_files(ctx)
     if not files:
         st.detail = "没有可验收的产物"
+        # 带一个显式 reason：run() 要靠它把 error 码从笼统的 verify-failed 细分成
+        # verify-no-products。否则复盘时看到 verify-failed，分不清是「产物坏了」
+        # 还是「压根没有产物」—— 24 个坏文件和一个都没产出，处置方式完全不同。
+        st.data = {"verified": False, "reason": "no-products"}
         st.seconds = time.time() - t0
         return st
 
+    # ---- 探测：串行（jobs=1）或线程池，结果按下标写回预分配数组 ----
+    jobs = resolve_verify_jobs(ctx)
+    results: list[dict | None] = [None] * len(files)
+    cancelled = False
+    if jobs <= 1:
+        for i, (p, label) in enumerate(files, 1):
+            results[i - 1] = _probe_one_safe(p, label)
+            if i % 200 == 0 and ctx.should_stop():
+                cancelled = True
+                break
+    else:
+        with ThreadPoolExecutor(max_workers=min(jobs, len(files))) as pool:
+            pending = {pool.submit(_probe_one_safe, p, label): i
+                       for i, (p, label) in enumerate(files)}
+            done = 0
+            for fut in as_completed(pending):
+                results[pending[fut]] = fut.result()
+                done += 1
+                if done % 200 == 0 and ctx.should_stop():
+                    # 已在跑的探测拦不住（ffprobe 是阻塞子进程），但没开始的可以撤掉；
+                    # 撤掉之后不再收结果 → files_checked 只会算真正验过的那些。
+                    cancelled = True
+                    for f2 in pending:
+                        f2.cancel()
+                    break
+    ctx.log("verify", f"probe: files={len(files)} jobs={min(jobs, len(files))}"
+                      f"{'（串行）' if jobs <= 1 else ''}")
+
+    # ---- 聚合：**必须按 files 原顺序**遍历 ----
+    # 并行只影响「谁先算完」，不能影响「计数与 fails 的书写顺序」：否则同一份产物两次
+    # 跑出两份顺序不同的 manifest，diff 起来全是噪声，也没法拿串行档当回归基准。
     img_ok = img_fail = 0
     audio_ok = audio_fail = 0
     video_ok = video_fail = 0
     nonmedia = 0
+    probe_fail = 0
+    nonmedia_by_ext: dict[str, int] = {}
     zero_byte: list[str] = []
     audio_seconds = 0.0
     fails: list[str] = []
+    checked = 0
 
-    for i, (p, label) in enumerate(files, 1):
-        ext = p.suffix.lower()
-        # 0 字节文件先看是不是源本身声明的空占位（AGENTS.md Ren'Py 段：
-        # 「0 字节文件要先查索引」——源包声明 0 长度属正常，不是解包 bug）。
-        # 通用链路拿不到索引，所以这里先单列不算失败，末尾用比例护栏兜底。
-        try:
-            is_empty = p.stat().st_size == 0
-        except OSError:
-            is_empty = False
-        if is_empty:
-            zero_byte.append(label)
+    for i, (_p, label) in enumerate(files, 1):
+        res = results[i - 1]
+        if res is None:                       # 取消后没验的部分
             continue
-        if ext in IMG_EXT:
-            try:
-                from PIL import Image
-                with Image.open(p) as im:
-                    im.verify()
+        checked += 1
+        kind = res["kind"]
+        if kind == "zero":
+            zero_byte.append(label)
+        elif kind == "image":
+            if res["ok"]:
                 img_ok += 1
-            except Exception as exc:                           # noqa: BLE001
+            else:
                 img_fail += 1
-                fails.append(f"[image] {label} :: {type(exc).__name__}: {exc}")
-        elif ext in AV_EXT:
-            info, why = tb.ffprobe_ex(p)
-            if info is None:
+                fails.append(res["fail"])
+        elif kind in ("audio", "video"):
+            if not res["ok"]:
                 audio_fail += 1
-                # 带上原因：`ffprobe 无结果` 把「文件真坏」「子进程没起来/超时」
-                # 「JSON 里没有音视频流」混成一句，看日志的人无从判断该不该慌。
-                fails.append(f"[av] {label} :: ffprobe 无结果——{why}")
-            elif info["kind"] == "video":
+                fails.append(res["fail"])
+            elif kind == "video":
                 video_ok += 1
-                if info.get("dur"):
-                    audio_seconds += info["dur"]
+                audio_seconds += res["duration"]
             else:
                 audio_ok += 1
-                if info.get("dur"):
-                    audio_seconds += info["dur"]
-        else:
+                audio_seconds += res["duration"]
+        elif kind == "nonmedia":
             nonmedia += 1
+            ext = _p.suffix.lower()
+            nonmedia_by_ext[ext] = nonmedia_by_ext.get(ext, 0) + 1
+        else:                                  # probe-error：探测本身炸了，算失败但要能区分
+            probe_fail += 1
+            fails.append(res["fail"])
         if i % 500 == 0:
             ctx.log("verify", f"  [{i}/{len(files)}] img={img_ok}/{img_fail} "
                               f"audio={audio_ok}/{audio_fail} video={video_ok}/{video_fail}")
+
+    if cancelled:
+        st.ok = False
+        st.detail = f"用户取消：已验收 {checked}/{len(files)} 个文件"
+        st.data = {
+            "cancelled": True, "verified": False, "files_checked": checked,
+            "image_ok": img_ok, "image_fail": img_fail,
+            "audio_ok": audio_ok, "audio_fail": audio_fail,
+            "video_ok": video_ok, "video_fail": video_fail,
+            "nonmedia": nonmedia,
+            "nonmedia_by_ext": dict(sorted(nonmedia_by_ext.items())),
+            "zero_byte": len(zero_byte),
+            "media_minutes": round(audio_seconds / 60.0, 1),
+            "fail_examples": fails[:10],
+        }
+        st.seconds = time.time() - t0
+        return st
+
     for f in fails[:50]:
         ctx.log("verify", "  FAIL " + f)
     for z in zero_byte[:50]:
@@ -1689,28 +2072,44 @@ def stage_verify(ctx: Ctx) -> Stage:
         fails.append(f"[zero] {len(zero_byte)} 个 0 字节文件超过护栏 {zero_limit}"
                      f"（疑似解包损坏）")
 
+    # 非媒体文件必须**显式报出**（批次 B4）。它们不计失败（.txt/.dat 确实不是媒体），
+    # 但「没验」和「验过了没问题」是两件事：`.mos` 那次就是媒体落进这条分支被静默放过，
+    # 验收照样报「失败 0」。按扩展名聚合，detail/log/manifest 三处都写清楚。
+    nonmedia_ranked = sorted(nonmedia_by_ext.items(), key=lambda kv: (-kv[1], kv[0]))
+    for ext, n in nonmedia_ranked[:10]:
+        ctx.log("verify", f"  NONMEDIA {ext or '(无扩展名)'} x{n}")
+    nonmedia_note = ""
+    if nonmedia:
+        shown = "、".join(f"{ext or '(无扩展名)'} {n}" for ext, n in nonmedia_ranked[:5])
+        more = "…" if len(nonmedia_ranked) > 5 else ""
+        nonmedia_note = f"；另有 {nonmedia} 个非媒体文件未验收（{shown}{more}）"
+
     st.data = {
         "verified": True,
         "files_checked": len(files),
+        "jobs": min(jobs, len(files)),
         "image_ok": img_ok, "image_fail": img_fail,
         "audio_ok": audio_ok, "audio_fail": audio_fail,
         "video_ok": video_ok, "video_fail": video_fail,
         "nonmedia": nonmedia,
+        "nonmedia_by_ext": dict(sorted(nonmedia_by_ext.items())),
         "zero_byte": len(zero_byte),
         "zero_byte_examples": zero_byte[:10],
         "media_minutes": round(audio_seconds / 60.0, 1),
         "fail_examples": fails[:10],
+        "probe_fail": probe_fail,
     }
     st.seconds = time.time() - t0
-    total_fail = img_fail + audio_fail + video_fail + (0 if zero_ok else 1)
+    total_fail = img_fail + audio_fail + video_fail + probe_fail + (0 if zero_ok else 1)
     if total_fail:
-        st.detail = f"{total_fail} 个产物验收失败"
+        st.detail = f"{total_fail} 个产物验收失败" + nonmedia_note
         return st
     st.ok = True
     st.detail = (f"图片 {img_ok}/{img_ok}、音频 {audio_ok}/{audio_ok}、"
                  f"视频 {video_ok}/{video_ok}，失败 0"
                  + (f"（另有 {len(zero_byte)} 个 0 字节占位文件，未计入）"
-                    if zero_byte else ""))
+                    if zero_byte else "")
+                 + nonmedia_note)
     return st
 
 
@@ -1723,6 +2122,18 @@ def build_manifest(ctx: Ctx, stages: list[Stage], engine: str | None) -> dict:
             if s.name == name:
                 return s.data
         return {}
+
+    def stage_skipped(name: str) -> bool:
+        """「这个阶段跳过了吗」的唯一判据是 `Stage.skipped`。
+
+        批次 C3 删掉了旧的 `data["_skipped"]` 判据：生产代码从来没人写这个 key
+        （跳过一律用 `Stage.skipped` 表达），只有测试在手工塞——一个只存在于测试里的
+        字段最容易骗人：真跳过时它不在，读代码的人却以为它在。
+        """
+        for s in stages:
+            if s.name == name:
+                return bool(s.skipped)
+        return False
 
     extract_data = stage_data("extract")
     post_data = stage_data("postprocess")
@@ -1780,18 +2191,88 @@ def build_manifest(ctx: Ctx, stages: list[Stage], engine: str | None) -> dict:
             "video_fail": verify_data.get("video_fail"),
             "zero_byte": verify_data.get("zero_byte"),
             "media_minutes": verify_data.get("media_minutes"),
+            # 非媒体文件也要进交付记录（批次 B4）：它们是「没验」的文件，
+            # 只躺在 stage 的 data 里等于只有翻日志的人才知道。按扩展名聚合，
+            # 让读 manifest 的人一眼看出「这里面有多少 .txt/.dat 其实没人看过」。
+            "nonmedia": verify_data.get("nonmedia"),
+            "nonmedia_by_ext": verify_data.get("nonmedia_by_ext") or {},
         },
         postprocess=([dict({"tool": post_data.get("tool"), "in": post_data.get("in"),
                             "ok": post_data.get("ok"), "fail": post_data.get("fail")},
                            **({"consumed": len(post_data["consumed"])}
                               if post_data.get("consumed") else {}))]
-                     if post_data and not post_data.get("_skipped") else []),
+                     if post_data and not stage_skipped("postprocess") else []),
         png_dir=manifest.scan_png(ctx.png_dir),
         stages=[s.as_dict() for s in stages],
     )
 
 
 # ---------------------------------------------------------------- 主流程
+
+def _write_manifest(ctx: Ctx, man: dict) -> Path | None:
+    """manifest 的**唯一**落盘出口：成功与失败都走这里。
+
+    为什么必须收成一个出口（审计 A1，2026-11-03）：verify/extract/postprocess 失败时
+    原先直接 return，manifest 不落盘，于是磁盘上留着**上一次**成功的结果。
+    CLI 又拿「文件存在」当「本轮的结论」，用户看到的 counts / 对账 / 验收全是旧的
+    ——实测在 Happiness Double Room 上把 `png/` 改名重跑，退出码 1、屏幕却报 2500 个
+    文件 0 失败。交付记录失真比崩溃更坏，因为它看起来是绿的。
+
+    写失败不抛：manifest 写不下去时返回值给 None，由调用方把「没写成功」报出去，
+    别让一次 IO 失败盖掉原本的阶段错误。
+    """
+    try:
+        # 「这份文件是完整写出来的」这个事实由**写盘这个动作本身**保证，所以标在这里：
+        # 磁盘那份没法用 stages 里的 manifest 阶段表达它（那是自我指涉）。
+        # 读 manifest 的人不必靠「stages 少一条」推断这次写没写成（批次 C16）。
+        man["manifest_written"] = True
+        ctx.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        ctx.manifest_path.write_text(
+            json.dumps(man, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError as exc:                                  # noqa: BLE001
+        ctx.log("manifest", f"[ERROR] 写 manifest 失败: {type(exc).__name__}: {exc}")
+        return None
+    return ctx.manifest_path
+
+
+def _finish_failure(ctx: Ctx, stages: list[Stage], engine: str | None,
+                    rc: int, error: str, t_all: float) -> tuple[int, dict]:
+    """非 0 退出路径的统一收尾：本轮 manifest 落盘（`ok=False` + `error`）并返回包装结果。
+
+    `counts` / `verify` 一律是**本轮真实数据**：没跑到的阶段就是 null / 0，
+    绝不回填上一轮的数字（伪造一份「看起来完成了」的交付记录是本项目最贵的错）。
+    """
+    man = build_manifest(ctx, stages, engine)
+    man["ok"] = False
+    man["error"] = error
+    man["total_seconds"] = round(time.time() - t_all, 1)
+    man["stages"] = [s.as_dict() for s in stages]
+    _write_manifest(ctx, man)
+    return rc, {"error": error, "engine": engine, "manifest": man,
+                "stages": man["stages"]}
+
+
+def _run_stage(name: str, fn, ctx: Ctx) -> Stage:
+    """跑一个阶段函数，把**非预期**异常收敛成一个 `ok=False` 的 Stage。
+
+    为什么必须兜住（审计 A2）：`run()` 是 CLI 和 GUI 工作线程的直接入口。异常逃出去，
+    调用方拿到的是 traceback 而不是「哪一步、因为什么失败了」；GUI 只显示一句
+    「运行异常（看日志）」，manifest 也不落盘 —— 等于把一次失败变成一次失联。
+    兜住之后失败照样是一等公民：阶段明细 + 日志里的完整 traceback + 落盘 manifest。
+
+    只吞 `Exception`：`KeyboardInterrupt`/`SystemExit` 必须穿透，否则跑了几十分钟的解包
+    按 Ctrl+C 停不下来。
+    """
+    t0 = time.time()
+    try:
+        return fn(ctx)
+    except Exception as exc:                                # noqa: BLE001
+        detail = f"{type(exc).__name__}: {exc}"
+        ctx.log(name, f"[异常] {detail}\n{traceback.format_exc()}")
+        return Stage(name, ok=False, seconds=time.time() - t0,
+                     detail=f"阶段异常 {detail}",
+                     data={"exception": type(exc).__name__, "message": str(exc)})
+
 
 def run(ctx: Ctx) -> tuple[int, dict]:
     stages: list[Stage] = []
@@ -1808,7 +2289,7 @@ def run(ctx: Ctx) -> tuple[int, dict]:
         stages.append(st)
         engine = st.data.get("engine")
         if not st.ok:
-            return 3, {"error": "detect-failed", "stages": [s.as_dict() for s in stages]}
+            return _finish_failure(ctx, stages, engine, 3, "detect-failed", t_all)
 
     # 1.5 案例库查表（只读报告层）
     # 放在「引擎是否实现链路」检查**之前**：未接链路的引擎（如 Tyrano-Electron）
@@ -1823,8 +2304,27 @@ def run(ctx: Ctx) -> tuple[int, dict]:
                    detail=f"引擎 {engine} 已判出，但本阶段尚未实现链路（已实现: "
                           f"{', '.join(IMPLEMENTED)}）")
         stages.append(st)
-        return 2, {"error": "chain-not-implemented", "engine": engine,
-                   "stages": [s.as_dict() for s in stages]}
+        return _finish_failure(ctx, stages, engine, 2, "chain-not-implemented", t_all)
+
+    # 1.8 磁盘余量预检（链路已确认可跑才做：没链路时不必谈盘）
+    st = _run_stage("preflight", stage_preflight, ctx)
+    stages.append(st)
+    if not st.ok:
+        return _finish_failure(ctx, stages, engine, 1, "preflight-failed", t_all)
+
+    def cancel_now(next_stage: str) -> tuple[int, dict] | None:
+        """阶段边界检查取消；命中就收尾（manifest 照写，`error="cancelled"`）。
+
+        为什么只在边界检查：外部工具（GARbro/AssetStudio/KrkrExtract）正在跑的时候
+        中断它，产物停在写到一半的状态，比跑完更难收拾。边界上停下来，
+        上一阶段的产物是完整可续跑的（`--reuse-raw`）。
+        """
+        if not ctx.should_stop():
+            return None
+        stages.append(Stage(next_stage, ok=False,
+                            detail=f"用户取消：停在 {next_stage} 之前，已完成阶段的产物保留",
+                            data={"cancelled": True}))
+        return _finish_failure(ctx, stages, engine, 1, "cancelled", t_all)
 
     # 2. extract
     extractor_name = EXTRACTORS.get(engine)
@@ -1832,48 +2332,106 @@ def run(ctx: Ctx) -> tuple[int, dict]:
         st = Stage("extract", ok=False,
                    detail=f"引擎 {engine} 在 IMPLEMENTED 里但没有对应 extract 函数")
         stages.append(st)
-        return 2, {"error": "no-extractor-mapped", "engine": engine,
-                   "stages": [s.as_dict() for s in stages]}
-    st = globals()[extractor_name](ctx)
+        return _finish_failure(ctx, stages, engine, 2, "no-extractor-mapped", t_all)
+
+    # 2. extract
+    out = cancel_now("extract")
+    if out is not None:
+        return out
+    st = _run_stage("extract", globals()[extractor_name], ctx)
     stages.append(st)
     if not st.ok:
-        return 1, {"error": "extract-failed", "engine": engine,
-                   "stages": [s.as_dict() for s in stages]}
+        return _finish_failure(ctx, stages, engine, 1, "extract-failed", t_all)
 
     # 3. postprocess
-    st = stage_postprocess(ctx)
+    out = cancel_now("postprocess")
+    if out is not None:
+        return out
+    st = _run_stage("postprocess", stage_postprocess, ctx)
     stages.append(st)
     if not st.ok:
-        return 1, {"error": "postprocess-failed", "engine": engine,
-                   "stages": [s.as_dict() for s in stages]}
+        return _finish_failure(ctx, stages, engine, 1, "postprocess-failed", t_all)
 
     # 4. verify
-    st = stage_verify(ctx)
+    out = cancel_now("verify")
+    if out is not None:
+        return out
+    st = _run_stage("verify", stage_verify, ctx)
     stages.append(st)
     if not st.ok:
-        man = build_manifest(ctx, stages, engine)
-        return 1, {"error": "verify-failed", "engine": engine, "manifest": man,
-                   "stages": [s.as_dict() for s in stages]}
+        # 取消是「用户主动停」，不是「验收失败」；而「没有可验收的产物」也不是「产物坏了」。
+        # 三种结局给三个 error 码，复盘时一眼能分辨（见 stage_verify 里的 reason）。
+        if st.data.get("cancelled"):
+            err = "cancelled"
+        elif st.data.get("reason") == "no-products":
+            err = "verify-no-products"
+        else:
+            err = "verify-failed"
+        return _finish_failure(ctx, stages, engine, 1, err, t_all)
 
-    # 5. manifest
-    t0 = time.time()
+    # 5. manifest —— **一次写盘**（批次 C2）
+    #
+    # 旧实现写两次：先写一份还没有 ok/total_seconds 的，补完再整份重写。中间被 Ctrl+C
+    # 就留下一个「没有 ok 字段」的 manifest —— 下游读到它既不能说成功也不能说失败，
+    # 而这正是本文件最想避免的形态（交付记录必须能一眼判断成没成）。
+    # 新顺序：先把 man 算完整（ok / error / total_seconds 全部就位）→ 写一次 →
+    # 再把「manifest 阶段」补进**内存里的副本**返回。磁盘那份不含描述自己的那条 stage
+    # （否则就是自我指涉：写入结果要先知道写入结果），但它自身是自洽的。
     man = build_manifest(ctx, stages, engine)
-    ctx.manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    ctx.manifest_path.write_text(
-        json.dumps(man, ensure_ascii=False, indent=2), encoding="utf-8")
-    mst = Stage("manifest", ok=True, seconds=time.time() - t0,
-                detail=f"写入 {ctx.manifest_path}", data={"path": str(ctx.manifest_path)})
-    stages.append(mst)
-    man["stages"] = [s.as_dict() for s in stages]
-
-    # 对账不为 0 即失败（纪律 2）
     diff = man["reconcile"]["diff"]
     rc = 0 if (diff in (0, None)) else 1
     man["ok"] = rc == 0
+    if rc != 0:
+        man["error"] = "reconcile-diff"
+
+    # `--strict`（批次 C3）：这个开关此前是纯空转（argparse 收了、代码里没人读），
+    # 现在给它真语义 —— 「没验」不再能混成「验过了」：
+    #   · 对账没有地面真相（加密包列不出条目、引擎没索引可数）→ 交付记录里那个 0 差
+    #     其实没被验证过；
+    #   · 验收没执行（--no-verify，或没有可验收产物）→ 一个文件都没打开过。
+    # 默认关（跑得通的常规链路要能出产物），strict 下这两种都判失败。
+    if ctx.strict and rc == 0:
+        if man["reconcile"].get("method") == "no-index-available":
+            rc, man["error"] = 1, "strict-no-ground-truth"
+        elif not man["verify"].get("verified"):
+            rc, man["error"] = 1, "strict-not-verified"
+        man["ok"] = rc == 0
+
     man["total_seconds"] = round(time.time() - t_all, 1)
-    ctx.manifest_path.write_text(
-        json.dumps(man, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    t0 = time.time()
+    wrote = _write_manifest(ctx, man) is not None
+    mst = Stage("manifest", ok=wrote, seconds=time.time() - t0,
+                detail=(f"写入 {ctx.manifest_path}" if wrote
+                        else f"写 manifest 失败: {ctx.manifest_path}"),
+                data={"path": str(ctx.manifest_path)})
+    stages.append(mst)
+    man["stages"] = [s.as_dict() for s in stages]
+    if not wrote:
+        # 写不成就以内存里的结论为准降级，但**不再重试**：已经失败一次的 IO，
+        # 再写一次只是赌运气；返回值把失败带给调用方才是可靠的。
+        rc = 1
+        man["ok"] = False
+        man["error"] = man.get("error") or "manifest-write-failed"
     return rc, man
+
+
+def _result_manifest(res: dict) -> dict | None:
+    """从 `run()` 的返回值里取**本轮**的 manifest；取不到就是 None。
+
+    `run()` 有两种返回形态（历史原因，别处测试与 GUI 都按这两种在用）：
+      · 全链跑完 → 直接返回 manifest 本身（`rc, man = run(ctx)`）；
+      · 中途失败 → 返回带 `error` / `stages` 的包装，manifest 挂在 `manifest` 键上。
+
+    调用方统一走这里。**关键纪律**：取不到就返回 None，绝不「去看看磁盘上有没有
+    manifest.json」——那正是审计 A1 里 CLI 读到上一轮旧结果的原因。
+    """
+    if not isinstance(res, dict):
+        return None
+    if "manifest_version" in res or "counts" in res:      # 已经是 manifest 本身
+        return res
+    man = res.get("manifest")
+    return man if isinstance(man, dict) and man else None
 
 
 def _launch_gui(argv: list[str]) -> int:
@@ -1902,7 +2460,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--allow-gui", action="store_true",
                     help="允许 GUI 自动化链路（加密 KiriKiri，慢）")
     ap.add_argument("--no-verify", action="store_true")
-    ap.add_argument("--strict", action="store_true", help="保留：对账/验收非 0 一律退出 1")
+    ap.add_argument("--verify-jobs", type=int, default=None, metavar="N",
+                    help=f"verify 并发探测数（默认 {VERIFY_WORKERS}，也可用环境变量 "
+                         f"GALUNPACK_VERIFY_WORKERS；1 = 完全串行，便于对比与回退）")
+    ap.add_argument("--strict", action="store_true",
+                    help="严格模式：对账没有地面真相（列不出索引条目）或验收未执行，"
+                         "也算失败（rc=1；manifest.error = strict-no-ground-truth / "
+                         "strict-not-verified）")
     ap.add_argument("--json", default=None, help="把完整结果另存一份 JSON")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
@@ -1918,7 +2482,8 @@ def main(argv: list[str] | None = None) -> int:
 
     ctx = Ctx(game_dir=game_dir, out_dir=out_dir, work_dir=work_dir,
               manifest_path=manifest_path, reuse_raw=reuse,
-              allow_gui=a.allow_gui, do_verify=not a.no_verify, engine=a.engine)
+              allow_gui=a.allow_gui, do_verify=not a.no_verify, engine=a.engine,
+              verify_jobs=a.verify_jobs, strict=a.strict)
 
     if a.dry_run:
         st = stage_detect(ctx)
@@ -1943,8 +2508,12 @@ def main(argv: list[str] | None = None) -> int:
         if reuse == ctx.raw_dir:
             print(f"[reuse] 源与目标同一目录，跳过复制: {reuse}")
         else:
-            if ctx.raw_dir.exists():
-                shutil.rmtree(ctx.raw_dir, ignore_errors=True)
+            # 清不掉就明确退出：copytree 往残留目录上叠会变成 raw/raw/...，
+            # 那样对账数照样能自洽，属于「无声的错」。
+            if not drop_tree(ctx.raw_dir):
+                print(f"[错误] 清理 {ctx.raw_dir} 失败（受保护目录或安全删除守卫拦住），"
+                      f"放弃复制以免产物叠层", file=sys.stderr)
+                return 1
             shutil.copytree(reuse, ctx.raw_dir, symlinks=True, dirs_exist_ok=False)
             print(f"[reuse] {reuse} -> {ctx.raw_dir}")
 
@@ -1958,9 +2527,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[{flag}] {s['stage']:<12} {s['seconds']:>7.2f}s  {s.get('detail', '')}")
     print("=" * 66)
 
-    man = res.get("manifest") or (json.loads(manifest_path.read_text(encoding="utf-8"))
-                                  if manifest_path.exists() else {})
-    if man:
+    man = _result_manifest(res)
+    if man is None:
+        # 本轮没有 manifest（detect 前就失败、或写盘失败）。**不许**回退去读磁盘上的
+        # manifest.json：那是上一次运行的结论，拿来当本轮结果等于伪造交付记录（审计 A1）。
+        print("manifest: 本轮未产出（不读上一轮遗留的 manifest.json）")
+    else:
         c = man.get("counts", {})
         raw, fin, conv = c.get("raw", {}), c.get("final", {}), c.get("converted", {})
         print(f"引擎: {man.get('engine')}")
@@ -1969,17 +2541,42 @@ def main(argv: list[str] | None = None) -> int:
         print(f"final  : {fin.get('total')} 个文件 {fin.get('bytes', 0)/1048576:.1f} MB  "
               f"{fin.get('by_ext')}")
         print(f"converted: {conv}")
-        r = man.get("reconcile", {})
-        print(f"对账   : 期望 {r.get('expected')} vs 落盘 {r.get('actual')} "
-              f"(diff={r.get('diff')})")
+        # 没进提取阶段就不要打印「期望 None vs 落盘 0」：那句话看起来像「跑完全程、对账 0 差」，
+        # 而事实是本轮一个文件都没解（rc=2 没链路 / rc=3 没判出引擎 / 预检失败 / 取消在 extract 前）。
+        # 交付记录最怕的就是「看起来绿」——这里用一句话把阶段讲清楚。
+        stages_of_run = res.get("stages", [])
+        ext_stage = next((s for s in stages_of_run if s.get("stage") == "extract"), None)
+        # 「提取跑完了」= 有 extract 阶段且它 ok（复用模式是 skipped+ok，也算跑完）
+        extract_done = bool(ext_stage) and bool(ext_stage.get("ok") or ext_stage.get("skipped"))
+        if extract_done or man.get("source", {}).get("archives"):
+            r = man.get("reconcile", {})
+            print(f"对账   : 期望 {r.get('expected')} vs 落盘 {r.get('actual')} "
+                  f"(diff={r.get('diff')})")
+        elif ext_stage is None:
+            print("对账   : 未进入提取阶段（本轮没有产物可对账）")
+        else:
+            print("对账   : 提取未完成，本轮无可信的对账结果（详见上面的 FAIL 行）")
         v = man.get("verify", {})
+        vstage = next((s for s in stages_of_run if s.get("stage") == "verify"), None)
         if v.get("verified"):
+            # 注意：verify **有失败文件**时 verified 仍为 True（计数才是结论），
+            # 这条分支照样要打印，别把它当成「没验」。
             print(f"验收   : 图片 {v.get('image_ok')}/{v.get('image_fail')}失败、"
                   f"音频 {v.get('audio_ok')}/{v.get('audio_fail')}失败、"
                   f"视频 {v.get('video_ok')}/{v.get('video_fail')}失败、"
                   f"媒体 {v.get('media_minutes')} 分钟")
-        else:
+        elif vstage is None:
+            print("验收   : 未执行（本轮在验收前就失败了）")
+        elif vstage.get("skipped"):
+            # `--no-verify` 是**唯一**会把 verify 置 skipped=True 的地方
             print("验收   : 未执行（--no-verify）")
+        elif vstage.get("cancelled"):
+            print(f"验收   : 已取消（已完成 {vstage.get('files_checked')} 个文件，"
+                  f"未验完不算通过）")
+        else:
+            print("验收   : 没有可验收的产物（raw/ 与 png/ 都是空的）")
+        if man.get("error"):
+            print(f"失败原因: {man.get('error')}")
         print(f"manifest: {manifest_path}")
     print(f"总耗时: {el:.1f}s   退出码: {rc}")
 

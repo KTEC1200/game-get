@@ -49,15 +49,38 @@ def test_signature_ignores_signal_order():
     assert a == b
 
 
+#: 允许「没有指纹签名」的案例（= 来源样本已从磁盘删除，签名算不出来）。
+#: **不是「随便 skip」**：`test_unsigned_cases_match_whitelist` 会把实际集合与它逐字比对
+#: —— 多一个就红（说明有新的案例悄悄丢了样本），少一个也在提示白名单该收紧。
+#: 批次 C12：原来这里是对每个案例 `pytest.skip`，于是「唯一一条永远 skip 的用例」
+#: 把断言的保护悄悄变成了零。
+UNSIGNED_CASES_WHITELIST: set[str] = {"0f0633bc8c63-Ren'Py"}
+
+
 @pytest.mark.parametrize("path", CASE_FILES, ids=[p.stem for p in CASE_FILES])
 def test_each_case_signature_recomputes(path):
-    """案例文件里存的签名必须能被 case_lib 重算出来（算法漂移会在这里炸）。"""
+    """案例文件里存的签名必须能被 case_lib 重算出来（算法漂移会在这里炸）。
+
+    无签名的案例（样本已删）**不在这里 skip**，由白名单测试统一管。
+    """
     case = _load(path)
     fp = case["fingerprint"]
     if not fp.get("signature"):
-        pytest.skip(f"{case['sample']} 无指纹签名（目录缺失）")
+        return                        # 见 test_unsigned_cases_match_whitelist
     assert case_lib.signature(fp["engine"], fp["signals"]) == fp["signature"], \
         f"{case['sample']}: 签名与案例库不一致"
+
+
+def test_unsigned_cases_match_whitelist():
+    """★C12★ 实际「无签名」的案例集合必须**恰好等于**白名单。
+
+    这条替代了原来的「样本缺失就 skip」：skip 不会红、不进计数，等于把「案例库悄悄
+    少了一个样本」这件事藏起来。改成集合比对之后，多一个立刻失败、少一个提示可收紧。
+    """
+    unsigned = {p.stem for p in CASE_FILES if not _load(p)["fingerprint"].get("signature")}
+    assert unsigned == UNSIGNED_CASES_WHITELIST, (
+        f"无签名的案例与白名单不一致：多出 {sorted(unsigned - UNSIGNED_CASES_WHITELIST)}，"
+        f"少了 {sorted(UNSIGNED_CASES_WHITELIST - unsigned)}（少了就说明可以收紧白名单）")
 
 
 @pytest.mark.parametrize("path", CASE_FILES, ids=[p.stem for p in CASE_FILES])

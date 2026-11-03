@@ -10,6 +10,11 @@ _as_stage/
 _rpa_stage/
 _rpa_patch_stage/
 _tmp_extract/
+# 加密 KiriKiri 的 ASCII 暂存目录（krkr_auto_extract.STAGE_ROOT 的实际落点；
+# 实测一套完整 stage 可到 560 MB，漏了这条 `git add -A` 会把它整个吞进版本库）
+_krkr_stage/
+# 临时验证/基准脚本的产物目录（用完即删，绝不入库）
+_work_*/
 
 # 打包探针的构建产物（66 MiB，可重建；源码 probe.py 保留作复现脚本）
 _spike_pkg/dist/

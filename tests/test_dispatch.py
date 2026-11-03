@@ -52,6 +52,18 @@ def _golden() -> dict:
     return json.loads(GOLDEN.read_text(encoding="utf-8"))
 
 
+def _normalise(value):
+    """与 `make_golden.normalise_paths` **同一套**归一化（批次 C6）。
+
+    基线里存的是 `<repo>/...` 形式的路径，现场扫出来的是绝对路径 —— 比对前必须过同一
+    个函数，否则「仓库换个位置」就会红。这里刻意 import 生成脚本而不是抄一份实现：
+    两份实现迟早分叉，而分叉的表现是「测试莫名其妙红」。
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import make_golden
+    return make_golden.normalise_paths(value)
+
+
 def _fixture_dirs() -> list[Path]:
     return sorted(p for p in FIXTURES.iterdir() if p.is_dir())
 
@@ -76,7 +88,9 @@ def test_fixture_matches_golden(fixture: Path) -> None:
         {"engine": g.engine, "score": g.score, "evidence": g.evidence}
         for g in rep.guesses
     ] == want["guesses"]
-    assert rep.facts == want["facts"]
+    # facts 里可能有仓库内的绝对路径（unity_data_dir）：归一化后再比，
+    # 否则「仓库装在哪个盘」会决定这条回归护栏红不红（批次 C6）。
+    assert _normalise(rep.facts) == want["facts"]
     assert any("[警告]" in n for n in rep.notes) == want["has_warning"]
     assert any("[注意]" in n for n in rep.notes) == want["has_attention"]
 
@@ -136,7 +150,9 @@ def test_real_sample_matches_golden(name: str, rel: str, expect: str) -> None:
         {"engine": g.engine, "score": g.score, "evidence": g.evidence}
         for g in rep.guesses
     ] == want["guesses"]
-    assert rep.facts == want["facts"]
+    # facts 里可能有仓库内的绝对路径（unity_data_dir）：归一化后再比，
+    # 否则「仓库装在哪个盘」会决定这条回归护栏红不红（批次 C6）。
+    assert _normalise(rep.facts) == want["facts"]
 
 
 # ------------------------------------------------------------- 其它契约

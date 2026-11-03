@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import struct
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -175,9 +176,15 @@ def test_manifest_reconcile_none_when_expected_unknown(tmp_path):
 
 
 def test_manifest_no_postprocess_when_skipped(tmp_path):
+    """跳过的后处理不该在 manifest 里留一条空记录。
+
+    判据是 `Stage.skipped`（生产代码就是这么表达的）；批次 C3 删掉了旧的
+    `data["_skipped"]` 判据 —— 那个 key 只有这条测试在手工塞，生产代码从来不写，
+    属于「只存在于测试里的字段」，读代码的人会被骗。
+    """
     ctx = _ctx(tmp_path)
     _write(ctx.raw_dir / "a.ogg")
-    stages = [_fake_stage("postprocess", _skipped=True)]
+    stages = [orch.Stage("postprocess", ok=True, skipped=True, detail="跳过")]
     man = orch.build_manifest(ctx, stages, "Ren'Py")
     assert man["postprocess"] == []
 
@@ -1699,6 +1706,29 @@ def test_final_files_excludes_consumed(tmp_path):
 # 第 12 节：Unity 链路
 # ==========================================================================
 
+def _stub_audio_enum(monkeypatch, names=("clip_a", "clip_b"), collect_writes=True):
+    """把「按名字枚举 + 补齐」换成不碰 AssetStudio 的确定路径。
+
+    批次 C11 之后 `enumerate_names` 的语义是：`None`=枚举失败、`[]`=确认没有音频、
+    非空=正常。这套 fixture 模拟的是**正常**那一支 —— 之前那些测试没管音频枚举，
+    于是恰好落进「说有 N 个却一个名字都枚举不出来」的矛盾态，现在会（正确地）判失败。
+    """
+    monkeypatch.setattr(orch._as_audio_collect2, "enumerate_names",
+                        lambda *a, **k: list(names))
+
+    def fake_collect(src, dest, names_in, exe=None, batch=None, max_rounds=None,
+                     log=None, work_root=None):
+        dest = Path(dest)
+        dest.mkdir(parents=True, exist_ok=True)
+        if collect_writes:
+            for n in names_in:
+                (dest / f"{n}.wav").write_text("RIFF")
+        return {"expected": len(names_in), "unique": len(names_in),
+                "collected": len(names_in), "missing": [], "runs": 1}
+
+    monkeypatch.setattr(orch._as_audio_collect2, "collect", fake_collect)
+
+
 def test_unity_data_dir_finds_data_subdir(tmp_path):
     """`<游戏名>_Data` 目录是 Unity 的标志。"""
     game = tmp_path / "My Game"
@@ -1754,6 +1784,7 @@ def test_unity_extract_reconciles_json_vs_convert(tmp_path, monkeypatch):
     monkeypatch.setattr("subprocess.run", fake_run)
     # Mock tb.find_tool to return a fake path
     monkeypatch.setattr(orch.tb, "find_tool", lambda key: Path("/fake/assetstudio.exe"))
+    _stub_audio_enum(monkeypatch)
 
     st = orch.stage_extract_unity(ctx)
     assert st.ok is True
@@ -1824,6 +1855,7 @@ def test_unity_extract_fails_on_mismatch(tmp_path, monkeypatch):
 
     monkeypatch.setattr("subprocess.run", fake_run)
     monkeypatch.setattr(orch.tb, "find_tool", lambda key: Path("/fake/assetstudio.exe"))
+    _stub_audio_enum(monkeypatch)
 
     st = orch.stage_extract_unity(ctx)
     assert st.ok is False
@@ -1904,6 +1936,7 @@ def test_unity_extract_merges_into_existing_raw(tmp_path, monkeypatch):
 
     monkeypatch.setattr("subprocess.run", fake_run)
     monkeypatch.setattr(orch.tb, "find_tool", lambda key: Path("/fake/assetstudio.exe"))
+    _stub_audio_enum(monkeypatch, collect_writes=False)   # wav 已由 fake_run 写出
 
     orch.stage_extract_unity(ctx)
     got = sorted(p.name for p in (ctx.raw_dir / "Image_Texture2D").glob("*"))
@@ -1968,7 +2001,11 @@ def test_unity_audio_shortfall_is_filled_by_name_reconciliation(tmp_path, monkey
 
 def test_unity_archives_reach_manifest_with_names(tmp_path, monkeypatch):
     """回归（2026-11-02）：Unity 阶段的 archives 曾用 name/entries 键，
-    build_manifest 只认 archive/expected/got → manifest 里三个 null（交付记录失真）。"""
+    build_manifest 只认 archive/expected/got → manifest 里三个 null（交付记录失真）。
+
+    注：这条函数此前被**定义了两次**（同名，第二个覆盖第一个），实际只有一份在跑。
+    2026-11-03 批次 C3 去重（不是删测试），保留唯一一份。
+    """
     game = tmp_path / "My Game"
     game.mkdir()
     (game / "My Game_Data").mkdir()
@@ -1992,6 +2029,7 @@ def test_unity_archives_reach_manifest_with_names(tmp_path, monkeypatch):
 
     monkeypatch.setattr("subprocess.run", fake_run)
     monkeypatch.setattr(orch.tb, "find_tool", lambda key: Path("/fake/assetstudio.exe"))
+    _stub_audio_enum(monkeypatch, collect_writes=False)   # wav 已由 fake_run 写出
 
     st = orch.stage_extract_unity(ctx)
     man = orch.build_manifest(ctx, [st], "Unity")
@@ -2000,35 +2038,922 @@ def test_unity_archives_reach_manifest_with_names(tmp_path, monkeypatch):
     assert [a["entries"] for a in man["source"]["archives"]] == [2, 2, 2]
 
 
-def test_unity_archives_reach_manifest_with_names(tmp_path, monkeypatch):
-    """回归（2026-11-02）：Unity 阶段的 archives 曾用 name/entries 键，
-    build_manifest 只认 archive/expected/got → manifest 里三个 null（交付记录失真）。"""
+# ==========================================================================
+# 第 13 节：批次 A（2026-11-03 审计）——交付正确性回归
+#   每条测试名开头都写明防的是哪一类回归，删掉它之前先想清楚为什么。
+# ==========================================================================
+
+def _failing_verify_run(tmp_path, monkeypatch):
+    """造一个「对账 0 差但验收失败」的 ctx（A1 的最小复现）。"""
+    ctx = _ctx(tmp_path, engine="Ren'Py")
+
+    def fake_extract(c):
+        _write(c.raw_dir / "bad.png", b"not a png")
+        return _fake_stage("extract", archives=[
+            {"archive": "x.rpa", "expected": 1, "got": 1}], expected_total=1)
+
+    monkeypatch.setattr(orch, "stage_extract_renpy", fake_extract)
+    monkeypatch.setattr(orch, "stage_postprocess", lambda c: _fake_stage("postprocess"))
+    return ctx
+
+
+def test_run_writes_manifest_even_when_verify_fails(tmp_path, monkeypatch):
+    """★A1 回归★ verify 失败也必须落盘 manifest，且里面写着「这次失败了」。
+
+    实测（Happiness Double Room，把 png/ 改名后 --reuse-raw）：退出码 1，但
+    out/manifest.json 还是上一次成功那份，CLI 照着它打印「对账 0、验收 0 失败」。
+    交付记录失真比崩溃更坏——它看起来是绿的。
+    """
+    ctx = _failing_verify_run(tmp_path, monkeypatch)
+
+    rc, res = orch.run(ctx)
+
+    assert rc == 1 and res["error"] == "verify-failed"
+    assert ctx.manifest_path.exists(), "失败的运行也必须留下本轮 manifest"
+    man = json.loads(ctx.manifest_path.read_text(encoding="utf-8"))
+    assert man["ok"] is False
+    assert man["error"] == "verify-failed"
+    # counts / verify 都是本轮真实数据（不许是空白，也不许是上一轮的 0 失败）
+    assert man["counts"]["final"]["total"] == 1
+    assert man["verify"]["image_fail"] >= 1
+
+
+def test_run_failure_overwrites_stale_manifest_on_disk(tmp_path, monkeypatch):
+    """★A1 回归★ 磁盘上留有上一次成功那份 manifest 时，失败的一轮必须覆盖它。
+
+    光断言 `ok is False` 不够——旧文件根本没有 ok 字段。所以预置一份「final 3500、
+    对账 0」的旧记录，要求落盘内容是本轮实测值（1 个文件），而不是旧数字。
+    """
+    ctx = _failing_verify_run(tmp_path, monkeypatch)
+    ctx.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    ctx.manifest_path.write_text(json.dumps({
+        "manifest_version": 1, "engine": "Ren'Py", "ok": True,
+        "counts": {"raw": {"total": 3500}, "final": {"total": 3500}, "converted": {}},
+        "reconcile": {"expected": 3500, "actual": 3500, "diff": 0},
+        "verify": {"verified": True, "image_fail": 0},
+    }, ensure_ascii=False), encoding="utf-8")
+
+    rc, _res = orch.run(ctx)
+
+    man = json.loads(ctx.manifest_path.read_text(encoding="utf-8"))
+    assert rc == 1
+    assert man["ok"] is False
+    assert man["counts"]["final"]["total"] == 1, "上一轮的 3500 被写回来了"
+    assert man["reconcile"]["actual"] == 1
+
+
+def test_cli_never_reports_a_manifest_it_did_not_produce(tmp_path, monkeypatch, capsys):
+    """★A1 回归★ CLI 只信本轮 `run()` 的返回；没有就直说「本轮未产出」。
+
+    旧代码 `res.get("manifest") or (manifest_path.exists() and read_text(...))`
+    —— 拿「文件存在」当「本轮的结论」，于是任何早期失败都会打印上一轮的数字。
+    """
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "manifest.json").write_text(json.dumps({
+        "counts": {"final": {"total": 3500}, "raw": {"total": 3500}},
+        "reconcile": {"expected": 3500, "actual": 3500, "diff": 0},
+    }, ensure_ascii=False), encoding="utf-8")
+    game = tmp_path / "game"
+    game.mkdir()
+
+    monkeypatch.setattr(orch, "run", lambda ctx: (1, {"error": "extract-failed",
+                                                      "stages": [], "manifest": None}))
+
+    rc = orch.main([str(game), "--out", str(out)])
+
+    txt = capsys.readouterr().out
+    assert rc == 1
+    assert "本轮未产出" in txt
+    assert "3500" not in txt, "CLI 读到了上一轮的 manifest"
+
+
+def test_run_turns_extractor_exception_into_failed_stage(tmp_path, monkeypatch):
+    """★A2 回归★ extract 抛非预期异常 → rc=1、阶段 ok=False、manifest 落盘。
+
+    旧行为：`globals()[name](ctx)` 裸调用，异常直接穿透给 CLI/GUI；GUI 只显示
+    「运行异常（看日志）」，manifest 不落盘——一次失败变成一次失联。
+    """
+    ctx = _ctx(tmp_path, engine="Ren'Py")
+
+    def boom(c):
+        raise RuntimeError("模拟解包器崩了")
+
+    monkeypatch.setattr(orch, "stage_extract_renpy", boom)
+
+    rc, res = orch.run(ctx)
+
+    assert rc == 1
+    man = res["manifest"]
+    assert man["ok"] is False and man["error"] == "extract-failed"
+    ext = [s for s in man["stages"] if s["stage"] == "extract"][0]
+    assert ext["ok"] is False
+    assert "RuntimeError" in ext["detail"]
+    assert ctx.manifest_path.exists()
+    log = (ctx.work_dir / "extract.log").read_text(encoding="utf-8")
+    assert "RuntimeError" in log and "Traceback" in log, "日志里要留完整 traceback"
+
+
+def test_run_turns_verify_exception_into_failed_stage(tmp_path, monkeypatch):
+    """★A2 回归★ verify 抛异常同样收敛成阶段失败（不只是 extract）。"""
+    ctx = _ctx(tmp_path, engine="Ren'Py")
+    monkeypatch.setattr(orch, "stage_extract_renpy",
+                        lambda c: _fake_stage("extract", expected_total=0))
+    monkeypatch.setattr(orch, "stage_postprocess", lambda c: _fake_stage("postprocess"))
+
+    def boom(c):
+        raise ValueError("Pillow 炸了")
+
+    monkeypatch.setattr(orch, "stage_verify", boom)
+
+    rc, res = orch.run(ctx)
+
+    assert rc == 1 and res["error"] == "verify-failed"
+    ver = [s for s in res["manifest"]["stages"] if s["stage"] == "verify"][0]
+    assert ver["ok"] is False and "ValueError" in ver["detail"]
+
+
+def test_run_stage_guard_does_not_swallow_keyboard_interrupt(tmp_path, monkeypatch):
+    """★A2 回归★ Ctrl+C 必须能打断：阶段兜底只吞 Exception。"""
+    ctx = _ctx(tmp_path, engine="Ren'Py")
+
+    def interrupt(c):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(orch, "stage_extract_renpy", interrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        orch.run(ctx)
+
+
+def _unity_stub(tmp_path, monkeypatch, *, tex_exp: int, tex_actual: int, other: int = 2):
+    """假 Unity 链路：JSON 枚举 tex_exp 张 Texture2D，Convert 只落 tex_actual 张。
+
+    直接替换 `expected_counts` / `extract_all` 两个地面真相入口（它们各自有单测），
+    这里只验编排层的对账判定，不碰 AssetStudio。
+    """
     game = tmp_path / "My Game"
     game.mkdir()
     (game / "My Game_Data").mkdir()
     ctx = _ctx(tmp_path, game_dir=game)
 
-    def fake_run(cmd, **kw):
-        import subprocess
-        out = Path(cmd[2])
-        out.mkdir(parents=True, exist_ok=True)
-        if "JSON" in cmd:
-            for i in range(2):
-                (out / f"asset_{i}.json").write_text("{}")
-            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-        t = cmd[cmd.index("--types") + 1]
-        sub = out / t
-        sub.mkdir(parents=True, exist_ok=True)
-        for i in range(2):
-            ext = "wav" if t == "AudioClip" else "png"
-            (sub / f"asset_{i}.{ext}").write_text("x")
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+    by_type = {"Texture2D": tex_exp, "Sprite": other, "AudioClip": other}
+    monkeypatch.setattr(orch.unity, "expected_counts",
+                        lambda data_dir, as_exe=None, tmp_root=None: {
+                            "by_type": dict(by_type), "total": sum(by_type.values()),
+                            "unlistable": [], "types": list(orch.unity.UNITY_TYPES)})
 
-    monkeypatch.setattr("subprocess.run", fake_run)
+    def fake_extract_all(data_dir, out_dir, as_exe=None, tmp_root=None):
+        got = {"Texture2D": tex_actual, "Sprite": other, "AudioClip": other}
+        for t, n in got.items():
+            d = out_dir / orch.unity.UNITY_CATEGORIES[t]
+            d.mkdir(parents=True, exist_ok=True)
+            for i in range(n):
+                (d / f"a{i}.{'wav' if t == 'AudioClip' else 'png'}").write_text("x")
+        return {"by_type": dict(got), "total": sum(got.values()), "archives": []}
+
+    monkeypatch.setattr(orch.unity, "extract_all", fake_extract_all)
     monkeypatch.setattr(orch.tb, "find_tool", lambda key: Path("/fake/assetstudio.exe"))
+    # 音频枚举会真的去跑 AssetStudio：换成「枚举成功、名字数正好等于 AudioClip 期望」
+    _stub_audio_enum(monkeypatch, names=[f"clip{i}" for i in range(other)],
+                     collect_writes=False)          # wav 已由假 extract_all 写出
+    return ctx
+
+
+def test_unity_texture2d_small_gap_passes_and_is_reported(tmp_path, monkeypatch):
+    """★A3 回归★ 常态小缺口（本作 5 个）必须通过，但 detail 要显式报出缺口。
+
+    旧实现把缺口从 expected 里减掉，等于「少导 5 个就把期望也减 5」，永远 0 差。
+    新实现：缺口不削减期望，只在阈值内放行并报数。
+    """
+    ctx = _unity_stub(tmp_path, monkeypatch, tex_exp=460, tex_actual=455)
 
     st = orch.stage_extract_unity(ctx)
-    man = orch.build_manifest(ctx, [st], "Unity")
-    names = [a["name"] for a in man["source"]["archives"]]
-    assert names == ["Texture2D", "Sprite", "AudioClip"]
-    assert [a["entries"] for a in man["source"]["archives"]] == [2, 2, 2]
+
+    assert st.ok is True, st.detail
+    assert st.data["texture2d_gap"] == 5
+    assert "已知缺口 5 个" in st.detail
+    # 期望值**没有**被缺口削减：460 + 2 + 2
+    assert st.data["expected_total"] == 464
+    assert st.data["actual_total"] == 459
+
+
+def test_unity_texture2d_huge_gap_fails_instead_of_self_adjusting(tmp_path, monkeypatch):
+    """★A3 回归★ 缺口超阈值（这里 50%）必须判失败，而不是「缺口自己迁就自己」。"""
+    ctx = _unity_stub(tmp_path, monkeypatch, tex_exp=100, tex_actual=50)
+
+    st = orch.stage_extract_unity(ctx)
+
+    assert st.ok is False
+    assert "对账失败" in st.detail
+    assert "只导出了 50/100" in st.detail
+
+
+def test_unity_non_texture2d_shortfall_is_not_excused_by_gap(tmp_path, monkeypatch):
+    """★A3 回归★ 缺口只能出现在 Texture2D：别的类少导出不能拿缺口盖过去。
+
+    造 Sprite 少 1 张、Texture2D 正常：旧实现只看总数，Sprite 的漏导会被
+    Texture2D 的「缺口」空间吞掉。
+    """
+    ctx = _unity_stub(tmp_path, monkeypatch, tex_exp=460, tex_actual=455)
+
+    def fake_extract_all(data_dir, out_dir, as_exe=None, tmp_root=None):
+        """Texture2D 如常少 5 张，但 Sprite 只落 1 张（枚举 2）——总短缺 6 ≠ 缺口 5。"""
+        tex = out_dir / "Image_Texture2D"
+        tex.mkdir(parents=True, exist_ok=True)
+        for i in range(455):
+            (tex / f"t{i}.png").write_text("x")
+        spr = out_dir / "Image_Sprite"
+        spr.mkdir(parents=True, exist_ok=True)
+        (spr / "s0.png").write_text("x")
+        aud = out_dir / "Audio"
+        aud.mkdir(parents=True, exist_ok=True)
+        for i in range(2):
+            (aud / f"a{i}.wav").write_text("x")
+        return {"by_type": {"Texture2D": 455, "Sprite": 1, "AudioClip": 2},
+                "total": 458, "archives": []}
+
+    monkeypatch.setattr(orch.unity, "extract_all", fake_extract_all)
+
+    st = orch.stage_extract_unity(ctx)
+
+    assert st.ok is False
+    assert "Sprite" in st.detail
+
+
+def test_kirikiri_unlistable_archive_fails_instead_of_silent_skip(tmp_path, monkeypatch):
+    """★A4 回归★ 有 .xp3 列不出条目时必须判失败并点名是哪个包。
+
+    旧实现对这个包只 append 一条记录就 continue：expected 只算列得出的包，
+    总数照样 0 差 —— 一个包根本没验却被洗成「通过」。
+    """
+    ctx = _ctx(tmp_path)
+    good = _write(ctx.game_dir / "data.xp3", b"XP3")
+    bad = _write(ctx.game_dir / "patch.xp3", b"XP3")
+    monkeypatch.setattr(orch, "_kirikiri_xp3", lambda _d: [good, bad])
+
+    def fake_list(p, **_kw):
+        if Path(p).name == "patch.xp3":
+            return False, 0, "unknown format"
+        return True, 2, ""
+
+    monkeypatch.setattr(orch.tb, "garbro_list", fake_list)
+
+    def fake_extract(arc, dest, **_kw):
+        Path(dest).mkdir(parents=True, exist_ok=True)
+        for i in range(2):
+            (Path(dest) / f"f{i}.ogg").write_text("x")
+        return orch.tb.ToolResult(key="garbro", exe="garbro", argv=[], returncode=0,
+                                  stdout="", ok=True)
+
+    monkeypatch.setattr(orch.tb, "garbro_extract", fake_extract)
+
+    st = orch.stage_extract_kirikiri(ctx)
+
+    assert st.ok is False
+    assert "patch.xp3" in st.detail
+    assert [u["archive"] for u in st.data["unsupported"]] == ["patch.xp3"]
+    # 「有意排除」必须进 manifest.source，不能只躺在日志里
+    man = orch.build_manifest(ctx, [st], "KiriKiri")
+    assert man["source"]["unsupported"][0]["archive"] == "patch.xp3"
+
+
+def test_move_dir_clean_never_nests_when_target_exists(tmp_path):
+    """★A5 回归★ 目标已存在时必须先清空 —— `shutil.move` 会静默造成 png/png/。"""
+    src = tmp_path / "src"
+    (src / "sub").mkdir(parents=True)
+    _write(src / "a.png")
+    _write(src / "sub" / "b.png")
+    dst = tmp_path / "dst"
+    _write(dst / "stale.png")
+
+    assert orch._move_dir_clean(src, dst) is None
+    assert sorted(p.name for p in dst.rglob("*") if p.is_file()) == ["a.png", "b.png"]
+    assert not (dst / "src").exists(), "搬成了 dst/src/ —— 嵌层"
+    assert not src.exists()
+
+
+def test_kirikiri_gui_move_does_not_nest_png_into_existing_png(tmp_path, monkeypatch):
+    """★A5 回归★ GUI 链路把 png/ 搬进**已存在**的 out/png 时不许嵌层。
+
+    嵌层的后果不是报错，而是交付清单变成 png/png/*.png、对账数照样能自洽——
+    属于无声的错，所以这条必须锁死。
+    """
+    ctx = _ctx(tmp_path, allow_gui=True)
+    _write(ctx.game_dir / "data.xp3")
+    _png(ctx.png_dir / "stale.png")            # 上一次运行留下的目标目录
+    monkeypatch.setattr(orch, "_kirikiri_xp3", lambda _d: [ctx.game_dir / "data.xp3"])
+    monkeypatch.setattr(orch.tb, "garbro_list", lambda _p, **_k: (False, 0, "unknown format"))
+
+    def fake_sibling(mod, argv):
+        kout = Path(argv[argv.index("--out") + 1]) / "KrkrExtract_Output"
+        (kout / "data").mkdir(parents=True, exist_ok=True)
+        _write(kout / "data" / "a.ogg")
+        _png(kout / "png" / "b.png")
+        return 0, ""
+
+    monkeypatch.setattr(orch, "_run_sibling", fake_sibling)
+
+    st = orch.stage_extract_kirikiri(ctx)
+
+    assert st.ok is True, st.detail
+    assert (ctx.png_dir / "b.png").is_file()
+    assert not (ctx.png_dir / "png").exists(), "png/ 被搬成了 png/png/"
+    assert not (ctx.png_dir / "stale.png").exists(), "旧产物应被清掉，不是叠在一起"
+    assert (ctx.raw_dir / "a.ogg").is_file()
+
+
+# ==========================================================================
+# 第 14 节：批次 B（2026-11-03）——可用性与安全
+# ==========================================================================
+
+# ---- B1 磁盘余量预检 -----------------------------------------------------
+
+def test_preflight_passes_when_plenty_of_free_space(tmp_path, monkeypatch):
+    """★B1★ 余量充足：ok=True，data 里三个字节数都要有（报告能直接用）。"""
+    ctx = _ctx(tmp_path)
+    _write(ctx.game_dir / "data.xp3", b"x" * (1024 * 1024))     # 1 MiB
+    monkeypatch.setattr(orch.shutil, "disk_usage",
+                        lambda _p: type("U", (), {"free": 100 * 1024 ** 3})())
+
+    st = orch.stage_preflight(ctx)
+
+    assert st.ok is True, st.detail
+    assert st.data["source_bytes"] == 1024 * 1024
+    assert st.data["required_bytes"] > st.data["source_bytes"]
+    assert st.data["free_bytes"] == 100 * 1024 ** 3
+    assert "余量充足" in st.detail
+
+
+def _sparse_file(path: Path, size: int) -> Path:
+    """造一个**逻辑上** size 字节的文件，但不真的写数据（truncate 只改 EOF）。
+
+    为什么不用 `write_bytes(b"x" * 1GiB)`：那会真的占 1 GiB 内存 + 磁盘，
+    CI 上跑一次预检测试就把机器拖垮。预检只看 `st_size`，truncate 足够。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as fh:
+        fh.truncate(size)
+    return path
+
+
+def test_preflight_fails_when_free_is_under_half_of_required(tmp_path, monkeypatch):
+    """★B1★ 可用不足需要量的一半 → 判失败（继续跑必然写到中途炸）。"""
+    ctx = _ctx(tmp_path)
+    _sparse_file(ctx.game_dir / "data.xp3", 1024 ** 3)          # 1 GiB
+    # 需要 ≈ 1.65 GiB（1.15 GiB + 512 MiB），一半是 0.82 GiB；只给 0.49 GiB
+    monkeypatch.setattr(orch.shutil, "disk_usage",
+                        lambda _p: type("U", (), {"free": 500 * 1024 ** 2})())
+
+    st = orch.stage_preflight(ctx)
+
+    assert st.ok is False
+    assert "余量不足" in st.detail and "需要约" in st.detail and "可用" in st.detail
+
+
+def test_preflight_tight_space_passes_with_warning(tmp_path, monkeypatch):
+    """★B1★ 一半 ≤ 可用 < 需要 → 放行但标「余量偏紧」，日志留 WARN。"""
+    ctx = _ctx(tmp_path)
+    _write(ctx.game_dir / "data.xp3", b"x" * (1024 * 1024))          # 1 MiB
+    # required = 1MiB*1.15 + 512MiB ≈ 0.5011 GiB：给 0.4997 GiB（> 一半、< 需要）
+    free = int(orch.PREFLIGHT_RESERVE_BYTES * 0.995)
+    monkeypatch.setattr(orch.shutil, "disk_usage",
+                        lambda _p: type("U", (), {"free": free})())
+
+    st = orch.stage_preflight(ctx)
+
+    assert st.ok is True, st.detail
+    assert "余量偏紧" in st.detail
+    log = (ctx.work_dir / "preflight.log").read_text(encoding="utf-8")
+    assert "[WARN]" in log
+
+
+def test_preflight_adds_a_stage_copy_for_gui_chain(tmp_path, monkeypatch):
+    """★B1★ `--allow-gui` 要在 ASCII stage 里再放一份 → 需要量翻倍。"""
+    ctx = _ctx(tmp_path)
+    _write(ctx.game_dir / "data.xp3", b"x" * 1000)
+    monkeypatch.setattr(orch.shutil, "disk_usage",
+                        lambda _p: type("U", (), {"free": 10 * 1024 ** 3})())
+
+    plain = orch.stage_preflight(ctx)
+    ctx.allow_gui = True
+    gui = orch.stage_preflight(ctx)
+
+    assert gui.data["required_bytes"] - plain.data["required_bytes"] == plain.data["source_bytes"]
+
+
+def test_preflight_survives_oserror_during_walk(tmp_path, monkeypatch):
+    """★B1★ 遍历时某个目录抛 OSError（坏链接/权限拒绝）不能让预检崩掉。"""
+    import os as _os
+
+    ctx = _ctx(tmp_path)
+    _write(ctx.game_dir / "a.bin", b"x" * 1000)
+    locked = ctx.game_dir / "locked"
+    locked.mkdir()
+    real_scandir = _os.scandir
+
+    def fake_scandir(p):
+        if Path(p) == locked:
+            raise PermissionError("拒绝访问")
+        return real_scandir(p)
+
+    monkeypatch.setattr(orch.os, "scandir", fake_scandir)
+    monkeypatch.setattr(orch.shutil, "disk_usage",
+                        lambda _p: type("U", (), {"free": 10 * 1024 ** 3})())
+
+    st = orch.stage_preflight(ctx)
+
+    assert st.ok is True
+    assert st.data["source_bytes"] == 1000, "读不了的部分跳过，读到多少算多少"
+
+
+def test_preflight_skips_when_game_dir_is_missing(tmp_path):
+    """★B1★ 目录不存在/为空 → 直接放行（测试与 --engine 强制指定大量用这种 ctx）。"""
+    ctx = _ctx(tmp_path)                    # game_dir 不存在
+    st = orch.stage_preflight(ctx)
+    assert st.ok is True
+    assert "跳过余量预检" in st.detail
+    assert st.data["required_bytes"] is None
+
+
+# ---- B2 取消 -------------------------------------------------------------
+
+def test_run_cancels_at_stage_boundary(tmp_path, monkeypatch):
+    """★B2★ should_stop 一上来就为真 → 停在 extract 之前，rc=1、error=cancelled、manifest 落盘。"""
+    ctx = _ctx(tmp_path, engine="Ren'Py", should_stop=lambda: True)
+    called = {"extract": 0}
+
+    def fake_extract(c):
+        called["extract"] += 1
+        return _fake_stage("extract", expected_total=0)
+
+    monkeypatch.setattr(orch, "stage_extract_renpy", fake_extract)
+
+    rc, res = orch.run(ctx)
+
+    assert rc == 1
+    assert res["error"] == "cancelled"
+    assert called["extract"] == 0, "取消要在阶段边界生效，不能再进解包"
+    man = res["manifest"]
+    assert man["ok"] is False and man["error"] == "cancelled"
+    assert ctx.manifest_path.exists()
+    ext = [s for s in man["stages"] if s["stage"] == "extract"][0]
+    assert ext["ok"] is False and ext["cancelled"] is True
+
+
+def test_verify_loop_stops_within_200_files(tmp_path, monkeypatch):
+    """★B2★ verify 循环里也要能取消（大样本验收要跑几分钟），且判定不算「验收失败」。"""
+    ctx = _ctx(tmp_path)
+    for i in range(250):
+        _png(ctx.raw_dir / f"p{i}.png")
+    # 第一次读到取消位（i=200 的那个边界）就停：护栏就是「两百个文件内必须有反应」
+    ctx.should_stop = lambda: True
+
+    st = orch.stage_verify(ctx)
+
+    assert st.ok is False
+    assert st.data["cancelled"] is True
+    assert st.data["files_checked"] == 200, st.data
+    assert "用户取消" in st.detail
+
+
+def test_run_maps_cancelled_verify_to_cancelled_error(tmp_path, monkeypatch):
+    """★B2★ verify 里的取消要报 error=cancelled，别混成 verify-failed。"""
+    ctx = _ctx(tmp_path, engine="Ren'Py")
+    monkeypatch.setattr(orch, "stage_extract_renpy",
+                        lambda c: _fake_stage("extract", expected_total=0))
+    monkeypatch.setattr(orch, "stage_postprocess", lambda c: _fake_stage("postprocess"))
+    monkeypatch.setattr(orch, "stage_verify",
+                        lambda c: orch.Stage("verify", ok=False, detail="用户取消：已验收 200/999",
+                                             data={"cancelled": True, "verified": False}))
+
+    rc, res = orch.run(ctx)
+
+    assert rc == 1
+    assert res["manifest"]["error"] == "cancelled"
+
+
+# ---- B4 非媒体文件必须显式报出 ------------------------------------------
+
+def test_verify_reports_nonmedia_by_ext_in_detail_and_manifest(tmp_path):
+    """★B4★ 非媒体文件不计失败，但必须显式报出「有 N 个没验」。
+
+    `.mos` 那次的翻版：媒体落进 nonmedia 分支被静默放过，验收照样报「失败 0」。
+    通用形态是任何非媒体扩展名都在悄悄漏验，所以按扩展名聚合写进 detail/manifest。
+    """
+    ctx = _ctx(tmp_path)
+    _png(ctx.raw_dir / "bg.png")
+    _write(ctx.raw_dir / "readme.txt")
+    _write(ctx.raw_dir / "sub" / "also.txt")
+    _write(ctx.raw_dir / "movie.dat")
+
+    st = orch.stage_verify(ctx)
+
+    assert st.ok is True, st.detail
+    assert st.data["nonmedia"] == 3
+    assert st.data["nonmedia_by_ext"] == {".dat": 1, ".txt": 2}
+    assert "3 个非媒体" in st.detail and ".txt 2" in st.detail
+    man = orch.build_manifest(ctx, [st], "Ren'Py")
+    assert man["verify"]["nonmedia"] == 3
+    assert man["verify"]["nonmedia_by_ext"] == {".dat": 1, ".txt": 2}
+
+
+# ==========================================================================
+# 第 15 节：批次 C（2026-11-03）——verify 并行化 / manifest 单写 / --strict
+# ==========================================================================
+
+def _seed_audio_files(ctx: orch.Ctx, n: int) -> None:
+    """造 n 个 .ogg 占位（内容无所谓：ffprobe 在本节一律 monkeypatch）。"""
+    for i in range(n):
+        _write(ctx.raw_dir / f"a_{i:03d}.ogg", b"OggS")
+
+
+def _fake_ffprobe_by_index(p, **_kw):
+    """按文件下标决定好坏，并**故意让完成顺序与提交顺序不同**。
+
+    sleep 与下标成模运算关系（不是单调递增），这样线程池里「谁先算完」和「谁先提交」
+    是两回事——如果聚合不是按下标写回，fails 的顺序就会散。
+    """
+    idx = int(p.stem.split("_")[1])
+    time.sleep(((idx * 7919) % 11) / 1000.0)
+    if idx % 3 == 0:
+        return None, f"合成坏文件 {p.name}"
+    return {"kind": "audio", "dur": 1.0}, ""
+
+
+def _verify_with_jobs(ctx, jobs: int) -> orch.Stage:
+    ctx.verify_jobs = jobs
+    return orch.stage_verify(ctx)
+
+
+def test_verify_parallel_matches_serial_even_when_completion_is_shuffled(tmp_path, monkeypatch):
+    """★C1★ 乱序完成时，并行与串行的计数、fails 顺序必须**逐字一致**。
+
+    这是并行化能进代码的前提：结果若依赖「谁先算完」，同一份产物两次跑出两份不同的
+    manifest，diff 全是噪声，也没法拿串行档当回归基准。
+    """
+    ctx = _ctx(tmp_path)
+    _seed_audio_files(ctx, 24)                    # 下标 %3==0 的 8 个坏
+    monkeypatch.setattr(orch.tb, "ffprobe_ex", _fake_ffprobe_by_index)
+
+    serial = _verify_with_jobs(ctx, 1)
+    parallel = _verify_with_jobs(ctx, 8)
+
+    def norm(st: orch.Stage) -> dict:
+        # jobs 是配置回显，不属于「结论」；其余字段必须一模一样
+        return {k: v for k, v in st.data.items() if k != "jobs"}
+
+    assert norm(serial) == norm(parallel)
+    assert serial.detail == parallel.detail
+    assert len(serial.data["fail_examples"]) == 8
+    assert serial.data["fail_examples"] == parallel.data["fail_examples"], "fails 顺序被打乱了"
+    assert serial.ok is False and parallel.ok is False
+
+
+def test_verify_jobs_one_equals_jobs_eight_on_good_files(tmp_path):
+    """★C1★ 全好文件时 jobs=1 与 jobs=8 结论相同（且都是「失败 0」）。"""
+    ctx = _ctx(tmp_path)
+    for i in range(6):
+        _png(ctx.raw_dir / f"p{i}.png")
+
+    serial = _verify_with_jobs(ctx, 1)
+    parallel = _verify_with_jobs(ctx, 8)
+
+    assert serial.ok is True and parallel.ok is True
+    assert serial.data["jobs"] == 1 and parallel.data["jobs"] == 6
+    for key in ("image_ok", "image_fail", "files_checked", "verified"):
+        assert serial.data[key] == parallel.data[key]
+
+
+def test_verify_cancel_works_in_serial_mode_too(tmp_path):
+    """★C1★ 取消两条路径都要生效：jobs=1（串行档）也要在 200 个内停下。"""
+    ctx = _ctx(tmp_path)
+    for i in range(250):
+        _png(ctx.raw_dir / f"p{i}.png")
+    ctx.should_stop = lambda: True
+    ctx.verify_jobs = 1
+
+    st = orch.stage_verify(ctx)
+
+    assert st.ok is False and st.data["cancelled"] is True
+    assert st.data["files_checked"] == 200
+
+
+def test_verify_probe_exception_becomes_failure_not_crash(tmp_path, monkeypatch):
+    """★C1★ 单个探测抛异常 → 降级成一条失败记录，不能把整段 verify 炸掉。
+
+    线程池里一个 future 抛出去，`future.result()` 会在主线程重抛，3499 个好文件白验。
+    """
+    ctx = _ctx(tmp_path)
+    for i in range(4):
+        _png(ctx.raw_dir / f"ok{i}.png")
+    _png(ctx.raw_dir / "boom.png")
+    real_probe = orch._probe_one
+
+    def boom_probe(p, label):
+        if p.name == "boom.png":
+            raise RuntimeError("模拟 Pillow 底层崩了")
+        return real_probe(p, label)
+
+    monkeypatch.setattr(orch, "_probe_one", boom_probe)
+
+    st = orch.stage_verify(ctx)
+
+    assert st.ok is False, "有探测异常就必须判失败"
+    assert st.data["probe_fail"] == 1
+    assert st.data["image_ok"] == 4
+    assert any("[probe]" in f and "RuntimeError" in f for f in st.data["fail_examples"])
+
+
+def test_resolve_verify_jobs_precedence(tmp_path, monkeypatch):
+    """★C1★ 并发度的优先级：显式 ctx 值 > 环境变量 > 默认值。"""
+    ctx = _ctx(tmp_path)
+    monkeypatch.delenv("GALUNPACK_VERIFY_WORKERS", raising=False)
+    assert orch.resolve_verify_jobs(ctx) == orch.VERIFY_WORKERS
+
+    monkeypatch.setenv("GALUNPACK_VERIFY_WORKERS", "3")
+    assert orch.resolve_verify_jobs(ctx) == 3
+
+    monkeypatch.setenv("GALUNPACK_VERIFY_WORKERS", "不是数字")   # 坏值退回默认，不崩
+    assert orch.resolve_verify_jobs(ctx) == orch.VERIFY_WORKERS
+
+    ctx.verify_jobs = 2                                          # 显式值最大
+    monkeypatch.setenv("GALUNPACK_VERIFY_WORKERS", "8")
+    assert orch.resolve_verify_jobs(ctx) == 2
+
+
+# ---- C2 manifest 单次写盘 -------------------------------------------------
+
+def test_run_writes_manifest_exactly_once(tmp_path, monkeypatch):
+    """★C2★ 成功路径只能写一次盘，且写下去的那份自带 ok / total_seconds。
+
+    旧实现写两次（先一份没有 ok 的，再补完重写）：中间被 Ctrl+C 就留下一个
+    「既不能说成功也不能说失败」的 manifest —— 下游无从判断。
+    """
+    ctx = _ctx(tmp_path, engine="Ren'Py")
+
+    def fake_extract(c):
+        _png(c.raw_dir / "a.png")
+        return _fake_stage("extract", archives=[
+            {"archive": "x.rpa", "expected": 1, "got": 1}], expected_total=1)
+
+    monkeypatch.setattr(orch, "stage_extract_renpy", fake_extract)
+    monkeypatch.setattr(orch, "stage_postprocess", lambda c: _fake_stage("postprocess"))
+
+    writes: list[dict] = []
+    real_write = orch._write_manifest
+
+    def counting_write(c, man):
+        writes.append(json.loads(json.dumps(man, ensure_ascii=False)))
+        return real_write(c, man)
+
+    monkeypatch.setattr(orch, "_write_manifest", counting_write)
+
+    rc, man = orch.run(ctx)
+
+    assert rc == 0
+    assert len(writes) == 1, f"manifest 被写了 {len(writes)} 次"
+    on_disk_first = writes[0]
+    assert on_disk_first["ok"] is True, "落盘那一份必须自带 ok"
+    assert "total_seconds" in on_disk_first
+    # 落盘那份不含描述「写manifest」的自我指涉阶段，但返回给调用方的有
+    assert "manifest" not in [s["stage"] for s in on_disk_first["stages"]]
+    assert "manifest" in [s["stage"] for s in man["stages"]]
+    on_disk = json.loads(ctx.manifest_path.read_text(encoding="utf-8"))
+    assert on_disk["ok"] is True
+    # C16：盘上那份没法用 stages 表达「自己写成了」，所以给显式字段，
+    # 下游不必靠「stages 少一条」去推断。
+    assert on_disk["manifest_written"] is True
+
+
+# ---- C3 --strict 真语义 --------------------------------------------------
+
+def test_strict_fails_when_reconcile_has_no_ground_truth(tmp_path, monkeypatch):
+    """★C3★ `--strict`：对账没有地面真相（expected=None）也算失败。
+
+    这个开关此前是纯空转（argparse 收了、没人读）。它的价值就是把「没验」与「验过了」
+    分开：加密包列不出条目时 diff=None，非 strict 下是绿的，但那 0 差其实没人验过。
+    """
+    ctx = _ctx(tmp_path, engine="Ren'Py", strict=True)
+
+    def fake_extract(c):
+        _png(c.raw_dir / "a.png")
+        return _fake_stage("extract", archives=[{"archive": "x.rpa", "expected": None,
+                                                 "got": 1}])      # 没有 expected_total
+
+    monkeypatch.setattr(orch, "stage_extract_renpy", fake_extract)
+    monkeypatch.setattr(orch, "stage_postprocess", lambda c: _fake_stage("postprocess"))
+
+    rc, man = orch.run(ctx)
+
+    assert rc == 1
+    assert man["error"] == "strict-no-ground-truth"
+    assert man["ok"] is False
+
+
+def test_strict_fails_when_verify_did_not_run(tmp_path, monkeypatch):
+    """★C3★ `--strict`：验收没执行（--no-verify）也算失败。"""
+    ctx = _ctx(tmp_path, engine="Ren'Py", strict=True, do_verify=False)
+
+    def fake_extract(c):
+        _png(c.raw_dir / "a.png")
+        return _fake_stage("extract", archives=[
+            {"archive": "x.rpa", "expected": 1, "got": 1}], expected_total=1)
+
+    monkeypatch.setattr(orch, "stage_extract_renpy", fake_extract)
+    monkeypatch.setattr(orch, "stage_postprocess", lambda c: _fake_stage("postprocess"))
+
+    rc, man = orch.run(ctx)
+
+    assert rc == 1
+    assert man["error"] == "strict-not-verified"
+
+
+def test_non_strict_still_passes_when_verification_skipped(tmp_path, monkeypatch):
+    """★C3 反面对照★ 不带 --strict 时，--no-verify 仍是绿的（默认行为没被改坏）。"""
+    ctx = _ctx(tmp_path, engine="Ren'Py", do_verify=False)
+
+    def fake_extract(c):
+        _png(c.raw_dir / "a.png")
+        return _fake_stage("extract", archives=[
+            {"archive": "x.rpa", "expected": 1, "got": 1}], expected_total=1)
+
+    monkeypatch.setattr(orch, "stage_extract_renpy", fake_extract)
+    monkeypatch.setattr(orch, "stage_postprocess", lambda c: _fake_stage("postprocess"))
+
+    rc, man = orch.run(ctx)
+
+    assert rc == 0, man.get("error")
+    assert man["ok"] is True
+
+
+# ---- C15 CLI 的「验收」措辞：三条分支各一个断言 --------------------------
+
+def _cli_with_verify_stage(tmp_path, monkeypatch, capsys, *, verify_block, stage):
+    """用一份手工拼的 manifest 驱动 CLI 输出（不跑真链路）。"""
+    game = tmp_path / "game"
+    game.mkdir()
+    out = tmp_path / "out"
+    out.mkdir()
+    man = {
+        "manifest_version": 1, "engine": "Ren'Py", "ok": False, "error": "cancelled",
+        "counts": {"raw": {"total": 0, "by_ext": {}},
+                   "final": {"total": 0, "by_ext": {}}, "converted": {}},
+        "reconcile": {"expected": None, "actual": 0, "diff": None,
+                      "method": "no-index-available"},
+        "verify": verify_block,
+        # stages 里必须有 seconds：CLI 的阶段摘要按 `{seconds:>7.2f}` 对齐打印
+        "stages": ([{"seconds": 0.0, **stage}] if stage else [])
+                  + [{"stage": "extract", "ok": True, "seconds": 0.0}],
+    }
+    monkeypatch.setattr(orch, "run", lambda ctx: (1, man))
+    rc = orch.main([str(game), "--out", str(out)])
+    return rc, capsys.readouterr().out
+
+
+def test_cli_says_no_verify_only_when_flag_was_used(tmp_path, monkeypatch, capsys):
+    """★C15★ 只有 `--no-verify`（stage.skipped=True）才许打「未执行（--no-verify）」。"""
+    rc, txt = _cli_with_verify_stage(
+        tmp_path, monkeypatch, capsys, verify_block={"verified": False},
+        stage={"stage": "verify", "ok": True, "skipped": True})
+    assert rc == 1
+    assert "未执行（--no-verify）" in txt
+
+
+def test_cli_says_cancelled_when_verify_was_cancelled(tmp_path, monkeypatch, capsys):
+    """★C15★ 验收被取消 → 说「已取消」，不许冒充「--no-verify」。"""
+    rc, txt = _cli_with_verify_stage(
+        tmp_path, monkeypatch, capsys, verify_block={"verified": False},
+        stage={"stage": "verify", "ok": False, "skipped": False, "cancelled": True,
+               "files_checked": 200})
+    assert rc == 1
+    assert "已取消" in txt and "200" in txt
+    assert "--no-verify" not in txt, "取消被说成了用户自己关掉验收"
+
+
+def test_cli_says_no_products_when_there_was_nothing_to_verify(tmp_path, monkeypatch, capsys):
+    """★C15★ 没有可验收产物 → 直说，不许冒充「--no-verify」。"""
+    rc, txt = _cli_with_verify_stage(
+        tmp_path, monkeypatch, capsys, verify_block={"verified": False},
+        stage={"stage": "verify", "ok": False, "skipped": False,
+               "detail": "没有可验收的产物"})
+    assert rc == 1
+    assert "没有可验收的产物" in txt
+    assert "--no-verify" not in txt
+
+
+def test_cli_reports_verify_failures_instead_of_saying_not_run(tmp_path, monkeypatch, capsys):
+    """★C15 对照★ verify **有失败文件**时 verified 仍为 True（计数才是结论）→ 正常打印。"""
+    rc, txt = _cli_with_verify_stage(
+        tmp_path, monkeypatch, capsys,
+        verify_block={"verified": True, "image_ok": 0, "image_fail": 3,
+                      "audio_ok": 0, "audio_fail": 0, "video_ok": 0, "video_fail": 0,
+                      "media_minutes": 0.0},
+        stage={"stage": "verify", "ok": False, "skipped": False})
+    assert rc == 1
+    assert "图片 0/3失败" in txt
+    assert "未执行" not in txt
+
+
+# ---- C17 并行验收的确定性锚 ---------------------------------------------
+
+def test_parallel_verify_matches_serial_byte_for_byte(tmp_path, monkeypatch):
+    """★C17★ 删了这条测试 = 放弃并行验收的正确性。
+
+    并行化后唯一的正确性保证是「结果按下标写回 + 聚合按原顺序遍历」这一条实现细节。
+    谁把它改成 `results.append(...)`，功能测试可能全绿，而 manifest 从此每次顺序都不同
+    （diff 全是噪声、也没法拿串行档当基准）——**这类回归不会自己报错**，只能靠这条钉住。
+
+    断言口径：除 `jobs`（配置回显）与耗时外，`st.data` 必须完全相等，包含
+    `fail_examples` 的**逐条顺序**（它直接反映「按下标聚合」有没有被破坏）。
+    """
+    ctx = _ctx(tmp_path)
+    # 3 个截断 png（真 Pillow 失败，错误消息来自 Pillow 本身）
+    for i in range(3):
+        _write(ctx.raw_dir / f"bad_{i}.png", b"\x89PNG\r\n\x1a\n" + b"truncated")
+    # 1 个好 png
+    _png(ctx.raw_dir / "good_0.png")
+    # 2 个坏 wav：用假 ffprobe 并让完成顺序与提交顺序相反
+    _write(ctx.raw_dir / "bad_0.wav", b"RIFF")
+    _write(ctx.raw_dir / "bad_1.wav", b"RIFF")
+    # 2 个非媒体
+    _write(ctx.raw_dir / "readme.txt")
+    _write(ctx.raw_dir / "notes.txt")
+
+    def fake_ffprobe(p, **_kw):
+        idx = int(p.stem.split("_")[1])
+        time.sleep(0.02 * (2 - idx))          # 先提交的后完成
+        return None, f"合成坏音频 {p.name}"
+
+    monkeypatch.setattr(orch.tb, "ffprobe_ex", fake_ffprobe)
+
+    serial = _verify_with_jobs(ctx, 1)
+    parallel_a = _verify_with_jobs(ctx, 8)
+    parallel_b = _verify_with_jobs(ctx, 8)
+
+    def norm(st: orch.Stage) -> dict:
+        return {k: v for k, v in st.data.items() if k != "jobs"}
+
+    assert norm(serial) == norm(parallel_a) == norm(parallel_b)
+    assert serial.detail == parallel_a.detail == parallel_b.detail
+    # fail_examples 的顺序是不变量的一部分：串行与并行必须逐条一致
+    assert serial.data["fail_examples"] == parallel_a.data["fail_examples"]
+    assert parallel_a.data["fail_examples"] == parallel_b.data["fail_examples"], \
+        "同一个 jobs=8 跑两次顺序都不同 → 聚合不是按下标做的"
+    assert len(serial.data["fail_examples"]) == 5
+    # 非媒体统计与零字节计数也在不变量里
+    assert serial.data["nonmedia_by_ext"] == {".txt": 2}
+    assert serial.data["zero_byte"] == 0
+
+
+# ---- C11 音频名字枚举的三种结局 -----------------------------------------
+
+def test_unity_audio_enum_failure_is_a_stage_failure(tmp_path, monkeypatch):
+    """★C11★ 枚举超时 → stage 失败并说「地面真相未知」，不许把 expected 算成 0。
+
+    旧行为：`enumerate_names` 返回 `[]` —— 调用方据此认为「这作没有音频」，
+    对账 0 差、验收 0 失败，一作 1441 条音频没解出来而交付记录全绿。
+    """
+    ctx = _unity_stub(tmp_path, monkeypatch, tex_exp=2, tex_actual=2)
+    monkeypatch.setattr(orch._as_audio_collect2, "enumerate_names",
+                        lambda *a, **k: None)          # None = 枚举失败
+
+    st = orch.stage_extract_unity(ctx)
+
+    assert st.ok is False
+    assert "地面真相未知" in st.detail
+    assert st.data["audio_enum"] == "failed"
+
+
+def test_unity_audio_enum_empty_but_expected_is_a_stage_failure(tmp_path, monkeypatch):
+    """★C11★ 枚举成功却返回 0 条、而 JSON 说有 N 个 → 自相矛盾，判失败。"""
+    ctx = _unity_stub(tmp_path, monkeypatch, tex_exp=2, tex_actual=2)
+    monkeypatch.setattr(orch._as_audio_collect2, "enumerate_names",
+                        lambda *a, **k: [])
+
+    st = orch.stage_extract_unity(ctx)
+
+    assert st.ok is False
+    assert "互相矛盾" in st.detail
+    assert st.data["audio_enum"] == "empty-but-expected"
+
+
+# ---- 预检：复用模式不该按整份源体积卡盘 --------------------------------
+
+def test_preflight_skips_in_reuse_mode(tmp_path, monkeypatch):
+    """★B1 补丁★ `--reuse-raw` 不重新解包，就不该按 1.15× 源体积卡盘。
+
+    「拿着已解好的 raw 在空间紧张的盘上复跑」正是想省空间的场景，
+    拿整份源体积去挡它等于把最需要复用的人挡在门外。
+    """
+    ctx = _ctx(tmp_path, reuse_raw=tmp_path / "old_raw")
+    _sparse_file(ctx.game_dir / "data.xp3", 200 * 1024 ** 2)     # 200 MiB
+    monkeypatch.setattr(orch.shutil, "disk_usage",
+                        lambda _p: type("U", (), {"free": 1024 ** 2})())   # 只剩 1 MiB
+
+    st = orch.stage_preflight(ctx)
+
+    assert st.ok is True
+    assert "复用模式" in st.detail
+    assert st.data["source_bytes"] == 200 * 1024 ** 2
+    assert st.data["required_bytes"] is None

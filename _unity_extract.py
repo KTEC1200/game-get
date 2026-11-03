@@ -25,6 +25,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import toolbridge as tb   # 只借 `drop_tree`（「尽力清理」的唯一实现，见 toolbridge 注释）
+
 UNITY_TYPES = ("Texture2D", "Sprite", "AudioClip")
 UNITY_CATEGORIES = {
     "Texture2D": "Image_Texture2D",
@@ -100,15 +102,14 @@ def _fresh(root: Path, name: str) -> Path:
 
 
 def _drop(p: Path) -> None:
-    """尽力删除临时目录；失败就留着（**不能**因为删不掉而中断解包）。
+    """尽力删除临时目录；删不掉就留着（**不能**因为删不掉而中断解包）。
 
-    注意：删除守卫抛的是 BaseException 系（SystemExit），`ignore_errors=True` 拦不住，
-    所以这里显式吞 BaseException——清理是优化，不是正确性的一部分。
+    实现走 `toolbridge.drop_tree`（唯一出处，批次 B3）：它吞 BaseException 系
+    （删除守卫抛的不是 Exception，`ignore_errors=True` 拦不住）并返回是否真的删干净。
+    这里的清理是优化不是正确性的一部分，所以删不掉只记一笔，不改变流程。
     """
-    try:
-        shutil.rmtree(p, ignore_errors=True)
-    except BaseException:                                          # noqa: BLE001
-        pass
+    if not tb.drop_tree(p):
+        print(f"[WARN] 临时目录删不掉，已留着: {p}", file=sys.stderr)
 
 
 def expected_counts(data_dir: Path, as_exe: Path | None = None,

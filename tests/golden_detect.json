@@ -83,7 +83,7 @@
       "engine": "Unity",
       "facts": {
         "unity_big_files": [],
-        "unity_data_dir": "D:\\K\\deepseek\\_fixtures\\unity_game\\MyGame_Data",
+        "unity_data_dir": "<repo>/_fixtures/unity_game/MyGame_Data",
         "unity_il2cpp": true,
         "unity_streaming_assets": true
       },

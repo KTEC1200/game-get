@@ -875,3 +875,80 @@ def test_bin_root_none_when_absent(tmp_path, monkeypatch):
     """源码态仓库根没有 bin/ → 返回 None，解析顺序直接跳过这一档。"""
     monkeypatch.setattr(tb, "_REPO", tmp_path)   # tmp 下没有 bin/
     assert tb._bin_root() is None
+
+
+# ---------------------------------------------------------------------------
+# drop_tree：「尽力清理」的唯一实现（批次 B3，2026-11-03）
+# ---------------------------------------------------------------------------
+
+def test_drop_tree_removes_directory(tmp_path):
+    """正常情况：删干净并返回 True。"""
+    d = tmp_path / "gone"
+    (d / "sub").mkdir(parents=True)
+    (d / "sub" / "a.txt").write_text("x")
+    assert tb.drop_tree(d) is True
+    assert not d.exists()
+
+
+def test_drop_tree_returns_false_when_delete_raises_base_exception(tmp_path, monkeypatch):
+    """★回归★ 删除抛 **BaseException**（安全删除守卫/杀软就是这样）时必须吞掉并返回 False。
+
+    这正是 `shutil.rmtree(..., ignore_errors=True)` 拦不住的那一类：它只兜 OSError，
+    BaseException 会直接穿出去把整条链炸成 traceback。返回值必须是「删干净没有」这个
+    **结论**，因为调用方要靠它决定能不能接着 move（否则会嵌层 png/png/）。
+    """
+    d = tmp_path / "kept"
+    d.mkdir()
+    (d / "a.txt").write_text("x")
+
+    class Guard(BaseException):
+        pass
+
+    def boom(*_a, **_k):
+        raise Guard("SAFE_DELETE_BULK_CONFIRM_REQUIRED")
+
+    monkeypatch.setattr(tb.shutil, "rmtree", boom)
+
+    assert tb.drop_tree(d) is False
+    assert d.exists(), "删不掉就得留着，别假装删掉了"
+
+
+def test_drop_tree_does_not_swallow_keyboard_interrupt(tmp_path, monkeypatch):
+    """★回归★ Ctrl+C 必须穿透：清理是优化，不能吃掉用户的打断信号。"""
+    d = tmp_path / "kept"
+    d.mkdir()
+
+    def interrupt(*_a, **_k):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(tb.shutil, "rmtree", interrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        tb.drop_tree(d)
+
+
+def test_drop_tree_on_missing_path_is_true(tmp_path):
+    """目标本来就不存在 = 已经「删干净了」，不算失败。"""
+    assert tb.drop_tree(tmp_path / "never_existed") is True
+
+
+def test_drop_tree_treats_system_exit_as_delete_failure(tmp_path, monkeypatch):
+    """★C14★ 删除抛 SystemExit → 返回 False 且目录还在，**不**穿透。
+
+    为什么要改（2026-11-03 实测）：删除守卫拒绝批量删除时抛的是 SystemExit(1)，它的语义
+    是「我拒绝这次删除」，不是「整个进程该退出」。之前 drop_tree 重抛它，于是一路穿透
+    `_run_stage`（只吞 Exception）→ manifest 不落盘；穿透 `gui._worker` → 界面永久卡死。
+    现在 SystemExit 归入「没删干净 → False」，`_move_dir_clean` / `main()` 里
+    「删不掉就明确报错」的分支才真正活得起来。
+    """
+    d = tmp_path / "kept"
+    d.mkdir()
+    (d / "a.txt").write_text("x")
+
+    def refuse(*_a, **_k):
+        raise SystemExit(1)
+
+    monkeypatch.setattr(tb.shutil, "rmtree", refuse)
+
+    assert tb.drop_tree(d) is False
+    assert d.exists(), "删不掉就得留着，别假装删掉了"

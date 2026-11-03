@@ -286,7 +286,7 @@ def test_assetstudio_guard_rails_with_real_tool_present():
 # ---------------------------------------------------------------------------
 
 def test_bundled_garbro_list_uses_bundled_copy(tmp_path, monkeypatch):
-    """冻结包 bin/garbro 存在时，monkeypatch _bin_root 指过去真跑一次：
+    r"""冻结包 bin/garbro 存在时，monkeypatch _bin_root 指过去真跑一次：
     ToolResult.exe 必须是随包副本的路径（不是开发机 D:\K\galgame 的）。"""
     dist_bin = Path(__file__).resolve().parent.parent / "_spike_pkg" / "dist" / "orchestrator" / "bin"
     if not (dist_bin / "garbro" / "GARbro.Console.exe").is_file():

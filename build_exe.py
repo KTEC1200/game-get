@@ -44,7 +44,7 @@ PACKAGING = REPO / "packaging"
 
 #: 应用版本号 —— 安装器文件名与 /DVERSION 都从这里来（软件还没有 GUI/关于页，
 #: 等要展示版本的地方多了再挪进独立 VERSION 文件）。
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.1.1"
 
 #: (源相对路径, 包内目标目录)。目标目录 "." = _internal 根（与仓库根布局镜像，
 #: 各模块的 `Path(__file__).parent` 定位才能命中）。

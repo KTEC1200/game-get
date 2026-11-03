@@ -118,3 +118,252 @@ def test_app_reconcile_gap_is_reported_not_hidden(tk_root, monkeypatch):
     app.q.put(("done", 1, man))
     app._poll()
     assert "diff=-1" in app.txt.get("1.0", "end")
+
+
+# ---------------------------------------------------------------------------
+# 批次 B2（2026-11-03）：取消 / 关窗 / 失败摘要
+# ---------------------------------------------------------------------------
+
+def test_should_confirm_close_only_while_running():
+    """★B2★ 只有运行中关窗才需要确认（空闲时多问一句只是烦人）。
+
+    运行中直接 destroy 会把 daemon 工作线程掐死在写文件的中间，留下几 GB 半截 raw
+    且没有 manifest 说明它是什么——所以必须走「置取消位 → 边界停下 → 再关」。
+    """
+    assert gui.should_confirm_close(True) is True
+    assert gui.should_confirm_close(False) is False
+
+
+def test_summarize_unwraps_run_wrapper_manifest(tk_root, monkeypatch):
+    """★B2★ run() 的**包装 dict**（失败形态）也要能读出本轮 manifest 的真实数字。
+
+    回归：`_summarize` 曾直接读 `man.get("counts")`，而失败时 man 是
+    `{"error":…, "stages":…, "manifest":…}` → counts 恒为空 → 界面显示
+    「交付（final）：? 个文件」，把「失败了」说成「不知道」。
+    """
+    monkeypatch.setattr(gui.messagebox, "showwarning", lambda title, msg: None)
+    man = _fake_manifest()
+    man["ok"] = False
+    man["error"] = "extract-failed"                      # _finish_failure 就是这么写的
+    app = gui.App(tk_root)
+    app.q.put(("done", 1, {"error": "extract-failed", "stages": [], "manifest": man}))
+    app._poll()
+    txt = app.txt.get("1.0", "end")
+    assert "1585" in txt, txt
+    assert "extract-failed" in txt
+
+
+def test_summarize_reports_missing_manifest_explicitly(tk_root, monkeypatch):
+    """★B2★ 连 manifest 都没有时要说「本轮失败：<error>（本轮未产出 manifest）」。
+
+    不能显示成 0 个文件 / 0 失败——那是把「什么都没验」伪装成「验过了没问题」。
+    """
+    boxes: list[str] = []
+    monkeypatch.setattr(gui.messagebox, "showwarning",
+                        lambda title, msg: boxes.append(msg))
+    app = gui.App(tk_root)
+    app._summarize(1, {"error": "preflight-failed", "manifest": None, "stages": []})
+    assert boxes and "本轮失败" in boxes[0] and "preflight-failed" in boxes[0]
+    assert "本轮未产出 manifest" in boxes[0]
+
+
+def test_summarize_labels_cancelled_in_plain_words(tk_root, monkeypatch):
+    """★B2★ 取消在摘要里说人话（「用户取消」），而不是甩一个 error 代号。"""
+    boxes: list[str] = []
+    monkeypatch.setattr(gui.messagebox, "showwarning",
+                        lambda title, msg: boxes.append(msg))
+    man = _fake_manifest()
+    man["error"] = "cancelled"
+    man["ok"] = False
+    app = gui.App(tk_root)
+    app._summarize(1, man)
+    assert boxes and "用户取消" in boxes[0]
+
+
+# ---------------------------------------------------------------------------
+# 批次 C7 / C10 / C14（2026-11-03）：工作线程一定收敛、关窗、SystemExit
+# ---------------------------------------------------------------------------
+
+def test_worker_reports_done_even_when_run_raises_systemexit(tmp_path, monkeypatch):
+    """★C7+C14★ 工作线程遇到 SystemExit 也要补一条 done，否则界面永远停在「运行中」。
+
+    真实触发链：`toolbridge.drop_tree` 曾经重抛 SystemExit（删除守卫拒绝删除时抛它），
+    `_worker` 的 `except Exception` 拦不住 → 线程静默消失 → `("done")` 永不入队 →
+    开始/取消按钮永久禁用。现在 drop_tree 改成返回 False，但**兜底必须还在**：
+    任何 BaseException 都不能让 worker 不收敛。
+    """
+    import queue as _queue
+    import threading as _threading
+
+    app = object.__new__(gui.App)          # 只造壳，不建 Tk
+    app.q = _queue.Queue()
+    app.running = True
+    app._last_out = None
+
+    def boom(ctx):
+        raise SystemExit(1)
+
+    monkeypatch.setattr(orch, "run", boom)
+    gui.App._worker(app, tmp_path / "game", tmp_path / "out", False, _threading.Event())
+
+    items = []
+    while not app.q.empty():
+        items.append(app.q.get_nowait())
+    kinds = [it[0] for it in items]
+
+    assert "crash" in kinds, "traceback 必须入队（用户要看日志）"
+    assert kinds.count("done") == 1, "无论怎么挂，都必须恰好一条 done 让界面收敛"
+    done = items[kinds.index("done")]
+    assert done[1] == 1
+    assert done[2]["error"] == "worker-aborted"
+    assert done[2]["manifest"] is None
+
+
+def test_worker_passes_through_a_normal_result(tmp_path, monkeypatch):
+    """★C7 对照★ 正常返回时只有一条 done（不能因为兜底逻辑多塞一条）。"""
+    import queue as _queue
+    import threading as _threading
+
+    app = object.__new__(gui.App)
+    app.q = _queue.Queue()
+    app.running = True
+    app._last_out = None
+
+    payload = {"error": "extract-failed", "manifest": None, "stages": []}
+    monkeypatch.setattr(orch, "run", lambda ctx: (1, payload))
+    gui.App._worker(app, tmp_path / "game", tmp_path / "out", False, _threading.Event())
+
+    items = []
+    while not app.q.empty():
+        items.append(app.q.get_nowait())
+    assert [it[0] for it in items] == ["done"]
+    assert items[0][1] == 1 and items[0][2] is payload
+
+
+def test_on_close_asks_before_interrupting_a_run(tk_root, monkeypatch):
+    """★C10★ 运行中关窗要问；点「否」不置取消位，点「是」才置位并等 done 再关。"""
+    asked: list[str] = []
+    monkeypatch.setattr(gui.messagebox, "askyesno",
+                        lambda title, msg: (asked.append(msg), False)[1])
+    app = gui.App(tk_root)
+    app.running = True
+
+    app._on_close()
+
+    assert asked, "运行中关窗必须先问一句"
+    assert app._close_when_done is False
+    assert app._cancel_ev.is_set() is False, "用户点了「否」就不该动取消位"
+
+    monkeypatch.setattr(gui.messagebox, "askyesno", lambda title, msg: True)
+    app._on_close()
+
+    assert app._close_when_done is True, "点了「是」→ 先取消、跑完再关"
+    assert app._cancel_ev.is_set() is True
+
+
+def test_on_close_without_running_destroys_immediately(tk_root):
+    """★C10★ 空闲时关窗不多问（那只是烦人）。"""
+    class _FakeRoot:
+        destroyed = False
+
+        def destroy(self) -> None:
+            self.destroyed = True
+
+    app = gui.App(tk_root)
+    app.root = _FakeRoot()                 # 别真销毁 fixture 的 Tk
+    app.running = False
+    app._on_close()
+    assert app.root.destroyed is True
+
+
+# ---------------------------------------------------------------------------
+# 批次 C 收口：摘要渲染与轮询器的存活（2026-11-03）
+# ---------------------------------------------------------------------------
+
+def test_summarize_text_handles_null_media_minutes():
+    """`verify.media_minutes=null`（没验成）不许再炸 TypeError——原来那句
+    `f"{ver.get('media_minutes', 0):.1f}"` 的默认值 0 对 None 不生效，而轮询器
+    就死在这。渲染层要把它说成「未统计」，**不是** 0.0（0.0 会被读成「验了、
+    真的 0 分钟」，与「没验」是两种事实）。"""
+    man = {
+        "engine": "Ren'Py",
+        "counts": {"final": {"total": 3}},
+        "reconcile": {"method": "index", "expected": 3, "actual": 3, "diff": 0},
+        "verify": {"image_ok": 1, "image_fail": 0, "audio_ok": 0, "audio_fail": 0,
+                   "video_ok": 0, "video_fail": 0, "media_minutes": None},
+    }
+    text = gui.summarize_text(0, man)
+    assert text is not None
+    assert "未统计" in text
+    assert "0.0 分钟" not in text
+
+
+def test_summarize_text_returns_none_for_wrapper_without_manifest():
+    """失败包装 dict 里没有本轮 manifest → None（调用方负责说「本轮失败」）。"""
+    assert gui.summarize_text(1, {"error": "extract-failed", "stages": []}) is None
+
+
+class _FakeRoot:
+    """只记录 after 调用次数：_poll 的收尾只依赖 root.after。"""
+
+    def __init__(self):
+        self.after_calls = 0
+
+    def after(self, ms, fn):
+        self.after_calls += 1
+
+
+def _shell_app(root):
+    """App.__new__ 造壳：只挂 `_poll` 会触碰的属性，不建任何真 Tk 控件。
+
+    为什么不建真 Tk：`tk_root` fixture 在本机约 11/12 的运行会撞上「无可用显示」
+    的 skip——给冻结 bug 写的护栏自己先被 skip，等于没写（QA 实测）。"""
+    import queue as _q
+
+    class _Btn:
+        def configure(self, **kw):
+            pass
+
+    class _Var:
+        def set(self, v):
+            pass
+
+    app = gui.App.__new__(gui.App)
+    app.root = root
+    app.q = _q.Queue()
+    app.running = True
+    app._crashed = False
+    app._close_when_done = False
+    app._last_out = None
+    app.var_status = _Var()
+    app.btn_run, app.btn_cancel, app.btn_open = _Btn(), _Btn(), _Btn()
+    return app
+
+
+def test_poll_survives_an_event_handler_exception(monkeypatch):
+    """任何一条事件的处理抛异常，轮询器都必须活着（after 重挂）。
+
+    修前行为：`_summarize` 抛 TypeError → 冲出 `_poll` → `after()` 永远执行不到
+    → 摘要不弹、日志不再滚动、再点「开始」跑完也看不到结果，只能重启程序。"""
+    import queue as _q
+
+    app = _shell_app(_FakeRoot())
+
+    def boom(rc, man):
+        raise TypeError("unsupported format string passed to NoneType.__format__")
+
+    monkeypatch.setattr(gui, "summarize_text", boom)
+    logs: list[str] = []
+    monkeypatch.setattr(app, "_log", lambda line: logs.append(line))
+
+    app.q.put(("done", 1, {"verify": {"media_minutes": None}}))
+    app.q.put(("log", "tail"))          # 证明后续事件仍会被消费
+    app._poll()                          # 修前这里直接 TypeError 逃出
+
+    assert app.root.after_calls == 1, "轮询器没被重挂 → 界面会永久卡死"
+    assert any("TypeError" in line for line in logs)
+
+    # 下一轮轮询（真实 Tk 里由 after(100) 触发）继续消费队列：
+    app._poll()
+    assert app.root.after_calls == 2
+    assert any("tail" in line for line in logs), "后续事件没被消费"

@@ -92,13 +92,12 @@ def digest(p: Path) -> str:
 def _drop(p: Path) -> None:
     """尽力清理临时目录；删不掉就留着（清理不能成为失败原因）。
 
-    删除守卫在本机对 >50 个文件的批量删除要人工确认，抛的是 BaseException 系，
-    `ignore_errors=True` 拦不住，故显式吞。
+    实现走 `toolbridge.drop_tree`（唯一出处）：它吞 BaseException 系（删除守卫拦
+    `ignore_errors=True` 是拦不住的）并返回是否真删干净；这里的清理是优化，
+    删不掉只提醒，不阻断解包。
     """
-    try:
-        shutil.rmtree(p, ignore_errors=True)
-    except BaseException:                                          # noqa: BLE001
-        pass
+    if not toolbridge.drop_tree(p):
+        print(f"[WARN] 临时目录删不掉，已留着: {p}", file=sys.stderr)
 
 
 def _fresh(root: Path, name: str) -> Path:
@@ -108,11 +107,16 @@ def _fresh(root: Path, name: str) -> Path:
     return d
 
 
-def enumerate_names(src: Path, exe: Path, work: Path) -> list[str]:
-    """JSON 枚举 AudioClip 的名字（地面真相）。失败返回空列表。
+def enumerate_names(src: Path, exe: Path, work: Path) -> list[str] | None:
+    """JSON 枚举 AudioClip 的名字（地面真相）。**失败返回 None**，成功返回名字列表。
 
     `--group_assets BySource`：每个 CAB 一个子目录，避免同名资产在 JSON 阶段就互相覆盖
     （ByType 时同名 JSON 会覆盖，等于把「同名多条」错当成一条）。
+
+    为什么失败返回 None 而不是 `[]`（批次 C11，2026-11-03）：空列表的意思是
+    「这个游戏确实没有音频」，调用方会据此把 expected 算成 0、对账 0 差、验收 0 失败
+    ——**全绿**。而超时/工具没起来根本不代表没有音频，那是最典型的「无声的绿」。
+    所以两种结局必须用两种值区分，让调用方有机会判失败。
     """
     tmp = _fresh(Path(work), "_names")
     try:
@@ -121,9 +125,10 @@ def enumerate_names(src: Path, exe: Path, work: Path) -> list[str]:
              "--types", "AudioClip", "--export_type", "JSON",
              "--group_assets", "BySource"],
             capture_output=True, timeout=TIMEOUT)
-    except (subprocess.TimeoutExpired, OSError):
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        print(f"[WARN] 音频名字枚举失败（{type(exc).__name__}: {exc}）", file=sys.stderr)
         _drop(tmp)
-        return []
+        return None
 
     names: list[str] = []
     for p in tmp.rglob("*.json"):
@@ -288,13 +293,21 @@ def main(argv: list[str] | None = None) -> int:
 
     if names_file is not None:
         names = [n for n in names_file.read_text(encoding="utf-8").splitlines() if n]
+        enum_failed = False
     else:
         work = Path(tempfile.mkdtemp(prefix=dest.name + "_enum_", dir=root))
         try:
             names = enumerate_names(src, exe, work)
         finally:
             _drop(work)
+        # None = 枚举失败（超时/工具没起来），**不等于**「这作没有音频」。
+        # 退化到旧的按前缀分组仍能收一部分，但必须把「地面真相未知」说出口。
+        enum_failed = names is None
+        names = names or []
 
+    if enum_failed:
+        print("[WARN] 音频名字枚举失败：无法按名字对账，退回前缀分组建模"
+              "（覆盖不全，请核对 missing）", file=sys.stderr)
     if names:
         collect(src, dest, names, exe, work_root=root)
     else:

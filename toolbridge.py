@@ -50,6 +50,7 @@ from typing import Callable, Iterable, Mapping, Sequence
 __all__ = [
     "ToolSpec", "Products", "ToolResult", "ToolNotFound",
     "TOOLS", "find_tool", "run", "count_products", "snapshot",
+    "drop_tree",
     "garbro_list", "garbro_extract", "tlg2png", "ffprobe", "ffprobe_ex",
     "assetstudio_export", "krkr_inject", "check_all", "check_csharp",
     "CSharpSource", "CSHARP", "CSharpBuildError",
@@ -523,6 +524,43 @@ def count_products(root: str | os.PathLike, exts: Iterable[str] | None = None) -
 def snapshot(root: str | os.PathLike, exts: Iterable[str] | None = None) -> Products:
     """count_products 的别名，用于 before/after 配对书写。"""
     return count_products(root, exts)
+
+
+# ---------------------------------------------------------------------------
+# 文件系统（「尽力清理」的唯一实现）
+# ---------------------------------------------------------------------------
+
+
+def drop_tree(p: str | os.PathLike) -> bool:
+    """**尽力**删掉一个目录树；返回「现在它确实不存在了吗」。
+
+    **为什么要有这个函数**（而不是各处写 `shutil.rmtree(..., ignore_errors=True)`）：
+    本项目的执行环境（安全删除守卫、杀软、受保护目录）会在删除时抛 `BaseException`
+    —— 它**不是** `Exception` 的子类，`ignore_errors=True` 只兜 `OSError`，一次清理
+    就能把整条链炸成 traceback。历史上 `krkr_auto_extract` / `_unity_extract` /
+    `orchestrator` 各写了一份，行为还不一致：有的吞、有的不吞、有的吞了还继续当删干净了用。
+
+    返回值是**结论**而不是「努力过」：调用方必须拿它判断能不能接着往下走
+    （典型用法是 `_move_dir_clean`：目标没删干净就 move 会嵌一层 `png/png/...`，
+    而对账数照样自洽 —— 属于无声的错）。
+
+    **只有 `KeyboardInterrupt` 会被重抛**。`SystemExit` 归入「没删干净 → 返回 False」：
+    删除守卫抛 SystemExit 的语义是「我拒绝这次删除」，不是「整个进程该退出」
+    （2026-11-03 实测：守卫在 rmtree 上抛 SystemExit(1)，一路穿透 `_run_stage` 与
+    `gui._worker`，结果是 manifest 不落盘 + GUI 永久卡在「运行中」）。
+    `_move_dir_clean` / `main()` 的 `--reuse-raw` 分支本来就有「删不掉就明确报错」的路径，
+    把 SystemExit 吞成 False 之后，那两条路径才真正能被执行到。
+    """
+    path = Path(p)
+    if not path.exists():
+        return True
+    try:
+        shutil.rmtree(path)
+    except KeyboardInterrupt:
+        raise
+    except BaseException:                                     # noqa: BLE001 —— 见 docstring
+        pass
+    return not path.exists()
 
 
 # ---------------------------------------------------------------------------

@@ -87,13 +87,38 @@ def test_enumerate_names_reads_json_m_name(tmp_path, monkeypatch):
     assert sorted(names) == ['100.0', 'SE01', 'Voice_A']
 
 
-def test_enumerate_names_returns_empty_on_oserror(tmp_path, monkeypatch):
-    """AssetStudio 不在 → 空列表（调用方据此退回前缀分组，而不是崩）。"""
+def test_enumerate_names_returns_none_on_oserror(tmp_path, monkeypatch):
+    """AssetStudio 不在 / 超时 → **None**（批次 C11）。
+
+    为什么不是空列表：`[]` 的语义是「这作确实没有音频」，调用方会把 expected 算成 0、
+    对账 0 差、验收 0 失败 —— 全绿。而「工具没起来」根本不代表没有音频。
+    两种结局必须用两种值区分，否则就是本项目最忌讳的「无声的绿」。
+    """
     def boom(args, **kwargs):
         raise OSError('no such exe')
 
     monkeypatch.setattr(collector.subprocess, 'run', boom)
-    assert collector.enumerate_names(tmp_path, Path('missing.exe'), tmp_path / 'w') == []
+    assert collector.enumerate_names(tmp_path, Path('missing.exe'), tmp_path / 'w') is None
+
+
+def test_enumerate_names_returns_none_on_timeout(tmp_path, monkeypatch):
+    """超时同样返回 None（不是「枚举到 0 个」）。"""
+    import subprocess as sp
+
+    def slow(args, **kwargs):
+        raise sp.TimeoutExpired(cmd=args, timeout=1)
+
+    monkeypatch.setattr(collector.subprocess, 'run', slow)
+    assert collector.enumerate_names(tmp_path, Path('as.exe'), tmp_path / 'w') is None
+
+
+def test_enumerate_names_returns_empty_when_archive_has_no_audio(tmp_path, monkeypatch):
+    """枚举**成功**但确实没有 AudioClip → 空列表（区别于 None）。"""
+    def export(args, **kwargs):
+        return _completed(args)
+
+    monkeypatch.setattr(collector.subprocess, 'run', export)
+    assert collector.enumerate_names(tmp_path, Path('as.exe'), tmp_path / 'w') == []
 
 
 def test_enumerate_names_uses_bysource_grouping(tmp_path, monkeypatch):
