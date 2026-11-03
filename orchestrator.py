@@ -390,6 +390,9 @@ def stage_preflight(ctx: Ctx) -> Stage:
     """
     st = Stage("preflight")
     t0 = time.time()
+    # 先说一句再干活：`_tree_bytes` 整段没有逐文件输出，大样本/机械盘要几十秒，
+    # 不打招呼的话 GUI 上看起来就像「卡死在 preflight」（2026-11-04 用户实测 SUMMER）。
+    ctx.log("preflight", "正在统计游戏目录体积（大样本可能要几十秒，期间无逐文件输出）…")
     source_bytes = _tree_bytes(ctx.game_dir)
     if ctx.reuse_raw:
         # 复用模式**不重新解包**：磁盘只需要放 raw 的复制与对账产物，不该按整份源体积卡。
@@ -1346,6 +1349,9 @@ def stage_extract_unity(ctx: Ctx) -> Stage:
     as_exe = tb.find_tool("assetstudio")
     # 临时目录根必须显式给：裸默认会退到系统 temp，而**绝不能**落回游戏目录
     # （2026-11-02 Happiness Double Room 实测 WinError 5，见 _unity_extract._scratch_root()）
+    # 先打招呼：JSON 枚举、单次 Convert、逐条枚举这三段都是「分钟级且无中间输出」，
+    # 不打招呼 GUI 上就是三连「卡死」（2026-11-04 用户实测 SUMMER，5627 条音频）。
+    ctx.log("extract", "正在用 AssetStudio 枚举资产清单（JSON 口径；大样本 1-3 分钟）…")
     exp = unity.expected_counts(data_dir, as_exe, tmp_root=ctx.work_dir / "unity")
     if exp["total"] == 0:
         st.detail = "AssetStudio JSON 枚举到 0 个资产"
@@ -1355,6 +1361,8 @@ def stage_extract_unity(ctx: Ctx) -> Stage:
     archives: list[dict] = []
 
     if ctx.reuse_raw is None:
+        ctx.log("extract", f"开始单次 Convert 导出（JSON 口径 {expected_total} 个资产，"
+                           f"图片+音频第一遍；大样本要几分钟，无中间输出）…")
         got = unity.extract_all(data_dir, ctx.raw_dir, as_exe, tmp_root=ctx.work_dir / "unity")
         archives = got.get("archives", [])
 
@@ -1370,6 +1378,9 @@ def stage_extract_unity(ctx: Ctx) -> Stage:
         #   [...] = 正常，可按名字对账。
         # 旧实现把前两种都变成 []，于是 expected 被算成 0、对账 0 差、验收 0 失败——
         # 一作 1441 条音频没解出来，交付记录却是全绿的。
+        if audio_exp > 0:
+            ctx.log("extract", f"正在逐条枚举音频名字（ByType + 逐条两遍，JSON 说 "
+                               f"{audio_exp} 条；这一步几分钟没有进度输出）…")
         names = (_as_audio_collect2.enumerate_names(data_dir, as_exe,
                                                     ctx.work_dir / "unity")
                  if audio_exp > 0 else [])
