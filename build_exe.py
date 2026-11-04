@@ -19,11 +19,9 @@
 教训（§19.3）：--add-data 的相对路径相对 **spec 目录**解析（不是 cwd）——这里一律传绝对路径。
 
 用法：
-  python build_exe.py                 # 构建 → _spike_pkg/dist/orchestrator/orchestrator.exe
+  python build_exe.py                 # 冻结 + 出便携 zip（唯一交付形态，2026-11-04 定）
   python build_exe.py --check         # 只校验清单文件是否齐全，不构建
-  python build_exe.py --installer     # 冻结 + Inno Setup 单文件安装包（packaging/installer.iss）
-  python build_exe.py --installer-only  # 跳过冻结，用现有 dist 出安装包
-  python build_exe.py --installer-only --testmode  # Uninstallable=no 的会话内验证构建
+  python build_exe.py --portable      # 跳过冻结，用现有 dist 重新出便携 zip
 """
 from __future__ import annotations
 
@@ -42,7 +40,7 @@ SPEC = REPO / "_spike_pkg"
 EXE = DIST / "orchestrator" / "orchestrator.exe"
 PACKAGING = REPO / "packaging"
 
-#: 应用版本号 —— 安装器文件名与 /DVERSION 都从这里来（软件还没有 GUI/关于页，
+#: 应用版本号 —— 便携包文件名与收尾摘要都从这里来（软件还没有 GUI/关于页，
 #: 等要展示版本的地方多了再挪进独立 VERSION 文件）。
 APP_VERSION = "0.1.2"
 
@@ -119,31 +117,7 @@ def build(no_bundle_tools: bool = False) -> int:
     return 0
 
 
-# ---------------------------------------------------------------- 安装器
-
-#: Inno Setup 编译器的候选安装位（winget 用户级装 %LocalAppData%\Programs，机器级装
-#: Program Files；6/7 两个主版本都收）。覆盖顺序与 toolbridge 同构：env → 内置候选 → PATH。
-ISCC_CANDIDATES = [
-    r"%LocalAppData%\Programs\Inno Setup 6\ISCC.exe",
-    r"%LocalAppData%\Programs\Inno Setup 7\ISCC.exe",
-    r"%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe",
-    r"%ProgramFiles(x86)%\Inno Setup 7\ISCC.exe",
-    r"%ProgramFiles%\Inno Setup 6\ISCC.exe",
-    r"%ProgramFiles%\Inno Setup 7\ISCC.exe",
-]
-
-
-def find_iscc() -> Path | None:
-    env = os.environ.get("TOOLBRIDGE_ISCC")
-    if env and Path(env).is_file():
-        return Path(env)
-    for cand in ISCC_CANDIDATES:
-        p = Path(os.path.expandvars(cand))
-        if p.is_file():
-            return p
-    which = shutil.which("ISCC")
-    return Path(which) if which else None
-
+# ---------------------------------------------------------------- 便携包
 
 def sha256(path: Path) -> str:
     h = hashlib.sha256()
@@ -153,46 +127,14 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def installer(skip_build: bool = False, testmode: bool = False) -> int:
-    """冻结 + Inno Setup 单文件安装包（蓝图 §4.2：单文件安装需求交给安装器满足）。
-
-    testmode：出 `Uninstallable=no` 的验证构建（配 /NOICONS）——自动化会话对未知
-    镜像过滤敏感面写入（卸载键/开始菜单），这两步在会话里装不完；见 installer.iss 注释。
-    """
-    if not skip_build:
-        rc = build()
-        if rc != 0:
-            return rc
-    iscc = find_iscc()
-    if iscc is None:
-        print("找不到 Inno Setup 编译器（ISCC.exe）。", file=sys.stderr)
-        print("  装法：winget install JRSoftware.InnoSetup", file=sys.stderr)
-        print("  或设环境变量 TOOLBRIDGE_ISCC 指向 ISCC.exe", file=sys.stderr)
-        return 1
-    out_dir = PACKAGING / "Output"
-    tag = "-testmode" if testmode else ""
-    cmd = [str(iscc), f"/DVERSION={APP_VERSION}", f"/DDIST={DIST / 'orchestrator'}"]
-    if testmode:
-        cmd.append("/DTESTMODE=yes")
-    cmd += [f"/O{out_dir}",
-            f"/FGalgameUnpacker-{APP_VERSION}{tag}-setup",
-            str(PACKAGING / "installer.iss")]
-    print("$", " ".join(cmd), flush=True)
-    r = subprocess.run(cmd)
-    if r.returncode != 0:
-        print(f"ISCC 失败 rc={r.returncode}", file=sys.stderr)
-        return r.returncode
-    setup = out_dir / f"GalgameUnpacker-{APP_VERSION}{tag}-setup.exe"
-    if not setup.is_file():
-        print(f"ISCC 成功但没找到安装包：{setup}", file=sys.stderr)
-        return 1
-    print(f"\n安装包：{setup}（{setup.stat().st_size / 1024 / 1024:.1f} MiB）")
-    print(f"  SHA256: {sha256(setup)}")
-    return 0
-
-
 def portable() -> int:
-    """便携版 zip（杀软文档 §3 备用渠道）：dist 整目录 + README，不碰安装器的敏感写入。"""
+    """便携版 zip（**唯一交付形态**，2026-11-04 用户定：不做安装器）。
+
+    为什么放弃安装器：安装器在本机被火绒 + 深信服 EDR 按进程信誉拦截
+    （%TEMP%\\is-*.tmp 写不进去，证据见 antivirus-false-positives.md §5），
+    而它的价值只有「卸载键 + 开始菜单快捷方式」——对一个私人工具毫无必要。
+    便携 zip 解压即用、不写注册表、不碰敏感目录，杀软拦截面小得多。
+    """
     if not EXE.is_file():
         print(f"冻结包不存在：{EXE}\n先跑 python build_exe.py", file=sys.stderr)
         return 1
@@ -201,7 +143,6 @@ def portable() -> int:
         shutil.copy2(readme, DIST / "orchestrator" / "README.md")
     out = PACKAGING / "Output" / f"GalgameUnpacker-{APP_VERSION}-portable.zip"
     out.parent.mkdir(parents=True, exist_ok=True)
-    base = DIST.parent                                   # zip 里顶层是 orchestrator/
     cmd = ["powershell", "-NoProfile", "-Command",
            f"Compress-Archive -Path '{(DIST / 'orchestrator')}' "
            f"-DestinationPath '{out}' -Force"]
@@ -337,14 +278,8 @@ def bundle_tools(dest_root: Path, entries: list[tuple[str, str, str | list[str]]
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--check", action="store_true", help="只校验清单，不构建")
-    ap.add_argument("--installer", action="store_true",
-                    help="构建后跑 Inno Setup 出单文件安装包（需 ISCC）")
-    ap.add_argument("--installer-only", action="store_true",
-                    help="跳过冻结构建，直接用现有 dist 出安装包")
-    ap.add_argument("--testmode", action="store_true",
-                    help="配合 --installer：出 Uninstallable=no 的会话内验证构建")
     ap.add_argument("--portable", action="store_true",
-                    help="出便携版 zip（现有 dist + README；杀软拦安装器时的备用渠道）")
+                    help="跳过冻结构建，用现有 dist 重新出便携 zip")
     ap.add_argument("--no-bundle-tools", action="store_true",
                     help="跳过外部工具随包（默认按 BUNDLE_TOOLS 尽力打包，缺来源只警告）")
     a = ap.parse_args(argv)
@@ -352,11 +287,11 @@ def main(argv: list[str] | None = None) -> int:
         return check()
     if a.portable:
         return portable()
-    if a.installer_only:
-        return installer(skip_build=True, testmode=a.testmode)
-    if a.installer:
-        return installer(testmode=a.testmode)
-    return build(no_bundle_tools=a.no_bundle_tools)
+    # 默认 = 冻结 + 便携 zip：2026-11-04 用户定「只保留便携版」，安装器已删除。
+    rc = build(no_bundle_tools=a.no_bundle_tools)
+    if rc != 0:
+        return rc
+    return portable()
 
 
 if __name__ == "__main__":

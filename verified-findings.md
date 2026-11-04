@@ -1224,7 +1224,11 @@ python -u _spike_pkg/run_probe.py
 **教训**：`--add-data` 的相对路径**相对 spec 目录**解析（不是 cwd），必须用绝对路径或先 cd 到 spec 目录——
 否则报 `Unable to find ...\_spike_pkg\rules`。
 
-### 19.4 安装器（Inno Setup 6.7.3，2026-11-02）
+### 19.4 安装器（Inno Setup 6.7.3，2026-11-02）—— **已废弃删除（2026-11-04）**
+
+> 本节保留为历史实测记录：用户 2026-11-04 决定只发便携版，`installer.iss` 与
+> `--installer*` 参数已删除。下面的数据不必再复现，但「安装器在本机被 EDR 拦」的
+> 证据链（§20 / antivirus-false-positives.md §5）仍是删除决策的依据。
 
 - **构建**：`build_exe.py --installer` → `packaging/Output/GalgameUnpacker-0.1.0-setup.exe`
   **22.8 MiB**（onedir 66.3 MiB → lzma2/max solid），SHA256 打进输出。ISCC 解析顺序与
@@ -1441,7 +1445,7 @@ Unity 链路一次跑 58 轮 AssetStudio（1441 条音频），每轮 `find_tool
 写在 `<APP_ROOT>/_extracted/` 下。两个后果：卸载程序把它一起删掉；用户在那个隐藏目录里
 根本找不到自己的图/音频/视频。
 
-**修法**：源码态保持 `<仓库>/_extracted/<游戏名>`（开发者纪律不变）；安装态改为
+**修法**：源码态保持 `<仓库>/_extracted/<游戏名>`（开发者纪律不变）；便携版改为
 `%USERPROFILE%\Documents\GalgameUnpacker\_extracted\<游戏名>`（Documents 不存在时退到主目录）。
 README 与 GUI 首行日志同步写明。
 
@@ -1456,10 +1460,11 @@ README 与 GUI 首行日志同步写明。
 | **krkrz** (KrkrzExtract) | **GPL-3.0** | xmoezzz/KrkrzExtract `license=GPL-3.0`；exe 版本信息 X'moe (C) 2018 v1.0.0.0 对应 release |
 | **ffprobe** | **GPL-3.0-or-later** | 本机构建 `ffprobe -version` 的 configuration 含 `--enable-gpl --enable-version3`（BtbN 风格） |
 
-**结论**：三个 GPL-3.0 组件 + 一个无许可证组件。当前定位是个人自用，不受影响；
-**一旦对外分发**，必须：① GPL 组件随包提供对应源码或书面报价、附 GPL-3.0 全文与版权声明；
-② tlg2png 必须换掉（GARbro 的 TLG 转换或自研解码器），否则属于未经授权分发。
-「独立进程调用 = 聚合而非衍生」不豁免各工具自身的许可证义务。
+**结论**：三个 GPL-3.0 组件 + 一个无许可证组件。**用户 2026-11-04 明确：私人项目、
+完成后转私人仓库、不对外分发 → 不处理许可证义务，本项不再是阻塞**。核实结论保留作
+事实备查：将来若要公开仓库或把便携 zip 发给别人，GPL 组件必须随包提供对应源码或
+书面报价 + GPL-3.0 全文与版权声明，tlg2png 必须换掉（GARbro 的 TLG 转换或自研），
+否则属于未经授权分发。「独立进程调用 = 聚合而非衍生」不豁免各工具自身的许可证义务。
 已写入 `build_exe.TOOL_LICENSES`（含依据）与生成的 `bin/NOTICE.txt`。
 
 ### 21.10 收尾基线
@@ -1476,3 +1481,25 @@ skipped=8 → PASS**（开工前 626，新增 30 条：Unity 7 / overwrite 5 / m
 `_unity_extract.py`（rc/env/合并路径）、`_as_audio_collect2.py`（rc/env）、
 `krkr_auto_extract.py`（窗口收窄 + archives 键名）、`build_exe.py`（版本 0.1.2 + 许可证）、
 `README.md`；新增 `tests/test_unity_extract.py`。
+
+### 21.11 交付形态收敛（2026-11-04 用户决策，收尾后追加）
+
+用户明确的四条，已落到代码/文档：
+
+1. **不做安装器，只发便携版**。删除 `packaging/installer.iss`、
+   `build_exe` 的 `--installer` / `--installer-only` / `--testmode`（含 `find_iscc` /
+   `ISCC_CANDIDATES`）、以及已产出的 setup.exe。`python build_exe.py` 现在默认
+   = 冻结 + 出 `GalgameUnpacker-<版本>-portable.zip`；`--portable` = 跳过冻结重出 zip。
+   理由：本机火绒 + 深信服 EDR 拦安装器敏感写入（§20 / antivirus §5），而安装器只换来
+   卸载键与开始菜单——对私人工具不划算。杀软文档与 §19.4 保留为历史证据并加了状态标注。
+2. **许可证不再作为阻塞**。私人项目、完成后转私人仓库 → 自用不触发分发义务。
+   §21.9 的核实结论保留（事实备查），但不再是待办。
+3. **夕凪荘 22 BGM dump 舍弃**。用户明确不做；`_bgm_dump2.py` 与 §15.3 的静态分析
+   留在仓库备查，不进待办清单。
+4. **澄清「GUI 弹窗行为确认」**：指 §1 里 GARbro.GUI 的「选游戏标题 / 输密钥」弹窗疑云
+   ——`pork社` 那 4 个游戏 Console 读不出、GUI 能解，怀疑是 GUI 有交互弹窗。
+   与 KrkrExtract 运行时的错误弹窗（`#32770`，§17 已处理）是两件事。
+   待用户用 GARbro.GUI 开一次那 4 个游戏确认有无弹窗。
+
+顺带清理：`_spike_pkg/dist/orchestrator.build1`（357M）、`orchestrator.prev-0.1.1`（357M）、
+`packaging/Output/orchestrator`（357M）三个可重建的旧构建产物已删除。

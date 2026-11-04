@@ -9,9 +9,13 @@ v0.1.2 修重跑口径与交付记录：**raw 非空默认拒绝重跑**（要�
 
 ## 安装
 
-- 安装版：`packaging/Output/GalgameUnpacker-0.1.2-setup.exe`（**免管理员**，装到
-  `%LocalAppData%\Programs\GalgameUnpacker`，卸载即净）
-- 便携版：把冻结目录整个拷走即可（`_spike_pkg/dist/orchestrator/`）
+**只提供便携版**（2026-11-04 决定不做安装器：本机的火绒 + 深信服 EDR 会拦安装器的
+敏感写入，而安装器只换来「卸载键 + 开始菜单快捷方式」，对私人工具没价值）。
+
+- 解压 `packaging/Output/GalgameUnpacker-0.1.2-portable.zip` 到任意可写目录，
+  双击 `orchestrator\orchestrator.exe`（不带参数即进 GUI）
+- 或直接拷 `_spike_pkg/dist/orchestrator/` 整个目录（等价）
+- 不写注册表、不需要管理员权限、卸载 = 删目录
 
 杀软/SmartScreen 可能拦截未签名的新程序——说明与处置见 `antivirus-false-positives.md`。
 
@@ -20,7 +24,7 @@ v0.1.2 修重跑口径与交付记录：**raw 非空默认拒绝重跑**（要�
 **GUI（推荐）**：`orchestrator.exe --gui` —— 拖（或浏览）一个游戏目录 → 开始解包 →
 跑完弹交付摘要（交付数/对账/验收），manifest 报告在输出目录 `manifest.json`。
 运行中可点「取消」（在当前阶段跑完的边界生效，已完成的产物保留）；运行中关窗会先确认。
-**默认输出目录**：安装版 `%USERPROFILE%\Documents\GalgameUnpacker\_extracted\<游戏名>`，
+**默认输出目录**：便携版 `%USERPROFILE%\Documents\GalgameUnpacker\_extracted\<游戏名>`，
 源码运行 `<仓库>\_extracted\<游戏名>`。输出目录已有上一轮产物时会先问「清空重跑还是换目录」。
 
 **CLI**：
@@ -48,7 +52,7 @@ orchestrator.exe <游戏目录> --out <输出目录> [--overwrite] [--allow-gui]
 | 项 | 要求 |
 |---|---|
 | 操作系统 | Windows 10 1809+ / Windows 11，x64（触到的最老依赖是 .NET Framework 4.6） |
-| 管理员权限 | **不需要**（安装版装到 `%LocalAppData%\Programs`，便携版解压即用） |
+| 管理员权限 | **不需要**（便携版解压即用，不写注册表） |
 | .NET Framework | **4.6+**（Win10 1809+ 自带）——GARbro / AssetStudio / 自带 C# 工具的 csc 现编需要；纯 Python 链路（Ren'Py / RPG Maker / Yu-Ris / ExHIBIT 等）没有它也能跑 |
 | 内存 | 建议 ≥ 8 GiB（大封包解包按 mmap/分块处理，但产物落盘需要余量） |
 | 磁盘 | 程序本体约 350 MiB（含随包工具，大头是 ffprobe 的共享 DLL 与 GARbro）；**解包产物另算，可能数 GiB**（RPA 是裸存储，体积≈原包），跑之前看目标盘余量 |
@@ -56,7 +60,7 @@ orchestrator.exe <游戏目录> --out <输出目录> [--overwrite] [--allow-gui]
 | 显示器 | 加密 KiriKiri 的 GUI 自动化链路（`--allow-gui`）需要真实桌面 + 200% DPI 缩放已适配 |
 
 **终端防护提示**：本程序与随包工具均未签名。火绒/企业 EDR 等按进程信誉拦截的软件可能
-拦安装器的敏感写入——遇到「拒绝访问」类报错改用便携版，或在防护软件里放行；
+拦新程序的敏感写入——遇到「拒绝访问」类报错，把解压目录整套放行；
 详见 `antivirus-false-positives.md`。
 
 ## 支持的引擎（9 条链路）
@@ -101,16 +105,17 @@ Tyrano/Electron 等其余引擎：判得出来但无链路（退出码 2，不�
 { "garbro": "C:\\tools\\GARbro.Console.exe", "ffprobe": "C:\\ffmpeg\\bin\\ffprobe.exe" }
 ```
 
-> 许可证说明：工具以独立进程调用、本体不修改（聚合而非衍生）；`bin\NOTICE.txt`
-> 记录了各工具的许可证状态——**对外分发前**必须补齐许可证全文并履行 GPL 组件的
-> 源码义务（蓝图 §5.2）。
+> 许可证说明：本工具是**私人自用项目，不对外分发**，因此不处理许可证分发义务。
+> `bin\NOTICE.txt` 仍记录各工具的上游与许可证状态（garbro/assetstudio 为 MIT，
+> KrkrExtract/KrkrzExtract/ffprobe 为 GPL-3.0，tlg2png 上游无许可证）——
+> 这份记录是事实备查，不构成分发许可；将来若要公开仓库或分发二进制，必须重新评估。
 
 ## 从源码构建
 
 ```
-python build_exe.py --check      # 校验数据文件清单
-python build_exe.py --installer  # 冻结 + Inno Setup 单文件安装包
-python tests/run_all.py          # 全量测试（按 junit 结果退出，见下）
+python build_exe.py --check   # 校验数据文件清单
+python build_exe.py           # 冻结 + 出便携 zip（唯一交付形态）
+python tests/run_all.py       # 全量测试（按 junit 结果退出，见下）
 ```
 
 > 测试的退出码为什么不直接用 pytest：带「批量删除守卫」的环境里，pytest 退出清理

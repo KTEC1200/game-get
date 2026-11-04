@@ -1,5 +1,10 @@
 # 杀软误报与 SmartScreen 应对（软件化阶段 3 交付物）
 
+> **状态（2026-11-04）**：用户决定**不做安装器，只发便携 zip**（理由见 §5：安装器在本机
+> 被火绒 + 深信服 EDR 按进程信誉拦敏感写入，而它只换来卸载键与开始菜单快捷方式）。
+> 本文档 §5 的安装器实测记录**保留为历史证据**，不再对应现行交付形态；
+> 现行交付 = `packaging/Output/GalgameUnpacker-<版本>-portable.zip`，解压即用。
+
 > **来源声明（必读）**：本节结论来自**社区实践 + 参考项目公开文档**（GameStringer `docs/ANTIVIRUS.md`
 > 的做法、PyInstaller 社区常见讨论），**不是杀软厂商或 PyInstaller 官方的保证**。
 > 蓝图（`galgame-ai-unpack-workflow-plan.md` §4.5）已核对 PyInstaller 的 *Common Issues and

@@ -48,11 +48,11 @@
 - `rules/` —— 引擎指纹**规则表**（`engines.json` + 解释器 `rules/__init__.py`，含命中信号 `fired_ids`）
 - `tests/` —— 全量测试 + `golden_detect.json` 基线（`make_golden.py --check` 查漂移）
 - **`build_exe.py`**（2026-11-02，软件化阶段 3）—— 冻结构建 + **数据文件清单唯一出处**：
-  `python build_exe.py --check` 单验清单；`--installer` 出 Inno Setup 单文件安装包；
-  `--installer-only --testmode` 出会话内可验证的 `Uninstallable=no` 构建。
+  `python build_exe.py --check` 单验清单；**默认 = 冻结 + 出便携 zip**（2026-11-04 起
+  唯一交付形态，安装器已删除）；`--portable` 跳过冻结、用现有 dist 重出 zip。
   新增「代码要读的数据文件」必须同步改它的 `DATA_FILES`（漏一个启动即崩）。
-- `packaging/` —— `installer.iss`（安装器脚本，由 build_exe.py 以 /DVERSION 驱动，**别手填版本**）；
-  `Output/` 已 .gitignore
+- `packaging/Output/` —— 便携 zip 输出目录（已 .gitignore）。`installer.iss` 已于
+  2026-11-04 删除（用户决定不做安装器，见杀软文档头部状态说明）
 - `antivirus-false-positives.md` —— 杀软误报应对（发布前自检清单、申诉渠道、会话写过滤实测）
 - `_spike_pkg/` —— PyInstaller 探针（`probe.py` / `run_probe.py`；`run_frozen_smoke.py` 冻结包
   真样本验证驱动，`--full` 跑全链）；`dist/`、`build/` 已进 .gitignore
@@ -276,11 +276,12 @@ dry-run 命中 rules+cases（case_path 在包内）、extract in-process **1585/
    `build_exe.py` 数据清单唯一出处（rules/cases/两个 .cs/**_uia_item_rect.ps1**[新发现]/可选
    toolbridge.json）；`_sanitize_env`/`_clear_dll_dir` 早已覆盖 toolbridge 全部子进程出口。
    **冻结实测**：真样本全链 rc=0（1585 对账 0 差 + 验收 0 失败），细节 §19.2。
-2. ~~Inno Setup 安装包~~ ✅：`packaging/installer.iss`（lowest 提权 / .NET 4.6+ 提示 / lzma2；
-   README 随包分发）+ `build_exe.py --installer`（ISCC env→候选→PATH + SHA256）。
-   testmode（`Uninstallable=no` 配 `/NOICONS`）会话内端到端验证过：静默装 rc=0、安装态 exe
-   dry-run + `--gui-smoke` 双 rc=0；**卸载键/开始菜单快捷方式两步受会话写过滤限制**
-   （未知镜像被拒写，证据链 antivirus-false-positives.md §5）——真实桌面双击验证一次即可。
+2. ~~Inno Setup 安装包~~ **已废弃删除（2026-11-04 用户决定：只保留便携版）**：当时的实现是
+   `packaging/installer.iss` + `build_exe.py --installer`（ISCC env→候选→PATH + SHA256），
+   testmode 会话内验证过静默装 rc=0、安装态 dry-run/`--gui-smoke` 双 rc=0。
+   删除理由：本机火绒 + 深信服 EDR 按进程信誉拦安装器敏感写入（证据在
+   antivirus-false-positives.md §5），而安装器只换来卸载键与开始菜单——
+   对私人工具不划算。现行交付 = 便携 zip。
 3. ~~杀软误报文档~~ ✅：`antivirus-false-positives.md`（社区实践非官方；发布自检清单/申诉渠道）。
 4. ~~GUI 最小壳~~ ✅：`gui.py` + `orchestrator --gui`（**单 exe 双模式**）：拖/选目录 →
    工作线程 `orch.run` → 队列回流日志 → 交付摘要弹窗。tkinterdnd2 可选增强（没装退化
@@ -318,22 +319,32 @@ dry-run 命中 rules+cases（case_path 在包内）、extract in-process **1585/
    pork社另有 パート妻の情事・堕落妻子・昼下がり×2），将来想跑随时说。
 2. ~~E-mote 搭车项~~ **跟着挂起**（盘面 0 命中；将来跑 KiriKiri 样本时留意 .pimg/.psb）。
 3. ~~远程上传~~ ✅ **已完成（2026-11-02）**：master 全历史 → `KTEC1200/game-get`。
-4. 搁置不变（需用户配合）：夕凪荘 22 BGM 内存 dump、GUI 弹窗行为确认。
+4. 搁置不变（需用户配合）：~~夕凪荘 22 BGM 内存 dump~~（**用户 2026-11-04 明确舍弃，不再做**）、
+   GUI 弹窗行为确认（见下方说明）。
 5. 最后才考虑：AI 兜底（A1/A2/A3）。
 
 **✅ 2026-11-02 补完（本条已收口）**：Unity 音频补齐上线 + `Happiness Double Room` 全链实证通过
-（3500/3500、图片 2059、音频 1441、rc=0）。下一步仍是**等用户实测 v0.1.0 反馈**；
+（3500/3500、图片 2059、音频 1441、rc=0）。下一步仍是**等用户实测反馈**；
 未验证的只剩「KiriKiri 索引兜底的**自然**窗口缺失场景」（目前只有注入式模拟证据）。
 
-**用户测试时的入口**：安装包 `packaging/Output/GalgameUnpacker-0.1.2-setup.exe`（免管理员），
-GUI：`orchestrator.exe --gui`；CLI 用法见随包 `README.md`。
+**用户测试时的入口**：便携 zip `packaging/Output/GalgameUnpacker-0.1.2-portable.zip`
+（解压即用，不写注册表），GUI：`orchestrator.exe --gui`；CLI 用法见随包 `README.md`。
 **重跑注意**：输出目录已有产物时默认拒绝（`--overwrite` 清空重跑 / `--reuse-raw` 复用），
 这是 2026-11-04 新加的口径 —— 别把「跑失败」当成 bug，先看 detail 里给的出口。
 测试反馈回来后的修法照旧纪律：改逻辑 + 回写文档 + 提交 push。
 
 ### ③ 搁置（需用户配合交互，等指示）
-夕凪荘 22 个加密 BGM 的内存 dump（工具 `_bgm_dump2.py` 已备好，需玩到标题画面/播 BGM 时跑；静态进展见 §15.3）、
-GUI 弹窗行为确认（加密 KiriKiri 纯 CLI 自动化可行性）。
+~~夕凪荘 22 个加密 BGM 的内存 dump~~ —— **2026-11-04 用户明确舍弃**（工具 `_bgm_dump2.py`
+与 §15.3 的静态分析保留在仓库里备查，不再列为待办）。
+
+**「GUI 弹窗行为确认」是什么**（免得下次接手的人猜）：不是 KrkrExtract 的报错弹窗，
+而是 **GARbro.GUI 的「选游戏标题 / 输密钥」弹窗疑云**。起因见 verified-findings §1：
+`pork社` 有 4 个游戏（高慢妻陥落！！/堕落妻子/昼下がり×2）用 `GARbro.Console` 报
+`unknown format`、`-x` 也解不出 0 个文件，但 `GARbro.GUI` 能解。怀疑根因是 GUI 会弹窗
+让用户选标题/密钥（`GameData/kirikiri_*.lst` 里确有按游戏的密钥表），而 Console 没有
+对应参数。**要用户确认的就是这一件事**：用 GARbro.GUI 打开那 4 个游戏时，有没有弹窗
+要求选标题或输密钥。有 → 加密 KiriKiri 的「纯 CLI 自动化」这条路堵死，只能走
+`--allow-gui` 的 UI 自动化；没有 → 说明 GUI 走了别的兜底逻辑，值得再挖。
 
 ### ④ 最后才考虑
 接 AI 兜底（A1/A2/A3）——目前规则覆盖率已够高。
@@ -727,7 +738,7 @@ v0.1.1「未做」清单的 8 项全部落地，另加随包工具许可证逐�
 1. **raw 非空默认拒绝重跑**：`--out` 指向已有产物时，preflight 直接失败并给两个出口
    （`--overwrite` 清空 / `--reuse-raw` 复用）。GUI 会弹「清空重跑还是换目录」二选一。
    原因：旧实现静默叠跑，产物数虚高而 `reconcile` 照样 `diff=0` —— 一份完美格式的假记录。
-2. **GUI 默认输出目录改了**：安装态落 `%USERPROFILE%\Documents\GalgameUnpacker\_extracted\<游戏名>`
+2. **GUI 默认输出目录改了**：便携版落 `%USERPROFILE%\Documents\GalgameUnpacker\_extracted\<游戏名>`
    （原先是程序安装目录，卸载即删、用户找不到）；源码态仍是 `<仓库>\_extracted\<游戏名>`。
 3. **manifest 多了 `verify.status`**：单值枚举 `ok/partial/failed/skipped`。
    `verified=False` 不再等同于失败 —— `reason=disabled`（--no-verify）/`not-run`（加密 krkr）
@@ -751,14 +762,21 @@ v0.1.1「未做」清单的 8 项全部落地，另加随包工具许可证逐�
 7. **`source.archives` 三套键名**：`manifest.normalise_archives` 挂在 `build()` 唯一出口。
 8. **verify 结论要消费方自己拼**：`verify_status()` 纯函数 + `fail_total` 输入。
 
-### 许可证核实结论（对外分发前的硬阻塞）
+### 许可证核实结论（**已不是阻塞项**：用户 2026-11-04 定「私人项目，完成后转私人仓库」）
 
 `build_exe.TOOL_LICENSES` 已从「未核实」升级为逐项结论（依据写在条目里）：
 **KrkrExtract = GPL-3.0、KrkrzExtract = GPL-3.0、ffprobe = GPL-3.0-or-later（本机构建
 `--enable-gpl --enable-version3`）、tlg2png = 无许可证（vn-tools/tlg2png 仓库无 LICENSE，
 API license=null）**，garbro/assetstudio 为 MIT。
-→ 个人自用不受影响；**对外分发前**：GPL 组件必须随包给源码或书面报价 + GPL 全文，
+→ **自用与私人仓库不触发任何分发义务，不需要处理**。核实结论只作事实备查：
+将来若要公开仓库或把便携 zip 发给别人，GPL 三件必须随包给源码/书面报价，
 tlg2png 必须换掉（GARbro 的 TLG 转换或自研）。详见 verified-findings §21.9。
+
+### 交付形态（2026-11-04 用户定：只做便携版）
+
+`installer.iss`、`build_exe.py` 的 `--installer/--installer-only/--testmode`、
+以及产出的 setup.exe **已全部删除**。现行：`python build_exe.py` = 冻结 + 出
+`packaging/Output/GalgameUnpacker-<版本>-portable.zip`。删除理由见杀软文档头部状态说明。
 
 ### 基线（收尾实测）
 
@@ -771,6 +789,7 @@ tlg2png 必须换掉（GARbro 的 TLG 转换或自研）。详见 verified-findi
 
 - 用户实测 v0.1.2 的反馈（当前最高优先级，等这个）
 - KiriKiri 索引兜底的**自然**窗口缺失场景（仍只有注入式模拟证据）
-- 安装器卸载键/开始菜单快捷方式的真实桌面验证（会话内写过滤测不了）
-- 夕凪荘 22 BGM dump、GUI 弹窗行为确认（需人盯着游戏跑）
+- GUI 弹窗行为确认（GARbro.GUI 选标题/密钥弹窗，见「③ 搁置」段的解释；需人用 GUI 开那 4 个游戏看一次）
 - 加密 krkr 剩余 ~7 部（用户 2026-11-02 划走，样本在盘）、E-mote、AI 兜底（A1/A2/A3，最后才考虑）
+- ~~夕凪荘 22 BGM dump~~（2026-11-04 用户明确舍弃）
+- ~~安装器卸载键/开始菜单验证~~（安装器已删除，不存在这项）
