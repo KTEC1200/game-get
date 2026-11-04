@@ -1726,3 +1726,46 @@ v0.2.1 加了可写性预检之后，用户反馈：**浏览到任何目录都�
 否则你测的是「探针会不会被拦」，不是「业务能不能写」。
 
 同样的道理适用于日志：`failures.log` 用 `.log` 扩展名而不是 `.tmp`/无扩展名。
+
+## 26. 首个端到端成功 + 输出目录定位（2026-11-04）
+
+### 26.1 成功实证
+
+用户实测 `我与老师的私人课程2`（Artemis）：
+
+```
+引擎: Artemis    退出码: 0
+交付（final）: 7361 个文件
+对账: 索引 7361 vs 落盘 7361（diff=0）
+验收[ok]: 图片 1348/0失败 · 音频 4857/0失败 · 视频 0/0失败 · 511.4 分钟
+另有 1156 个非媒体文件未验收（.lua/.hsl/.glsl/.tbl/.asb/.ipt/.iet/.otf 等）
+```
+
+这是 v0.2 之后第一次完整的真实交付：对账 0 差、三类媒体 0 失败。
+1156 个非媒体是脚本/着色器/字体，不是媒体，按设计不计失败但必须报出。
+
+### 26.2 两个 bug（同一个根因）
+
+1. **产物落到了程序目录下的相对路径**（截图里 `Output\orchestrator\GalgameUnpacker\_extracted\…`）——
+   说明 `out` 是相对路径。
+2. **点「打开输出目录」没反应**：`_open_out` 里 `self._last_out.is_dir()` 对相对路径
+   依赖当前工作目录，判 False 就静默 `return` —— 用户以为按钮坏了。
+
+根因都是「路径没 resolve」。修：`_start` / `_autofill_out` 统一
+`.expanduser().resolve()`；`_open_out` 目录不存在时明确弹窗，不再静默。
+
+### 26.3 用户要求的新默认值
+
+「解包目录自动变为 `<游戏目录>/output`」。已改 `gui.default_out_dir`，并删掉
+`user_output_root` / `_output_root`（产物不再基于应用根或用户目录）。
+planner 的 `<repo>/_extracted` 约定未动 —— 只影响 GUI 默认值，CLI 仍要求显式 `--out`。
+
+三代默认值的教训：`Documents`（被拦）→ 用户目录（找不到）→ 游戏旁边（符合直觉）。
+**默认值要选「用户会主动去看的地方」，不是「程序觉得安全的地方」。**
+
+### 26.4 验证
+
+- 新增/改测试：`test_default_out_dir_is_under_the_game`、
+  `test_default_out_dir_shares_name_with_game_but_is_a_subdir`、
+  `test_open_out_warns_when_directory_is_gone`
+- 基线：**687 tests / 0 failures / 0 errors / 10 skipped**

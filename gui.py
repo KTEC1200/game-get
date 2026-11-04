@@ -42,21 +42,10 @@ try:
 except Exception:                                        # noqa: BLE001
     HAS_DND = False
 
-#: 应用根：冻结态 = exe 所在目录（安装到 {localappdata}\Programs\GalgameUnpacker）；
-#: 源码态 = 仓库根（产物按纪律落 <仓库>/_extracted/<游戏名>/）。
+#: 应用根（冻结态 = exe 所在目录）。只在需要「相对程序自己的路径」时用；
+#: 产物目录**不**基于它 —— 见 `default_out_dir`。
 FROZEN = bool(getattr(sys, "frozen", False))
 APP_ROOT = Path(sys.executable).parent if FROZEN else Path(__file__).resolve().parent
-
-
-def user_output_root() -> Path:
-    """安装态的产物根：**用户主目录下的 GalgameUnpacker**（不进 Documents）。
-
-    为什么不是 Documents（2026-11-04 用户实测踩到）：火绒 + 深信服 EDR 按进程信誉
-    拦截未签名 exe 在「文档」这类受保护目录里创建文件夹，实测 `PermissionError:
-    [WinError 5]`，而同样的路径用 Python 源码跑是通的 —— 说明拦的是 exe 不是路径。
-    用户主目录根下不属于敏感区，也不会被 OneDrive 重定向。
-    """
-    return Path.home() / "GalgameUnpacker"
 
 
 def ensure_writable(path: Path) -> str | None:
@@ -102,14 +91,16 @@ def writable_fallback(game_dir: Path) -> tuple[Path | None, list[str]]:
     return None, tried
 
 
-def _output_root() -> Path:
-    """产物根：源码态守仓库纪律，安装态守「用户找得到」纪律。"""
-    return user_output_root() if FROZEN else APP_ROOT
-
-
 def default_out_dir(game_dir: Path) -> Path:
-    """产物默认落 <产物根>/_extracted/<游戏名>/（与 CLI/planner 同一约定）。"""
-    return _output_root() / "_extracted" / game_dir.name
+    """产物默认落 **`<游戏目录>/output`**（2026-11-04 用户要求）。
+
+    为什么放游戏旁边：测试时产物跑到程序目录下（相对路径 + 默认根算错），回头根本找不到。
+    放在游戏旁边最符合直觉——解完就在原地，换盘/换机器跟着走，也不用去 C 盘翻。
+
+    游戏目录不可写（只读安装、光盘、受保护目录）时由 `_start` 的可写预检接管，
+    退到 `writable_fallback`（用户目录 / LOCALAPPDATA / TEMP），不会因此卡死。
+    """
+    return game_dir / "output"
 
 
 def has_stale_products(out_dir: Path) -> bool:
@@ -330,9 +321,9 @@ class App:
         self._autofill_out()
 
     def _autofill_out(self) -> None:
-        game = Path(self.var_game.get().strip().strip('"'))
+        game = Path(self.var_game.get().strip().strip('"')).expanduser()
         if game.is_dir():
-            self.var_out.set(str(default_out_dir(game)))
+            self.var_out.set(str(default_out_dir(game.resolve())))
 
     def _browse_game(self) -> None:
         d = filedialog.askdirectory(title="选游戏目录")
@@ -346,15 +337,29 @@ class App:
             self.var_out.set(d)
 
     def _open_out(self) -> None:
-        if self._last_out and self._last_out.is_dir():
+        """打开输出目录。**目录不存在要明确说一句**——静默无反应最伤：
+        用户会以为按钮坏了，实际是路径没指对（相对路径 + cwd 变化）或被清理了。
+        """
+        if not self._last_out:
+            return
+        if self._last_out.is_dir():
             os.startfile(self._last_out)                     # noqa: S606
+        else:
+            messagebox.showwarning(
+                "输出目录不存在",
+                f"{self._last_out}\n\n本轮可能没有产出，或该目录已被清理。\n"
+                f"完整原因看输出目录里的 manifest.json 或软件目录的 failures.log。")
 
     def _start(self) -> None:
-        game = Path(self.var_game.get().strip().strip('"'))
+        # 一律 resolve 成绝对路径：相对路径会让 `is_dir()` / `os.startfile`
+        # 依赖当前工作目录 —— 「解包完打开输出目录没反应」就是这么来的。
+        game = Path(self.var_game.get().strip().strip('"')).expanduser()
         if not game.is_dir():
             messagebox.showerror("Galgame Unpacker", "游戏目录不存在")
             return
-        out = Path(self.var_out.get().strip().strip('"') or default_out_dir(game))
+        game = game.resolve()
+        raw_out = self.var_out.get().strip().strip('"')
+        out = (Path(raw_out).expanduser() if raw_out else default_out_dir(game)).resolve()
         # 输出目录不可写就别启动线程：默认目录可能被终端防护按进程信誉拦
         # （未签名 exe 写「文档」实测 WinError 5）。但在拦死之前先找一个真能写的位置
         # ——「浏览哪个位置都没用」说明是进程级拦截，让用户继续试目录是浪费时间。

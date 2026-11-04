@@ -738,8 +738,9 @@ v0.1.1「未做」清单的 8 项全部落地，另加随包工具许可证逐�
 1. **raw 非空默认拒绝重跑**：`--out` 指向已有产物时，preflight 直接失败并给两个出口
    （`--overwrite` 清空 / `--reuse-raw` 复用）。GUI 会弹「清空重跑还是换目录」二选一。
    原因：旧实现静默叠跑，产物数虚高而 `reconcile` 照样 `diff=0` —— 一份完美格式的假记录。
-2. **GUI 默认输出目录改了**：便携版落 `%USERPROFILE%\GalgameUnpacker\_extracted\<游戏名>`
-   （**不是 Documents** —— 未签名 exe 在「文档」下建目录会被终端防护拦，见下一条）
+2. **GUI 默认输出目录改了**：现在是 **`<游戏目录>\output`**（v0.4.0，用户要求）。
+   早期版本落过 `Documents`（被终端防护拦）和 `%USERPROFILE%\GalgameUnpacker`（用户找不到），
+   都不要回去。路径一律 `resolve()` 成绝对路径 —— 相对路径会让「打开输出目录」静默失效。
    （原先是程序安装目录，卸载即删、用户找不到）；源码态仍是 `<仓库>\_extracted\<游戏名>`。
 3. **manifest 多了 `verify.status`**：单值枚举 `ok/partial/failed/skipped`。
    `verified=False` 不再等同于失败 —— `reason=disabled`（--no-verify）/`not-run`（加密 krkr）
@@ -927,3 +928,29 @@ preflight 的 `_tree_bytes` 在大样本上是几十秒（已有提示）——�
 两处都失败只 stderr 不抛、超限轮转、文件头只写一次、多行值压平、traceback 只留末尾 40 行；
 集成侧断言 `run()` 失败后 `<app>/failures.log` 有该条记录、GUI 线程崩溃时
 `error=worker-crashed` 且仍补 `done`。
+
+## 2026-11-04 v0.4.0：输出目录改成 `<游戏目录>\output`
+
+### 用户要求
+
+「用户添加游戏的时候，解包目录自动变为 ……/游戏根目录/output」。
+
+### 实现与连带修复
+
+1. `gui.default_out_dir(game)` → `game / "output"`。删掉 `user_output_root` /
+   `_output_root`（产物不再基于应用根或用户目录）。planner 的 `_extracted` 约定**没动**
+   —— 它是 CLI/规划器的口径，与 GUI 的默认值无关。
+2. **路径一律 resolve**：`_start` 和 `_autofill_out` 都 `.expanduser().resolve()`。
+   这是「解包完打开输出目录没反应」的直接原因 —— 相对路径下 `is_dir()` 依赖 cwd，
+   判失败后 `_open_out` 静默返回，用户以为按钮坏了。
+3. `_open_out` 目录不存在时明确弹「输出目录不存在」，不再静默。
+4. 游戏目录不可写时，可写预检仍然接管：退到 用户目录 / LOCALAPPDATA / TEMP。
+
+### 为什么这个默认值比之前两个都对
+
+- `Documents`：未签名 exe 被 EDR 拦（§23）
+- `%USERPROFILE%\GalgameUnpacker`：能写，但用户根本不知道该去那找（实测产物落到了
+  程序目录下的相对路径，等于没找到）
+- `<游戏>\output`：解完就在游戏旁边，符合直觉；多个游戏各自独立；换盘换机器跟着走
+
+代价：会往游戏目录里写字。用户明确要求，且游戏目录只读时有 fallback 兜底。

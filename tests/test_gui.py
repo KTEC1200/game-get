@@ -34,12 +34,6 @@ def test_pick_game_dir_takes_first_existing_dir():
     assert d == ROOT
 
 
-def test_default_out_dir_follows_extracted_convention():
-    """产物默认落 <应用根>/_extracted/<游戏名>/（与 CLI 同一约定，坑：别散到盘根）。"""
-    out = gui.default_out_dir(Path(r"D:\HY\Some Game"))
-    assert out == gui.APP_ROOT / "_extracted" / "Some Game"
-
-
 def test_main_dispatches_gui_before_argparse(monkeypatch):
     """--gui / --gui-smoke / **无参数（双击 exe）** 都在 argparse 前分流进 GUI
     ——桌面工具第一眼不该是「argparse 报缺参数」闪退。"""
@@ -373,39 +367,21 @@ def test_poll_survives_an_event_handler_exception(monkeypatch):
 # 输出目录口径（2026-11-04）
 # ---------------------------------------------------------------------------
 
-def test_default_out_dir_uses_user_root_when_frozen(monkeypatch, tmp_path):
-    """便携版默认落「用户目录\\GalgameUnpacker」，不落程序安装目录。"""
-    monkeypatch.setattr(gui, "FROZEN", True)
-    monkeypatch.setattr(gui, "user_output_root",
-                        lambda: tmp_path / "GalgameUnpacker")
+def test_default_out_dir_is_under_the_game(tmp_path):
+    """★用户要求（2026-11-04）★ 产物默认落 `<游戏目录>/output`。
 
-    out = gui.default_out_dir(Path(r"D:/HY/Some Game"))
-
-    assert out == tmp_path / "GalgameUnpacker" / "_extracted" / "Some Game"
-
-
-def test_default_out_dir_never_lands_in_install_dir_when_frozen(monkeypatch):
-    """★核心★ 便携版产物不许落在 exe 所在目录 —— 删程序目录会连产物一起删。"""
-    monkeypatch.setattr(gui, "FROZEN", True)
-
-    out = gui.default_out_dir(Path("Some Game"))
-
-    assert gui.APP_ROOT not in out.parents
-
-
-def test_user_output_root_is_under_home_not_documents(tmp_path, monkeypatch):
-    """★实测踩过★ 产物根必须在 home 下、**不进 Documents**。
-
-    2026-11-04 用户实测：未签名 exe 在 `Documents` 下建目录被终端防护拒绝
-    （WinError 5），同一个路径用 Python 源码跑却通 —— 拦的是 exe 不是路径。
+    解完就在游戏旁边，不用去 C 盘或程序目录翻；换盘换机器也跟着走。
     """
-    (tmp_path / "Documents").mkdir()
-    monkeypatch.setattr(gui.Path, "home", staticmethod(lambda: tmp_path))
+    game = tmp_path / "Some Game"
 
-    root = gui.user_output_root()
+    assert gui.default_out_dir(game) == game / "output"
 
-    assert root == tmp_path / "GalgameUnpacker"
-    assert "Documents" not in root.parts
+
+def test_default_out_dir_shares_name_with_game_but_is_a_subdir(tmp_path):
+    """别把 output 拼到游戏目录**外面**（早期版本把产物散到用户目录/程序目录，用户找不到）。"""
+    game = tmp_path / "Some Game"
+    out = gui.default_out_dir(game)
+    assert out.parent == game
 
 
 def test_ensure_writable_passes_and_creates_dir(tmp_path):
@@ -520,3 +496,19 @@ def test_writable_fallback_reports_every_failure(tmp_path, monkeypatch):
     assert alt is None
     assert len(tried) == 3, "三个候选都要报出来，用户/我们才知道试过哪些"
     assert all("PermissionError" in t for t in tried)
+
+
+def test_open_out_warns_when_directory_is_gone(tmp_path, monkeypatch):
+    """★实测踩过★ 点「打开输出目录」没反应，用户以为按钮坏了。
+
+    实际是路径没指对（曾被写成相对路径）或目录被清理。静默返回=最差体验，
+    必须明确提示「目录不存在」。
+    """
+    app = _shell_app(_FakeRoot())
+    app._last_out = tmp_path / "gone"
+    seen: list = []
+    monkeypatch.setattr(gui.messagebox, "showwarning", lambda *a, **k: seen.append(a))
+
+    app._open_out()
+
+    assert seen, "目录不存在时必须提示，不能静默无反应"
