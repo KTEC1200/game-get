@@ -23,6 +23,8 @@ _spike_pkg/feedback_*/
 
 # 临时/中间产物
 *.log
+failures.log
+failures.log.1
 _verify_*.csv
 _rpa_media*.csv
 verify.csv

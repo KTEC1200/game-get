@@ -42,7 +42,7 @@ PACKAGING = REPO / "packaging"
 
 #: 应用版本号 —— 便携包文件名与收尾摘要都从这里来（软件还没有 GUI/关于页，
 #: 等要展示版本的地方多了再挪进独立 VERSION 文件）。
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.3.0"
 
 #: (源相对路径, 包内目标目录)。目标目录 "." = _internal 根（与仓库根布局镜像，
 #: 各模块的 `Path(__file__).parent` 定位才能命中）。

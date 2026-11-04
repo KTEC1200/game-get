@@ -32,6 +32,8 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+import faillog                    # 失败日志：无依赖，可安全在模块级导入（也便于测试替换）
+
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
     HAS_DND = True
@@ -498,7 +500,15 @@ class App:
             self.q.put(("done", rc, res))
         except BaseException:                                # noqa: BLE001 —— 见 docstring
             crashed = True
-            self.q.put(("crash", traceback.format_exc()))
+            text = traceback.format_exc()
+            # 工作线程崩了不走 `_finish_failure`（那条路连 rc 都拿不到），
+            # 失败日志得在这里补一笔，否则最严重的一类失败反而没有记录。
+            try:
+                faillog.log_failure(error="worker-crashed", game_dir=game, out_dir=out,
+                                    exc_text=text, rc=1)
+            except Exception:                                # noqa: BLE001
+                pass
+            self.q.put(("crash", text))
         finally:
             if crashed:
                 # 兜底：哪怕上面拿不到 rc/manifest，也要让主线程把「运行中」收敛掉。

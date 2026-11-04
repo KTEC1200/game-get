@@ -1653,3 +1653,42 @@ PermissionError: [WinError 5] 拒绝访问。: 'C:\Users\27025\Documents\Galgame
 **「默认值」必须按最恶劣的运行环境选，不是按最舒服的。** 开发机上 Documents 可写、
 OneDrive 没开、杀软没装 —— 三个条件全中才会以为它安全。同一个 bug 在源码态永远复现不了，
 因为拦的是 exe 的信誉。
+
+## 24. 失败日志（2026-11-04）—— 记在软件旁边，而不是产物旁边
+
+### 24.1 需求与判断
+
+用户要求：每次失败自动写日志到**软件根目录**，含时间/错误/上下文，写入失败不影响主流程。
+
+关键判断：**不能复用 `_work/<stage>.log`**。那套日志跟着输出目录走，而输出目录本身
+可能就是第一个失效的东西（§23 实测：未签名 exe 写 `Documents` 被终端防护拒，`mkdir`
+当场抛）。把失败记录放在一个「可能建不出来」的目录里，等于下雨天才发现伞在屋里。
+
+### 24.2 实现（`faillog.py`，纯函数 + 单文件追加）
+
+- 位置：`<软件根>/failures.log`；不可写退 `%LOCALAPPDATA%\GalgameUnpacker\failures.log`
+- 格式：纯文本块，一块一条。第一行 `[YYYY-MM-DD HH:MM:SS +ZZZZ] error engine= rc=`，
+  缩进字段 `game / out / stage / exc / 自定义 / python+platform / traceback / ---`
+- **永不抛**：目录不存在就建；超过 2 MB 轮转 `failures.log.1`；两处都失败 → stderr 一行，
+  返回 `None`
+- 只输出 `ok=False` 的阶段；成功与跳过的阶段不写（噪声会让人不看日志）
+- traceback 只留末尾 40 行（根因在末尾，前面是噪声）
+
+### 24.3 接入点
+
+`_finish_failure`（所有非 0 退出）+ `main()` 的三处早期 return（游戏目录不存在 /
+`--reuse-raw` 不存在 / 清空 raw 失败）+ dry-run 判定失败 + `gui._worker` 的
+`except BaseException`（线程崩溃不走 `_finish_failure`，最容易被漏）。
+
+### 24.4 验证
+
+`tests/test_faillog.py` 8 条：时间戳格式、上下文齐全、成功阶段不出现、目录自动创建、
+主路径不可写降级备用、两处都失败只 stderr、超限轮转、文件头只写一次、多行值压平、
+traceback 尾部保留；集成 2 条：`run()` 失败后 `<app>/failures.log` 有该条、
+GUI 线程崩溃记 `worker-crashed` 且仍补 `done`。
+
+### 24.5 边界
+
+`failures.log` 是**时间线**，不替代 `manifest.json`：后者是机器可读的交付记录
+（`error`/`stages`/`manual`），前者是给人翻的排障线索。两者同一时刻各写一份，
+来源一致（都从 `stages` 取），不重复构造第二套事实。

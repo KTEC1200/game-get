@@ -60,6 +60,7 @@ import galgame_dispatch as gd          # noqa: E402
 import case_lib                        # noqa: E402  （案例库查表：签名算法唯一出处）
 import manifest                        # noqa: E402
 import manual                          # noqa: E402  （人工介入方案：失败时给可执行步骤，见 manual.py）
+import faillog                         # noqa: E402  （失败日志：写软件根目录，与产物解耦）
 import rpa_tool                        # noqa: E402
 import toolbridge as tb                # noqa: E402
 import rpa_extract_organized           # noqa: E402  （兄弟链路一律 in-process 调 main()，见 _run_sibling）
@@ -2349,6 +2350,11 @@ def _finish_failure(ctx: Ctx, stages: list[Stage], engine: str | None,
         ctx.log("manual", plan.render())
 
     _write_manifest(ctx, man)
+
+    # 失败日志写**软件根目录**（与产物解耦）：输出目录本身可能就是建不出来的那个，
+    # `_work/*.log` 靠不住。这条永不抛，写不进去顶多 stderr 一行（见 faillog.py）。
+    faillog.log_failure(error=error, engine=engine, game_dir=ctx.game_dir,
+                        out_dir=ctx.out_dir, stages=man["stages"], rc=rc)
     res = {"error": error, "engine": engine, "manifest": man, "stages": man["stages"]}
     if plan is not None:
         # 同一份数据两处消费：main() 打终端区块、GUI 摘要取前几步。
@@ -2603,6 +2609,8 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = Path(a.out).resolve()
     if not game_dir.is_dir():
         print(f"[错误] 游戏目录不存在: {game_dir}", file=sys.stderr)
+        faillog.log_failure(error="game-dir-missing", game_dir=game_dir, out_dir=out_dir,
+                            rc=3, extra={"detail": "传给工具的游戏目录不存在"})
         return 3
     work_dir = Path(a.work).resolve() if a.work else out_dir / "_work"
     manifest_path = Path(a.manifest).resolve() if a.manifest else out_dir / "manifest.json"
@@ -2645,6 +2653,9 @@ def main(argv: list[str] | None = None) -> int:
             # stdout 保持纯 JSON（可能有脚本在解析），人看的区块走 stderr
             print(file=sys.stderr)
             print(manual.render_dict(payload["manual"]), file=sys.stderr)
+        if not st.ok:
+            faillog.log_failure(error="dry-run-detect-failed", game_dir=game_dir,
+                                out_dir=out_dir, stages=[st.as_dict()], rc=3)
         return 0 if st.ok else 3
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -2656,6 +2667,9 @@ def main(argv: list[str] | None = None) -> int:
         # 复用模式：把已有产物搬/链到 raw/
         if not reuse.is_dir():
             print(f"[错误] --reuse-raw 目录不存在: {reuse}", file=sys.stderr)
+            faillog.log_failure(error="reuse-raw-missing", game_dir=game_dir,
+                                out_dir=out_dir, rc=1,
+                                extra={"reuse": reuse, "detail": "--reuse-raw 指向的目录不存在"})
             return 1
         if reuse == ctx.raw_dir:
             print(f"[reuse] 源与目标同一目录，跳过复制: {reuse}")
@@ -2665,6 +2679,10 @@ def main(argv: list[str] | None = None) -> int:
             if not drop_tree(ctx.raw_dir):
                 print(f"[错误] 清理 {ctx.raw_dir} 失败（受保护目录或安全删除守卫拦住），"
                       f"放弃复制以免产物叠层", file=sys.stderr)
+                faillog.log_failure(error="reuse-raw-clean-failed", game_dir=game_dir,
+                                    out_dir=out_dir, rc=1,
+                                    extra={"reuse": reuse, "raw": ctx.raw_dir,
+                                           "detail": "清空 raw/ 失败，放弃复制以免产物叠层"})
                 return 1
             shutil.copytree(reuse, ctx.raw_dir, symlinks=True, dirs_exist_ok=False)
             print(f"[reuse] {reuse} -> {ctx.raw_dir}")

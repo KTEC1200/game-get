@@ -459,3 +459,33 @@ def test_summarize_text_includes_manual_plan():
     assert "第四步" not in text, "只显示前 3 步"
     assert "还有 1 步" in text
     assert "--reuse-raw" in text
+
+
+def test_worker_crash_writes_failure_log(tmp_path, monkeypatch):
+    """★核心★ 工作线程崩溃是最严重的一类失败，反而最容易被漏记。
+
+    它不走 `_finish_failure`（连 rc 都拿不到），必须自己在 except 里补一笔；
+    同时仍要补一条 `done`，否则界面永远停在「运行中」。
+    """
+    import threading
+
+    import orchestrator as _orch
+
+    app = _shell_app(_FakeRoot())
+
+    def boom(_ctx):
+        raise RuntimeError("模拟线程崩溃")
+
+    monkeypatch.setattr(_orch, "run", boom)
+    seen: dict = {}
+    monkeypatch.setattr(gui.faillog, "log_failure", lambda **kw: seen.update(kw))
+
+    app._worker(tmp_path / "game", tmp_path / "out", False, threading.Event())
+
+    assert seen.get("error") == "worker-crashed"
+    assert "模拟线程崩溃" in (seen.get("exc_text") or "")
+
+    kinds = []
+    while not app.q.empty():
+        kinds.append(app.q.get()[0])
+    assert "crash" in kinds and "done" in kinds, "崩溃后必须收敛，界面不能卡在运行中"

@@ -21,6 +21,20 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture(autouse=True)
+def isolate_failures_log(tmp_path: Path, monkeypatch) -> None:
+    """测试**绝不**往仓库根写 `failures.log`。
+
+    2026-11-04 加：失败日志默认落软件根目录（源码态 = 仓库根）。跑一次测试就会产生
+    十几条真实失败记录，于是 `git status` 永远有未跟踪文件，而那些记录是
+    「测试制造的失败」，不是用户遇到的失败 —— 混在一起会把真问题淹掉。
+    这里统一把根目录改到当前用例的 tmp，需要断言日志内容的用例自己再 monkeypatch。
+    """
+    import faillog
+
+    monkeypatch.setattr(faillog, "app_root", lambda: tmp_path / "_approot")
+
+
+@pytest.fixture(autouse=True)
 def warn_if_basetemp_inside_repo(tmp_path: Path) -> None:
     """★C9★ tmp_path 落在仓库根之下时报警（不阻断）。
 

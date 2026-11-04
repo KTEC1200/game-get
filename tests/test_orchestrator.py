@@ -3154,3 +3154,27 @@ def test_ctx_log_degrades_when_work_dir_is_unusable(tmp_path, capsys):
     assert "阶段日志写不进去" in capsys.readouterr().err
     ctx.log("detect", "again")            # 只提示一次，不刷屏
     assert capsys.readouterr().err == ""
+
+
+def test_run_failure_writes_failures_log_under_app_root(tmp_path, monkeypatch):
+    """★核心★ 每次失败都要在**软件根目录**留一条记录，而不是只躺在输出目录里。
+
+    输出目录本身可能就是建不出来的那个（终端防护拦 mkdir），
+    所以失败日志必须与产物解耦 —— 这是它和 `_work/*.log` 的根本区别。
+    """
+    app = tmp_path / "app"
+    monkeypatch.setattr(orch.faillog, "app_root", lambda: app)
+    ctx = _ctx(tmp_path, engine="Ren'Py")
+
+    def boom(c):
+        return orch.Stage("extract", ok=False, detail="索引坏了")
+
+    monkeypatch.setattr(orch, "stage_extract_renpy", boom)
+
+    rc, res = orch.run(ctx)
+
+    assert rc == 1
+    log = (app / "failures.log").read_text(encoding="utf-8")
+    assert "extract-failed" in log
+    assert "索引坏了" in log
+    assert str(ctx.game_dir) in log

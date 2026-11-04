@@ -894,3 +894,36 @@ preflight 的 `_tree_bytes` 在大样本上是几十秒（已有提示）——�
 - 交付形态：`packaging/Output/GalgameUnpacker-0.2.0-portable.zip`（便携版，无安装器）
 - **速度优化按用户要求暂不启动**：用户明确「等我版本实测，然后再准备速度优化（现在先不做）」。
   下手点与测量计划已记在上方「待办优先级」段，等实测反馈回来再动。
+
+## 2026-11-04 失败日志（`faillog.py`）
+
+### 为什么单独一个模块
+
+阶段日志在 `_work/<stage>.log`，跟着**输出目录**走。而输出目录本身可能就是第一个失效的
+东西（§23：未签名 exe 写 `Documents` 被终端防护拒，`mkdir` 直接炸）。把失败记录放在一个
+「可能建不出来」的目录里等于没有。所以失败日志落在**软件根目录**（便携版 = 解压目录，
+源码 = 仓库根），与产物完全解耦。
+
+### 契约
+
+- 位置：`<软件根>/failures.log`（追加）；不可写时退 `%LOCALAPPDATA%\GalgameUnpacker\failures.log`
+- 格式：纯文本块，一块一条失败。第一行 `[时间] error [engine=] [rc=]`，缩进字段
+  `game/out/stage/exc/自定义/python/traceback/---`
+- **永不抛异常**：目录不存在就建、超 2 MB 轮转 `.1`、两处都失败只往 stderr 说一句
+- 只写失败阶段（`ok=False`），成功的阶段不进日志（噪声会让人不看）
+
+### 接入点（少一个就会漏掉一类失败）
+
+| 位置 | 覆盖的失败 |
+|---|---|
+| `_finish_failure` | 所有非 0 退出（detect/preflight/extract/post/verify/reset） |
+| `main()` 早期 return | 游戏目录不存在、`--reuse-raw` 目录不存在、清空 raw 失败 |
+| `main()` dry-run 失败 | 只判引擎就跑的场合（rc=3） |
+| `gui._worker` 的 `except BaseException` | 线程崩溃（不走 `_finish_failure`，最容易被漏） |
+
+### 验收（`tests/test_faillog.py` 8 条 + 2 条集成）
+
+时间戳格式、上下文齐全、成功阶段不出现、目录自动创建、主路径不可写降级、
+两处都失败只 stderr 不抛、超限轮转、文件头只写一次、多行值压平、traceback 只留末尾 40 行；
+集成侧断言 `run()` 失败后 `<app>/failures.log` 有该条记录、GUI 线程崩溃时
+`error=worker-crashed` 且仍补 `done`。
