@@ -489,3 +489,34 @@ def test_worker_crash_writes_failure_log(tmp_path, monkeypatch):
     while not app.q.empty():
         kinds.append(app.q.get()[0])
     assert "crash" in kinds and "done" in kinds, "崩溃后必须收敛，界面不能卡在运行中"
+
+
+def test_writable_fallback_returns_first_writable_candidate(tmp_path, monkeypatch):
+    """★核心★ 默认目录写不进去时，要能自动找到一个真能写的位置。"""
+    monkeypatch.setattr(gui.Path, "home", staticmethod(lambda: tmp_path / "home"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    monkeypatch.setattr(gui.tempfile, "gettempdir", lambda: str(tmp_path / "tmp"))
+
+    alt, tried = gui.writable_fallback(Path("Some Game"))
+
+    assert alt == tmp_path / "home" / "GalgameUnpacker" / "_extracted" / "Some Game"
+    assert tried == [], "第一个就成功，不该有失败记录"
+    assert alt.is_dir()
+
+
+def test_writable_fallback_reports_every_failure(tmp_path, monkeypatch):
+    """★核心★ 三处都不行 → 返回 None + 每处的原因。
+
+    这是「浏览哪个位置都没用」的判定依据：全部失败说明是进程级拦截，
+    弹窗必须直接讲加白名单，而不是继续让用户换目录。
+    """
+    monkeypatch.setattr(gui.Path, "home", staticmethod(lambda: tmp_path / "home"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    monkeypatch.setattr(gui.tempfile, "gettempdir", lambda: str(tmp_path / "tmp"))
+    monkeypatch.setattr(gui, "ensure_writable", lambda p: "PermissionError: 拒绝访问")
+
+    alt, tried = gui.writable_fallback(Path("G"))
+
+    assert alt is None
+    assert len(tried) == 3, "三个候选都要报出来，用户/我们才知道试过哪些"
+    assert all("PermissionError" in t for t in tried)

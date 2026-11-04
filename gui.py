@@ -23,8 +23,10 @@ CLI 路径不为此多付启动成本）。不造第二个 exe：GUI 与 CLI 共
 from __future__ import annotations
 
 import os
+import os
 import queue
 import sys
+import tempfile
 import threading
 import traceback
 from pathlib import Path
@@ -58,21 +60,46 @@ def user_output_root() -> Path:
 
 
 def ensure_writable(path: Path) -> str | None:
-    """输出目录能不能写：None = 可以，否则返回原因（给弹窗用）。
+    """目录能不能写：None = 可以，否则返回原因（给弹窗用）。
 
-    为什么要预检：默认目录可能被终端防护拦（见 `user_output_root` 的说明）。
-    与其让工作线程在第一次写阶段日志时炸成 `worker-aborted`（用户只看到一句
-    「运行异常（看日志）」，而日志恰好就是写不进去的那个东西），
-    不如在点「开始」的那一刻就说清楚，并且允许当场换目录。
+    探针用**正常的文件名和扩展名**（`write-probe.txt`）。早前用的是点开头的无扩展名
+    文件（`.galunpack-write-test`），那正是终端防护最容易判成「可疑行为」的形状 ——
+    结果所有目录都被判成不可写，用户「浏览哪个位置都没用」。
+    探针本身被拦时也可能误报，所以调用方必须允许「仍然尝试」（见 `_start`）。
     """
     try:
         path.mkdir(parents=True, exist_ok=True)
-        probe = path / ".galunpack-write-test"
+        probe = path / "write-probe.txt"
         probe.write_text("x", encoding="utf-8")
         probe.unlink()
     except OSError as exc:
         return f"{type(exc).__name__}: {exc}"
     return None
+
+
+def writable_fallback(game_dir: Path) -> tuple[Path | None, list[str]]:
+    """默认位置写不进去时，找一个**真的能写**的产物目录。
+
+    返回 `(可用路径, 每个候选的失败说明)`。全部不行时第一项为 None ——
+    那说明终端防护是按进程拦的，换目录解决不了，只能加白名单（弹窗会说清楚）。
+
+    候选顺序按「用户会不会去翻」排：用户目录 → 本地应用数据 → 系统临时目录。
+    前两个是给人看的，最后一个只保证能跑（临时目录可能被清理）。
+    """
+    home = Path.home()
+    bases = [
+        home / "GalgameUnpacker",
+        Path(os.environ.get("LOCALAPPDATA") or home) / "GalgameUnpacker",
+        Path(tempfile.gettempdir()) / "GalgameUnpacker",
+    ]
+    tried: list[str] = []
+    for base in bases:
+        cand = base / "_extracted" / game_dir.name
+        why = ensure_writable(cand)
+        if why is None:
+            return cand, tried
+        tried.append(f"{cand}  ← {why}")
+    return None, tried
 
 
 def _output_root() -> Path:
@@ -329,15 +356,28 @@ class App:
             return
         out = Path(self.var_out.get().strip().strip('"') or default_out_dir(game))
         # 输出目录不可写就别启动线程：默认目录可能被终端防护按进程信誉拦
-        # （未签名 exe 写「文档」实测 WinError 5）。在这里拦下，用户能当场换目录。
+        # （未签名 exe 写「文档」实测 WinError 5）。但在拦死之前先找一个真能写的位置
+        # ——「浏览哪个位置都没用」说明是进程级拦截，让用户继续试目录是浪费时间。
         why = ensure_writable(out)
         if why:
-            messagebox.showerror(
-                "输出目录不可写",
-                f"{out}\n\n{why}\n\n"
-                f"请点「浏览」换一个位置 —— 建议在 D 盘新建一个目录，"
-                f"或改用用户目录下的 GalgameUnpacker。")
-            return
+            alt, tried = writable_fallback(game)
+            if alt is None:
+                messagebox.showerror(
+                    "所有位置都写不进去",
+                    "试过这些位置全部失败：\n\n"
+                    + "\n".join(tried)
+                    + "\n\n这不是目录选错了，是安全软件在拦这个程序的写入。\n"
+                      "请把解压目录加入火绒/EDR 的信任区（或联系管理员放行）后重试。")
+                return
+            if not messagebox.askyesno(
+                    "输出目录不可写，已找到替代位置",
+                    f"原位置：{out}\n{why}\n\n"
+                    f"改用这个位置继续吗？\n{alt}\n\n"
+                    f"（这是程序自动探测到可写的地方；不想用就点「否」再手动选一个）",
+                    icon="warning"):
+                return
+            out = alt
+            self.var_out.set(str(out))
         # 已有产物必须先问：默认 auto 会静默叠跑（产物数虚高但对账自洽），
         # 拒绝则让用户换个目录 —— 两条路都比「跑完给一个假数字」强。
         overwrite = False
