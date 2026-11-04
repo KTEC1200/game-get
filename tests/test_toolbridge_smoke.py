@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -151,6 +152,32 @@ def _first_with_suffix(roots: list[Path], suffixes: tuple[str, ...]) -> Path | N
     return None
 
 
+def _ffmpeg_beside_ffprobe() -> Path | None:
+    """找 ffprobe 同目录的 ffmpeg.exe —— 不硬编码路径，跟着工具解析走。"""
+    try:
+        probe = tb.find_tool("ffprobe")
+    except Exception:                                      # noqa: BLE001
+        return None
+    cand = probe.with_name("ffmpeg.exe")
+    return cand if cand.is_file() else None
+
+
+def _synth_media(path: Path, args: list[str]) -> Path | None:
+    """现场合成一个 1 秒的最小媒体文件，合成失败返回 None（调用方退回 skip）。
+
+    为什么合成而不是入库（2026-11-04）：`_extracted` 清空后 .ogg/视频样本没了，
+    这两个用例本来只能 skip。但 ffprobe 的回归问的是「它认不认这个容器/编码」，
+    1 秒空音频足够；把几百 KB 的二进制媒体塞进仓库反而会一直长下去。
+    合成不出来（没 ffmpeg）就 skip —— 不许把「造不出样本」当失败。
+    """
+    exe = _ffmpeg_beside_ffprobe()
+    if exe is None:
+        return None
+    r = subprocess.run([str(exe), "-hide_banner", "-loglevel", "error", *args, str(path)],
+                       capture_output=True)
+    return path if r.returncode == 0 and path.is_file() else None
+
+
 #: 已解包产物的物理位置。用户 2026-10-29 决定「文件和空目录都不管」，
 #: 所以 `_extracted/` 仍留在旧副本目录里；同时保留项目目录下这一候选，
 #: 将来若搬回来无需改测试。
@@ -158,11 +185,17 @@ EXTRACTED_ROOTS = [Path(r"D:\K\zcode\game\_extracted"),
                    Path(__file__).resolve().parent.parent / "_extracted"]
 
 
-def test_ffprobe_real_audio():
+def test_ffprobe_real_audio(tmp_path):
     _skip_unless("ffprobe")
     ogg = _first_with_suffix([Path(r"D:\HY\pork社\兼职人妻"), *EXTRACTED_ROOTS], (".ogg",))
     if ogg is None:
-        pytest.skip("找不到 .ogg 样本")
+        # 真样本没了（`_extracted` 2026-11-04 清理）→ 现场合成 1 秒 Vorbis。
+        # 这条用例的价值是「ffprobe 真的能解开 OGG 容器」，样本来源不影响这个结论。
+        ogg = _synth_media(tmp_path / "tone.ogg",
+                           ["-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+                            "-c:a", "libvorbis"])
+    if ogg is None:
+        pytest.skip("找不到 .ogg 样本，且 ffmpeg 不在（无法现场合成）")
 
     info = tb.ffprobe(ogg)
 
@@ -176,11 +209,14 @@ def test_ffprobe_embedded_cover_is_not_video():
 
     实测 `常識改変学園` 866 个 .ogg 里有 19 个带 mjpeg 封面（disposition.attached_pic=1），
     不排除的话音频会被算成视频、视频数虚高。样本找不到就 skip，找到就必须判 audio。
+
+    这条**没法现场合成**：要造「带 mjpeg 封面流的 ogg」得先有一张 png 再 mux 进去，
+    合出来的东西一旦与真实样本的流布局有差异，测的就不是同一件事了。所以维持依赖真样本。
     """
     _skip_unless("ffprobe")
     ogg = _first_with_suffix([Path(r"D:\HY\常識改変学園-製品版-"), *EXTRACTED_ROOTS], (".ogg",))
     if ogg is None:
-        pytest.skip("找不到 .ogg 样本")
+        pytest.skip("找不到带封面的 .ogg 真样本（`_extracted` 已于 2026-11-04 清理）")
 
     info = tb.ffprobe(ogg)
 
@@ -189,11 +225,15 @@ def test_ffprobe_embedded_cover_is_not_video():
     assert info["w"] is None and info["h"] is None, "封面流的宽高不该泄漏到结果里"
 
 
-def test_ffprobe_real_video():
+def test_ffprobe_real_video(tmp_path):
     _skip_unless("ffprobe")
     vid = _first_with_suffix([Path(r"D:\HY\教师催眠1"), *EXTRACTED_ROOTS], (".wmv", ".mpg", ".mp4"))
     if vid is None:
-        pytest.skip("找不到视频样本")
+        vid = _synth_media(tmp_path / "clip.mp4",
+                           ["-f", "lavfi", "-i", "color=c=black:s=64x64:d=1",
+                            "-c:v", "libx264", "-pix_fmt", "yuv420p"])
+    if vid is None:
+        pytest.skip("找不到视频样本，且 ffmpeg 不在（无法现场合成）")
 
     info = tb.ffprobe(vid)
 
@@ -224,7 +264,8 @@ def test_tlg2png_real_conversion(tmp_path):
     tlg = _first_with_suffix(
         [r / "高慢妻陥落！！" for r in EXTRACTED_ROOTS], (".tlg",))
     if tlg is None:
-        pytest.skip(f"没有可用 .tlg 样本（{EXTRACTED_ROOTS}）")
+        pytest.skip(f"没有可用 .tlg 样本（{EXTRACTED_ROOTS}）——"
+                    f"`_extracted` 已于 2026-11-04 清理，且 TLG 无法现场合成")
 
     dst = tmp_path / "out.png"
     r = tb.tlg2png(tlg, dst)
