@@ -3041,3 +3041,27 @@ def test_run_overwrite_clears_raw_and_png_then_extracts(tmp_path, monkeypatch):
     assert (ctx.raw_dir / "new.png").is_file()
     reset = [s for s in man["stages"] if s["stage"] == "reset"]
     assert reset and reset[0]["ok"] is True, "清场要留下可复盘的一条 stage"
+
+
+def test_manifest_verify_status_skipped_when_stage_never_ran(tmp_path, monkeypatch):
+    """★核心★ extract 就失败了 → verify 根本没跑 → status 必须是 skipped，不是 failed。
+
+    `verify.status` 的三种「没验」来源要分清：
+      · --no-verify         → stage 存在、skipped=True、reason=disabled（阶段自己补）
+      · 加密 krkr           → 工具自己写 reason=not-run
+      · 前面阶段就失败       → **阶段不存在**，没人补 → 由 build_manifest 补 not-run
+    """
+    ctx = _ctx(tmp_path, engine="Ren'Py")
+
+    def boom(c):
+        return orch.Stage("extract", ok=False, detail="模拟解包失败")
+
+    monkeypatch.setattr(orch, "stage_extract_renpy", boom)
+
+    rc, res = orch.run(ctx)
+    man = orch._result_manifest(res)
+
+    assert rc == 1
+    assert man["ok"] is False
+    assert man["verify"]["status"] == "skipped", "没验过的事不能被记成「验失败」"
+    assert man["verify"]["reason"] == "not-run"

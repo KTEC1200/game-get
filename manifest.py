@@ -329,3 +329,9 @@ if __name__ == "__main__":
     r = m.get("reconcile", {})
     print(f"对账    : 期望 {r.get('expected')} vs 落盘 {r.get('actual')} "
           f"(diff={r.get('diff')}, method={r.get('method')})")
+    v = m.get("verify", {})
+    # status 对老 manifest 可能不存在：现场算一遍比显示 "?" 有用
+    print(f"验收    : {v.get('status') or verify_status(v)}  "
+          f"(图片 {v.get('image_ok')}/{v.get('image_fail')}失败, "
+          f"音频 {v.get('audio_ok')}/{v.get('audio_fail')}失败, "
+          f"视频 {v.get('video_ok')}/{v.get('video_fail')}失败)")

@@ -2180,6 +2180,11 @@ def build_manifest(ctx: Ctx, stages: list[Stage], engine: str | None) -> dict:
     extract_data = stage_data("extract")
     post_data = stage_data("postprocess")
     verify_data = stage_data("verify")
+    # verify 阶段**根本没跑**（前面 extract/postprocess 就失败了）时补 reason=not-run：
+    # stage_verify 自己会给 `--no-verify` 补 disabled，但它没跑过就没人补，
+    # 于是 manifest.verify.status 会把「压根没验」判成 failed —— 冤枉一次提前失败的运行。
+    if "reason" not in verify_data and not any(s.name == "verify" for s in stages):
+        verify_data = {**verify_data, "reason": "not-run"}
 
     archives = []
     for a in extract_data.get("archives", []) or []:

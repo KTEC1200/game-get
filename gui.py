@@ -167,7 +167,8 @@ def summarize_text(rc: int, man: dict) -> str | None:
     minutes = ver.get("media_minutes")
     media = (f"{minutes:.1f} 分钟" if isinstance(minutes, (int, float)) and not isinstance(minutes, bool)
              else "媒体未统计")
-    lines.append(f"验收：图片 {ver.get('image_ok')}/{ver.get('image_fail')}失败 · "
+    lines.append(f"验收[{ver.get('status') or 'unknown'}]："
+                 f"图片 {ver.get('image_ok')}/{ver.get('image_fail')}失败 · "
                  f"音频 {ver.get('audio_ok')}/{ver.get('audio_fail')}失败 · "
                  f"视频 {ver.get('video_ok')}/{ver.get('video_fail')}失败 · {media}")
     if ver.get("nonmedia"):

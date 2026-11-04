@@ -23,7 +23,7 @@
 
 > **🚀 接手顺序（新会话只做这三步）**
 > ① 读本文档「状态 / 下一步 / ⚠️ 五个坑」；
-> ② 跑基线：`C:\Python314\python.exe tests\run_all.py`（**不要用裸 `python`**，它没有 pytest；2026-11-04 收尾：**tests=655 / 0 failures / 0 errors / 10 skipped**）
+> ② 跑基线：`C:\Python314\python.exe tests\run_all.py`（**不要用裸 `python`**，它没有 pytest；2026-11-04 收尾：**tests=656 / 0 failures / 0 errors / 8 skipped**）
 >    + `C:\Python314\python.exe tests\make_golden.py --check`（应零漂移）；
 > ③ 按「下一步」当前项开工。**改完先回写本文档 + `verified-findings.md`，再清临时产物，最后提交。**
 
@@ -762,8 +762,8 @@ tlg2png 必须换掉（GARbro 的 TLG 转换或自研）。详见 verified-findi
 
 ### 基线（收尾实测）
 
-- `C:/Python314/python.exe tests/run_all.py` → **tests=655 failures=0 errors=0 skipped=10 → PASS**
-  （开工前 626；新增 29 条）
+- `C:/Python314/python.exe tests/run_all.py` → **tests=656 failures=0 errors=0 skipped=8 → PASS**
+  （开工前 626；新增 30 条）
 - `C:/Python314/python.exe tests/make_golden.py --check` → **6 fixture + 12 真实样本零漂移**
 - 新增 `tests/test_unity_extract.py`（7 条：rc/env 透出 + 合并路径）
 

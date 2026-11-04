@@ -1373,9 +1373,11 @@ krkr 直接写 `name/files/total_after`；cs2/unity/pfs 写 `name/entries`。读
 只有阶段知道的信息），老 manifest 退回三类媒体失败计数。`normalise_verify()` 在 build 时
 补齐 4 个判定字段（`image_fail/audio_fail/video_fail/zero_byte`）并写入 status。
 
-**关键细节**：`reason` 是「没验」与「验失败」的唯一区分依据。为此
-`stage_verify` 的 `--no-verify` 分支补 `reason="disabled"`，krkr 的 `write_manifest`
-补 `reason="not-run"`。CLI 摘要打印 `[ok]/[partial]` 前缀。
+**关键细节**：`reason` 是「没验」与「验失败」的唯一区分依据。三种「没验」各有来源：
+`--no-verify` 由 `stage_verify` 写 `disabled`；加密 krkr 的工具自己写 `not-run`；
+**前面阶段就失败（verify 压根没跑）**由 `build_manifest` 检测「stages 里没有 verify」补
+`not-run` —— 端到端冒烟实测过这条：extract 失败的 manifest 原本被判成 `failed`，
+补上之后才是 `skipped`。CLI 摘要打印 `[ok]/[partial]` 前缀，GUI 摘要打印 `验收[status]`。
 
 ### 21.4 Unity 子进程的 rc/stderr 被吞（假绿的温床）
 
@@ -1462,9 +1464,9 @@ README 与 GUI 首行日志同步写明。
 
 ### 21.10 收尾基线
 
-`C:/Python314/python.exe tests/run_all.py` → **junit: tests=655 failures=0 errors=0
-skipped=10 → PASS**（开工前 626，新增 29 条：Unity 7 / overwrite 5 / manifest 7 /
-配置缓存 3 / 窗口 2 / GUI 5）。
+`C:/Python314/python.exe tests/run_all.py` → **junit: tests=656 failures=0 errors=0
+skipped=8 → PASS**（开工前 626，新增 30 条：Unity 7 / overwrite 5 / manifest 7 /
+配置缓存 3 / 窗口 2 / GUI 5 / verify-not-run 1）。
 `C:/Python314/python.exe tests/make_golden.py --check` → **6 个 fixture + 12 个真实样本
 全部与基线一致**（detect 链路未动，零漂移）。
 
