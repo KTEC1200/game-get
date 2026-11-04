@@ -1572,3 +1572,35 @@ manifest 不写 `manual` 块。这条边界由 `test_unknown_failure_returns_non
 - 全量：**672 tests / 0 failures / 0 errors / 9 skipped → PASS**
 - 人工产物走**同一条链路**：`then` 里的 `--reuse-raw` 是既有命令，不新增分支 ——
   人工解出来的文件照样进 postprocess/verify/manifest，不会变成「人工的就不验了」
+
+### 22.6 v0.2.0 打磨（同日，交付前）
+
+三处补强，都不改契约（`manual` 块字段不变）：
+
+1. **`kirikiri-gui-failed` 的 `why` 换成排查方向**：GUI 跑过但没产出，多是安全软件拦进程
+   或非真实桌面会话（远程桌面/多虚拟桌面让 `SendInput` 失效）。原样重试是 40 分钟的浪费，
+   所以这个分支不再复用「KrkrExtract 慢且挑环境」那段泛泛解释。
+2. **`engine-no-chain` 点名 `asar_tool.py`**：Tyrano/Electron 是唯一已知的无链路引擎，
+   仓库根就有现成脚本；方案里直接给脚本名（不给参数，避免编错）。
+3. **方案落 `_work/manual.log`**：GUI 的 worker stdout 不进日志面板、摘要只显示前 3 步，
+   用户照着操作时必须能翻到完整步骤。`_finish_failure` 里多一句 `ctx.log("manual", …)`，
+   测试断言日志包含「需要人工介入」与第一步原文。
+
+测试：`test_manual.py` 12 → **14 条**（+GUI 失败排查方向、+Tyrano 点名 asar_tool），
+`test_failure_carries_manual_plan_for_encrypted_kirikiri` 增加 manual.log 断言。
+
+### 22.6 v0.2.0 打磨（同日，交付前）
+
+三处补强，都不改契约（`manual` 块字段不变）：
+
+1. **`kirikiri-gui-failed` 的 `why` 换成排查方向**：GUI 跑过但没产出，多是安全软件拦进程
+   或非真实桌面会话（远程桌面/多虚拟桌面让 `SendInput` 失效）。原样重试是 40 分钟的浪费，
+   所以这个分支不再复用「KrkrExtract 慢且挑环境」那段泛泛解释。
+2. **`engine-no-chain` 点名 `asar_tool.py`**：Tyrano/Electron 是唯一已知的无链路引擎，
+   仓库根就有现成脚本；方案里直接给脚本名（不给参数，避免编错）。
+3. **方案落 `_work/manual.log`**：GUI 的 worker stdout 不进日志面板、摘要只显示前 3 步，
+   用户照着操作时必须能翻到完整步骤。`_finish_failure` 里多一句 `ctx.log("manual", …)`，
+   测试断言日志包含「需要人工介入」与第一步原文。
+
+测试：`test_manual.py` 12 → **14 条**（+GUI 失败排查方向、+Tyrano 点名 asar_tool），
+`test_failure_carries_manual_plan_for_encrypted_kirikiri` 增加 manual.log 断言。

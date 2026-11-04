@@ -3,16 +3,17 @@
 个人自用/学习项目：**自动解包 galgame，产出视频、音频、图片三类资源**。
 不做：打包回写、文本提取、翻译、对外分发。仅用于个人已购游戏的资源提取与学习。
 
-当前版本 **v0.1.2**（Windows 10/11 x64，Python 3.14 + PyInstaller onedir + Inno Setup）。
-v0.1.2 修重跑口径与交付记录：**raw 非空默认拒绝重跑**（要覆盖加 `--overwrite`）、
-`manifest.verify.status` 单值结论、`source.archives` 全链路统一键名、GUI 默认输出改到「文档」。
+当前版本 **v0.2.0**（Windows 10/11 x64，Python 3.14 + PyInstaller onedir，便携 zip）。
+v0.2.0 加**半自动协作**：解不动时给可执行的人工方案（工具 / 步骤 / 产物路径 / 续跑命令），
+不再只抛一个错误码。v0.1.2 的重跑口径（`--overwrite`）、`manifest.verify.status`
+单值结论、`source.archives` 统一键名保持不变。
 
 ## 安装
 
 **只提供便携版**（2026-11-04 决定不做安装器：本机的火绒 + 深信服 EDR 会拦安装器的
 敏感写入，而安装器只换来「卸载键 + 开始菜单快捷方式」，对私人工具没价值）。
 
-- 解压 `packaging/Output/GalgameUnpacker-0.1.2-portable.zip` 到任意可写目录，
+- 解压 `packaging/Output/GalgameUnpacker-0.2.0-portable.zip` 到任意可写目录，
   双击 `orchestrator\orchestrator.exe`（不带参数即进 GUI）
 - 或直接拷 `_spike_pkg/dist/orchestrator/` 整个目录（等价）
 - 不写注册表、不需要管理员权限、卸载 = 删目录

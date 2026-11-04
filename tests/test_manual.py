@@ -140,3 +140,17 @@ def test_dry_run_stays_quiet_when_static_unpack_looks_fine():
     assert manual.dry_run_plan(
         "Ren'Py", game_dir=Path("g"), out_dir=Path("o"), raw_dir=Path("o/raw"),
         png_dir=Path("o/png"), xp3_probe=None) is None
+
+
+def test_gui_failure_points_at_environment_not_just_retry():
+    """GUI 链路跑过但失败：先排查安全软件/远程桌面，别让用户原样再等 40 分钟。"""
+    plan = _plan("extract-failed", stages=[{"stage": "extract",
+                                            "detail": "GUI 链路失败或没有产出 KrkrExtract_Output"}])
+    assert plan.code == manual.CODE_KIRIKIRI_GUI_FAILED
+    assert "安全软件" in plan.why and "远程桌面" in plan.why
+
+
+def test_tyrano_no_chain_names_the_in_repo_asar_tool():
+    """无链路引擎不能只说「用专用工具」——本仓库就有 asar_tool.py，直接点名。"""
+    plan = _plan("chain-not-implemented", engine="Tyrano/Electron")
+    assert any("asar_tool.py" in n for n in plan.needs)

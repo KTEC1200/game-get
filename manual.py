@@ -112,11 +112,17 @@ def plan_for(error: str, *, engine: str | None, game_dir: Path, out_dir: Path,
         gui_failed = "GUI 链路失败" in detail or "没有产出 KrkrExtract_Output" in detail
         code = CODE_KIRIKIRI_GUI_FAILED if gui_failed else CODE_KIRIKIRI_ENCRYPTED
         krkr = tools.get("krkr") or r"<随包目录>\bin\krkr\KrkrExtract.Lite.exe"
+        # GUI 跑过但失败 ≠ 没试过：前者要先排查环境（安全软件/远程桌面），
+        # 直接原样再跑一次 40 分钟纯属浪费。所以 why 换成排查方向。
+        why = ("上一步的 GUI 自动化跑过了但没产出。常见原因：安全软件拦了 KrkrExtract 或 "
+               "game.exe；或者不是真实桌面会话（远程桌面/多虚拟桌面会让模拟鼠标失效）。"
+               if gui_failed else
+               "GARbro 的 Console 版没有「指定游戏标题/密钥」的参数；"
+               "KrkrExtract 的自动化要模拟鼠标拖拽，慢且挑环境。")
         return ManualPlan(
             code=code,
             summary="这个游戏的 xp3 自动解不开：GARbro 列不出目录（大概率加密/受保护）。",
-            why="GARbro 的 Console 版没有「指定游戏标题/密钥」的参数；"
-                "KrkrExtract 的自动化要模拟鼠标拖拽，慢且挑环境。",
+            why=why,
             needs=[
                 f"KrkrExtract.Lite.exe（随包路径：{krkr}）",
             ],
@@ -156,11 +162,16 @@ def plan_for(error: str, *, engine: str | None, game_dir: Path, out_dir: Path,
         )
 
     if error == "chain-not-implemented":
+        needs = ["对应引擎的专用解包工具（见 galgame-unpack-decision-tree.md 的引擎表）"]
+        # 唯一已知的「判得出但没链路」是 Tyrano/Electron，仓库里就有现成脚本 ——
+        # 与其让用户去猜，不如直接把脚本名给出来（不含参数，参数在脚本头部）。
+        if (engine or "").startswith("Tyrano"):
+            needs.append("本仓库根目录的 asar_tool.py 能解 Electron 的 .asar（用法见文件头）")
         return ManualPlan(
             code=CODE_ENGINE_NO_CHAIN,
             summary=f"引擎判成了 {engine or '未知'}，但本工具还没有这条自动链路。",
             why="自动链路只覆盖已实测过的那几个引擎；这个引擎要么小众，要么格式还没逆向。",
-            needs=["对应引擎的专用解包工具（见 galgame-unpack-decision-tree.md 的引擎表）"],
+            needs=needs,
             steps=[
                 "用该引擎的专用工具（或 GARbro.GUI 逐个格式试）把资源解出来",
                 f"把解出的全部文件拷到：{raw_dir}",

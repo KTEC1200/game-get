@@ -3095,6 +3095,9 @@ def test_failure_carries_manual_plan_for_encrypted_kirikiri(tmp_path, monkeypatc
     assert plan["target"].endswith("raw")
     assert "--reuse-raw" in plan["then"]
     assert res["manual"] == plan, "CLI 与 manifest 必须消费同一份，别各拼一遍"
+    # GUI 用户看不到终端：完整方案必须落进 _work/manual.log（摘要只给前 3 步）
+    log = (ctx.work_dir / "manual.log").read_text(encoding="utf-8")
+    assert "需要人工介入" in log and plan["steps"][0] in log
 
 
 def test_failure_without_a_usable_hint_does_not_invent_manual_block(tmp_path, monkeypatch):

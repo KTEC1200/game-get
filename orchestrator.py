@@ -2330,6 +2330,10 @@ def _finish_failure(ctx: Ctx, stages: list[Stage], engine: str | None,
                            tools=_manual_tools(), stages=man["stages"])
     if plan is not None:
         man["manual"] = plan.as_dict()
+        # 终端区块 GUI 用户看不到（worker 的 stdout 不进日志面板），
+        # 所以完整方案再落一份到 `_work/manual.log`：摘要只显示前 3 步，
+        # 用户要照着做完时得能看到全部步骤。
+        ctx.log("manual", plan.render())
 
     _write_manifest(ctx, man)
     res = {"error": error, "engine": engine, "manifest": man, "stages": man["stages"]}
