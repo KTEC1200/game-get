@@ -1,0 +1,196 @@
+{
+  "manifest_version": 1,
+  "tool": "orchestrator.py",
+  "engine": "RPG Maker",
+  "source": {
+    "game_dir": "D:\\HY\\常識改変学園-製品版-",
+    "archives": [
+      {
+        "name": "www",
+        "entries": 1585,
+        "extracted": 1585
+      }
+    ],
+    "case_match": {
+      "signature": "989a414d3ce6",
+      "candidates": [
+        {
+          "case_id": "4728ebd0c0b5",
+          "sample": "常識改変学園-製品版-",
+          "engine_label": "RPG Maker MV",
+          "discriminator": null,
+          "provenance": "docs-reconstructed",
+          "decision": {
+            "extractor": "_rpgmv_decrypt",
+            "expected_total": 1585,
+            "archive_count": null
+          },
+          "failures": 3
+        }
+      ]
+    }
+  },
+  "counts": {
+    "raw": {
+      "by_ext": {
+        ".ogg": 866,
+        ".png": 719
+      },
+      "total": 1585,
+      "bytes": 1066011515
+    },
+    "final": {
+      "by_ext": {
+        ".ogg": 866,
+        ".png": 719
+      },
+      "total": 1585,
+      "bytes": 1066011515
+    },
+    "converted": {}
+  },
+  "postprocess": [],
+  "verify": {
+    "verified": true,
+    "image_ok": 719,
+    "image_fail": 0,
+    "audio_ok": 866,
+    "audio_fail": 0,
+    "video_ok": 0,
+    "video_fail": 0,
+    "zero_byte": 0,
+    "media_minutes": 651.4,
+    "nonmedia": 0,
+    "nonmedia_by_ext": {}
+  },
+  "reconcile": {
+    "expected": 1585,
+    "actual": 1585,
+    "diff": 0,
+    "method": "archive-index"
+  },
+  "png_dir": {
+    "by_ext": {},
+    "total": 0,
+    "bytes": 0
+  },
+  "stages": [
+    {
+      "stage": "detect",
+      "ok": true,
+      "skipped": false,
+      "seconds": 0.21,
+      "detail": "RPG Maker (score=105)",
+      "engine": "RPG Maker",
+      "score": 105,
+      "above_threshold": true,
+      "guesses": [
+        {
+          "engine": "RPG Maker",
+          "score": 105
+        }
+      ],
+      "fired_ids": [
+        "rpgmaker_keyfile",
+        "rpgmaker_nwjs",
+        "rpgmaker_variant"
+      ],
+      "notes": []
+    },
+    {
+      "stage": "case-lookup",
+      "ok": true,
+      "skipped": false,
+      "seconds": 0.0,
+      "detail": "命中 1 个案例（签名 989a414d3ce6）：常識改変学園-製品版-",
+      "signature": "989a414d3ce6",
+      "index_present": true,
+      "candidates": [
+        {
+          "case_id": "4728ebd0c0b5",
+          "engine": "RPG Maker",
+          "engine_label": "RPG Maker MV",
+          "sample": "常識改変学園-製品版-",
+          "discriminator": null,
+          "provenance": "docs-reconstructed",
+          "decision": {
+            "extractor": "_rpgmv_decrypt",
+            "expected_total": 1585,
+            "archive_count": null
+          },
+          "failures": 3,
+          "case_path": "D:\\K\\deepseek\\_spike_pkg\\dist\\orchestrator\\_internal\\cases\\4728ebd0c0b5-RPG-Maker.json"
+        }
+      ],
+      "engine": "RPG Maker",
+      "signals": [
+        "rpgmaker_keyfile",
+        "rpgmaker_nwjs",
+        "rpgmaker_variant"
+      ]
+    },
+    {
+      "stage": "preflight",
+      "ok": true,
+      "skipped": false,
+      "seconds": 0.01,
+      "detail": "磁盘余量充足：需要约 1.84 GB，可用 72.17 GB（游戏 1.16 GB）",
+      "source_bytes": 1249723200,
+      "required_bytes": 1974052592,
+      "free_bytes": 77493977088
+    },
+    {
+      "stage": "extract",
+      "ok": true,
+      "skipped": false,
+      "seconds": 10.11,
+      "detail": "1585 个文件，对账 0 差",
+      "www": "D:\\HY\\常識改変学園-製品版-\\www",
+      "expected_total": 1585,
+      "actual_total": 1585,
+      "reconcile_ok": true,
+      "rc": 0,
+      "archives": [
+        {
+          "archive": "www",
+          "expected": 1585,
+          "got": 1585
+        }
+      ]
+    },
+    {
+      "stage": "postprocess",
+      "ok": true,
+      "skipped": true,
+      "seconds": 0.23,
+      "detail": "无待转格式（.tlg/.pna），无需后处理"
+    },
+    {
+      "stage": "verify",
+      "ok": true,
+      "skipped": false,
+      "seconds": 10.83,
+      "detail": "图片 719/719、音频 866/866、视频 0/0，失败 0",
+      "verified": true,
+      "files_checked": 1585,
+      "jobs": 8,
+      "image_ok": 719,
+      "image_fail": 0,
+      "audio_ok": 866,
+      "audio_fail": 0,
+      "video_ok": 0,
+      "video_fail": 0,
+      "nonmedia": 0,
+      "nonmedia_by_ext": {},
+      "zero_byte": 0,
+      "zero_byte_examples": [],
+      "media_minutes": 651.4,
+      "fail_examples": [],
+      "probe_fail": 0
+    }
+  ],
+  "generated_at": "2026-11-03T22:59:10+0800",
+  "ok": true,
+  "total_seconds": 22.2,
+  "manifest_written": true
+}

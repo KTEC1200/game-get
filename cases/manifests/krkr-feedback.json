@@ -1,0 +1,278 @@
+{
+  "manifest_version": 1,
+  "tool": "orchestrator.py",
+  "engine": "KiriKiri",
+  "source": {
+    "game_dir": "D:\\HY\\pork社\\[スタジオポーク] パート妻の情事 ～熟した艶と蕩ける吐息～",
+    "archives": [
+      {
+        "name": "data.xp3",
+        "entries": 2562,
+        "extracted": 2562
+      }
+    ],
+    "case_match": {
+      "signature": "6519ddb81f58",
+      "candidates": [
+        {
+          "case_id": "3f7607cd8585",
+          "sample": "兼职人妻",
+          "engine_label": "KiriKiri",
+          "discriminator": "xp3-plain",
+          "provenance": "docs-reconstructed",
+          "decision": {
+            "extractor": "garbro",
+            "expected_total": 2562,
+            "archive_count": 1
+          },
+          "failures": 3
+        },
+        {
+          "case_id": "6adbd459d021",
+          "sample": "高慢妻陥落！！",
+          "engine_label": "KiriKiri 加密",
+          "discriminator": "xp3-encrypted",
+          "provenance": "docs-reconstructed",
+          "decision": {
+            "extractor": "krkr_auto_extract",
+            "expected_total": 2838,
+            "archive_count": 1
+          },
+          "failures": 3
+        },
+        {
+          "case_id": "69c521e192f0",
+          "sample": "教师催眠1",
+          "engine_label": "KiriKiri 加密（krkrZ）",
+          "discriminator": "xp3-encrypted-krkrZ",
+          "provenance": "docs-reconstructed",
+          "decision": {
+            "extractor": "krkr_auto_extract",
+            "expected_total": 5724,
+            "archive_count": 10
+          },
+          "failures": 4
+        }
+      ]
+    }
+  },
+  "counts": {
+    "raw": {
+      "by_ext": {
+        ".asd": 2,
+        ".dll": 3,
+        ".ks": 50,
+        ".ogg": 1577,
+        ".png": 395,
+        ".tjs": 26,
+        ".tlg": 507,
+        ".txt": 2
+      },
+      "total": 2562,
+      "bytes": 571075653
+    },
+    "final": {
+      "by_ext": {
+        ".asd": 2,
+        ".dll": 3,
+        ".ks": 50,
+        ".ogg": 1577,
+        ".png": 902,
+        ".tjs": 26,
+        ".txt": 2
+      },
+      "total": 2562,
+      "bytes": 721491933
+    },
+    "converted": {
+      ".tlg": 507
+    }
+  },
+  "postprocess": [
+    {
+      "tool": "tlg2png/_pna_carve",
+      "in": 507,
+      "ok": 507,
+      "fail": 0
+    }
+  ],
+  "verify": {
+    "verified": true,
+    "image_ok": 902,
+    "image_fail": 0,
+    "audio_ok": 1577,
+    "audio_fail": 0,
+    "video_ok": 0,
+    "video_fail": 0,
+    "zero_byte": 0,
+    "media_minutes": 217.7
+  },
+  "reconcile": {
+    "expected": 2562,
+    "actual": 2562,
+    "diff": 0,
+    "method": "archive-index"
+  },
+  "png_dir": {
+    "by_ext": {
+      ".png": 507
+    },
+    "total": 507,
+    "bytes": 342655005
+  },
+  "stages": [
+    {
+      "stage": "detect",
+      "ok": true,
+      "skipped": false,
+      "seconds": 0.06,
+      "detail": "KiriKiri (score=90)",
+      "engine": "KiriKiri",
+      "score": 90,
+      "above_threshold": true,
+      "guesses": [
+        {
+          "engine": "KiriKiri",
+          "score": 90
+        }
+      ],
+      "fired_ids": [
+        "xp3",
+        "xp3_known_names"
+      ],
+      "notes": []
+    },
+    {
+      "stage": "case-lookup",
+      "ok": true,
+      "skipped": false,
+      "seconds": 0.0,
+      "detail": "命中 3 个案例（签名 6519ddb81f58）：兼职人妻（xp3-plain）、高慢妻陥落！！（xp3-encrypted）、教师催眠1（xp3-encrypted-krkrZ）",
+      "signature": "6519ddb81f58",
+      "index_present": true,
+      "candidates": [
+        {
+          "case_id": "3f7607cd8585",
+          "engine": "KiriKiri",
+          "engine_label": "KiriKiri",
+          "sample": "兼职人妻",
+          "discriminator": "xp3-plain",
+          "provenance": "docs-reconstructed",
+          "decision": {
+            "extractor": "garbro",
+            "expected_total": 2562,
+            "archive_count": 1
+          },
+          "failures": 3,
+          "case_path": "D:\\K\\deepseek\\cases\\3f7607cd8585-KiriKiri.json"
+        },
+        {
+          "case_id": "6adbd459d021",
+          "engine": "KiriKiri",
+          "engine_label": "KiriKiri 加密",
+          "sample": "高慢妻陥落！！",
+          "discriminator": "xp3-encrypted",
+          "provenance": "docs-reconstructed",
+          "decision": {
+            "extractor": "krkr_auto_extract",
+            "expected_total": 2838,
+            "archive_count": 1
+          },
+          "failures": 3,
+          "case_path": "D:\\K\\deepseek\\cases\\6adbd459d021-KiriKiri.json"
+        },
+        {
+          "case_id": "69c521e192f0",
+          "engine": "KiriKiri",
+          "engine_label": "KiriKiri 加密（krkrZ）",
+          "sample": "教师催眠1",
+          "discriminator": "xp3-encrypted-krkrZ",
+          "provenance": "docs-reconstructed",
+          "decision": {
+            "extractor": "krkr_auto_extract",
+            "expected_total": 5724,
+            "archive_count": 10
+          },
+          "failures": 4,
+          "case_path": "D:\\K\\deepseek\\cases\\69c521e192f0-KiriKiri.json"
+        }
+      ],
+      "engine": "KiriKiri",
+      "signals": [
+        "xp3",
+        "xp3_known_names"
+      ]
+    },
+    {
+      "stage": "extract",
+      "ok": true,
+      "skipped": false,
+      "seconds": 11.77,
+      "detail": "1 个 xp3，2562 个文件，对账 0 差",
+      "probe": {
+        "archive": "data.xp3",
+        "listable": true,
+        "lines": 2562
+      },
+      "mode": "static",
+      "archives": [
+        {
+          "archive": "data.xp3",
+          "expected": 2562,
+          "got": 2562,
+          "rc": 0,
+          "ok": true
+        }
+      ],
+      "expected_total": 2562,
+      "actual_total": 2562,
+      "reconcile_ok": true
+    },
+    {
+      "stage": "postprocess",
+      "ok": 507,
+      "skipped": false,
+      "seconds": 108.92,
+      "detail": "507 个 .tlg → png/ 共 507 个成品",
+      "tool": "tlg2png/_pna_carve",
+      "in": 507,
+      "fail": 0,
+      "frames_out": 507,
+      "kinds": {
+        ".tlg": 507
+      },
+      "fail_examples": []
+    },
+    {
+      "stage": "verify",
+      "ok": true,
+      "skipped": false,
+      "seconds": 139.39,
+      "detail": "图片 902/902、音频 1577/1577、视频 0/0，失败 0",
+      "verified": true,
+      "files_checked": 2562,
+      "image_ok": 902,
+      "image_fail": 0,
+      "audio_ok": 1577,
+      "audio_fail": 0,
+      "video_ok": 0,
+      "video_fail": 0,
+      "nonmedia": 83,
+      "zero_byte": 0,
+      "zero_byte_examples": [],
+      "media_minutes": 217.7,
+      "fail_examples": []
+    },
+    {
+      "stage": "manifest",
+      "ok": true,
+      "skipped": false,
+      "seconds": 1.0,
+      "detail": "写入 D:\\K\\deepseek\\_extracted\\krkr-feedback\\manifest.json",
+      "path": "D:\\K\\deepseek\\_extracted\\krkr-feedback\\manifest.json"
+    }
+  ],
+  "generated_at": "2026-11-02T20:28:31+0800",
+  "ok": true,
+  "total_seconds": 261.1
+}

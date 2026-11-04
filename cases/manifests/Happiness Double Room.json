@@ -1,0 +1,213 @@
+{
+  "manifest_version": 1,
+  "tool": "orchestrator.py",
+  "engine": "Unity",
+  "source": {
+    "game_dir": "D:\\HY\\Happiness Double Room",
+    "archives": [
+      {
+        "name": "Texture2D",
+        "entries": 1044,
+        "extracted": 1044
+      },
+      {
+        "name": "Sprite",
+        "entries": 1015,
+        "extracted": 1015
+      },
+      {
+        "name": "AudioClip",
+        "entries": 1441,
+        "extracted": 1441
+      }
+    ],
+    "case_match": {
+      "signature": "6807e46dcb04",
+      "candidates": [
+        {
+          "case_id": "eaa76f4a37f0",
+          "sample": "My Wife Wants to Be a Professional Cosplayer",
+          "engine_label": "Unity",
+          "discriminator": null,
+          "provenance": "manifest",
+          "decision": {
+            "extractor": "_unity_extract",
+            "expected_total": 2883,
+            "archive_count": 3
+          },
+          "failures": 5
+        }
+      ]
+    }
+  },
+  "counts": {
+    "raw": {
+      "by_ext": {
+        ".png": 2059,
+        ".wav": 1441
+      },
+      "total": 3500,
+      "bytes": 4991245065
+    },
+    "final": {
+      "by_ext": {
+        ".png": 2059,
+        ".wav": 1441
+      },
+      "total": 3500,
+      "bytes": 4991245065
+    },
+    "converted": {}
+  },
+  "postprocess": [],
+  "verify": {
+    "verified": true,
+    "image_ok": 2059,
+    "image_fail": 0,
+    "audio_ok": 1441,
+    "audio_fail": 0,
+    "video_ok": 0,
+    "video_fail": 0,
+    "zero_byte": 0,
+    "media_minutes": 186.8
+  },
+  "reconcile": {
+    "expected": 3500,
+    "actual": 3500,
+    "diff": 0,
+    "method": "archive-index"
+  },
+  "png_dir": {
+    "by_ext": {},
+    "total": 0,
+    "bytes": 0
+  },
+  "stages": [
+    {
+      "stage": "detect",
+      "ok": true,
+      "skipped": false,
+      "seconds": 0.08,
+      "detail": "Unity (score=80)",
+      "engine": "Unity",
+      "score": 80,
+      "above_threshold": true,
+      "guesses": [
+        {
+          "engine": "Unity",
+          "score": 80
+        }
+      ],
+      "fired_ids": [
+        "unity_data",
+        "unity_globalgamemanagers",
+        "unity_managed"
+      ],
+      "notes": []
+    },
+    {
+      "stage": "case-lookup",
+      "ok": true,
+      "skipped": false,
+      "seconds": 0.0,
+      "detail": "命中 1 个案例（签名 6807e46dcb04）：My Wife Wants to Be a Professional Cosplayer",
+      "signature": "6807e46dcb04",
+      "index_present": true,
+      "candidates": [
+        {
+          "case_id": "eaa76f4a37f0",
+          "engine": "Unity",
+          "engine_label": "Unity",
+          "sample": "My Wife Wants to Be a Professional Cosplayer",
+          "discriminator": null,
+          "provenance": "manifest",
+          "decision": {
+            "extractor": "_unity_extract",
+            "expected_total": 2883,
+            "archive_count": 3
+          },
+          "failures": 5,
+          "case_path": "D:\\K\\deepseek\\cases\\eaa76f4a37f0-Unity.json"
+        }
+      ],
+      "engine": "Unity",
+      "signals": [
+        "unity_data",
+        "unity_globalgamemanagers",
+        "unity_managed"
+      ]
+    },
+    {
+      "stage": "extract",
+      "ok": true,
+      "skipped": false,
+      "seconds": 678.07,
+      "detail": "JSON 枚举 3501 个资产，Convert 导出 3500 个文件，Texture2D 已知缺口 1，对账 0 差",
+      "audio_missing": 0,
+      "json_total": 3501,
+      "expected_total": 3500,
+      "actual_total": 3500,
+      "archives": [
+        {
+          "archive": "Texture2D",
+          "expected": 1044,
+          "got": 1044
+        },
+        {
+          "archive": "Sprite",
+          "expected": 1015,
+          "got": 1015
+        },
+        {
+          "archive": "AudioClip",
+          "expected": 1441,
+          "got": 1441
+        }
+      ],
+      "json_counts": {
+        "Texture2D": 1045,
+        "Sprite": 1015,
+        "AudioClip": 1441
+      },
+      "texture2d_gap": 1
+    },
+    {
+      "stage": "postprocess",
+      "ok": true,
+      "skipped": true,
+      "seconds": 0.32,
+      "detail": "无待转格式（.tlg/.pna），无需后处理"
+    },
+    {
+      "stage": "verify",
+      "ok": true,
+      "skipped": false,
+      "seconds": 222.43,
+      "detail": "图片 2059/2059、音频 1441/1441、视频 0/0，失败 0",
+      "verified": true,
+      "files_checked": 3500,
+      "image_ok": 2059,
+      "image_fail": 0,
+      "audio_ok": 1441,
+      "audio_fail": 0,
+      "video_ok": 0,
+      "video_fail": 0,
+      "nonmedia": 0,
+      "zero_byte": 0,
+      "zero_byte_examples": [],
+      "media_minutes": 186.8,
+      "fail_examples": []
+    },
+    {
+      "stage": "manifest",
+      "ok": true,
+      "skipped": false,
+      "seconds": 1.19,
+      "detail": "写入 D:\\K\\deepseek\\_extracted\\Happiness Double Room\\manifest.json",
+      "path": "D:\\K\\deepseek\\_extracted\\Happiness Double Room\\manifest.json"
+    }
+  ],
+  "generated_at": "2026-11-03T00:22:22+0800",
+  "ok": true,
+  "total_seconds": 902.1
+}

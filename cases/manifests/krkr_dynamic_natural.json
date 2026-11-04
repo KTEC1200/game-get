@@ -1,0 +1,48 @@
+{
+  "manifest_version": 1,
+  "tool": "krkr_auto_extract.py",
+  "engine": "KiriKiri",
+  "source": {
+    "game_dir": "D:\\HY\\pork社\\[スタジオポーク] パート妻の情事 ～熟した艶と蕩ける吐息～",
+    "archives": [
+      {
+        "name": "data.xp3",
+        "files": 0,
+        "total_after": 0
+      }
+    ],
+    "encrypted": true,
+    "note": "加密 xp3 动态提取：条目数无地面真相（GARbro 列不出），故 reconcile 标记为未对账"
+  },
+  "counts": {
+    "raw": {
+      "by_ext": {},
+      "total": 0,
+      "bytes": 0
+    },
+    "final": {
+      "by_ext": {},
+      "total": 0,
+      "bytes": 0
+    },
+    "converted": {}
+  },
+  "postprocess": [],
+  "verify": {
+    "verified": false,
+    "note": "本工具不做内容级验收，请用 orchestrator.py 或 _verify_media.py"
+  },
+  "reconcile": {
+    "expected": null,
+    "actual": 0,
+    "diff": null,
+    "method": "no-index-available"
+  },
+  "png_dir": {
+    "by_ext": {},
+    "total": 0,
+    "bytes": 0
+  },
+  "stages": [],
+  "generated_at": "2026-11-03T19:37:17+0800"
+}

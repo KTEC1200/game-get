@@ -1,0 +1,242 @@
+{
+  "manifest_version": 1,
+  "tool": "orchestrator.py",
+  "engine": "Artemis",
+  "source": {
+    "game_dir": "D:\\HY\\Toshiue Kanojo",
+    "archives": [
+      {
+        "name": "Toshiue_Kanojo.pfs",
+        "entries": 3282,
+        "extracted": 3282
+      },
+      {
+        "name": "Toshiue_Kanojo.pfs.000",
+        "entries": 624,
+        "extracted": 624
+      },
+      {
+        "name": "Toshiue_Kanojo.pfs.001",
+        "entries": 71,
+        "extracted": 71
+      },
+      {
+        "name": "(散装 mp3/jpg/ASF .dat)",
+        "entries": 31,
+        "extracted": 31
+      }
+    ]
+  },
+  "counts": {
+    "raw": {
+      "by_ext": {
+        ".asb": 3,
+        ".ast": 67,
+        ".dat": 1,
+        ".glsl": 40,
+        ".hlsl": 40,
+        ".iet": 2,
+        ".ini": 1,
+        ".ipt": 5,
+        ".jpg": 1,
+        ".lua": 54,
+        ".mp3": 29,
+        ".ogg": 2568,
+        ".png": 1006,
+        ".sli": 182,
+        ".tbl": 6,
+        ".ttf": 2,
+        ".wmv": 1
+      },
+      "total": 4008,
+      "bytes": 1534028165
+    },
+    "final": {
+      "by_ext": {
+        ".asb": 3,
+        ".ast": 67,
+        ".dat": 1,
+        ".glsl": 40,
+        ".hlsl": 40,
+        ".iet": 2,
+        ".ini": 1,
+        ".ipt": 5,
+        ".jpg": 1,
+        ".lua": 54,
+        ".mp3": 29,
+        ".ogg": 2568,
+        ".png": 1006,
+        ".sli": 182,
+        ".tbl": 6,
+        ".ttf": 2,
+        ".wmv": 1
+      },
+      "total": 4008,
+      "bytes": 1534028165
+    },
+    "converted": {}
+  },
+  "postprocess": [],
+  "verify": {
+    "verified": true,
+    "image_ok": 1007,
+    "image_fail": 0,
+    "audio_ok": 2597,
+    "audio_fail": 0,
+    "video_ok": 1,
+    "video_fail": 0,
+    "zero_byte": 0,
+    "media_minutes": 389.3
+  },
+  "reconcile": {
+    "expected": 4008,
+    "actual": 4008,
+    "diff": 0,
+    "method": "archive-index"
+  },
+  "png_dir": {
+    "by_ext": {},
+    "total": 0,
+    "bytes": 0
+  },
+  "stages": [
+    {
+      "stage": "detect",
+      "ok": true,
+      "skipped": false,
+      "seconds": 0.02,
+      "detail": "Artemis (score=90)",
+      "engine": "Artemis",
+      "score": 90,
+      "above_threshold": true,
+      "guesses": [
+        {
+          "engine": "Artemis",
+          "score": 90
+        }
+      ],
+      "fired_ids": [
+        "artemis_pfs",
+        "artemis_runtime"
+      ],
+      "notes": []
+    },
+    {
+      "stage": "case-lookup",
+      "ok": true,
+      "skipped": false,
+      "seconds": 0.0,
+      "detail": "无匹配案例（签名 2ee6eff84c5a）",
+      "signature": "2ee6eff84c5a",
+      "index_present": true,
+      "candidates": [],
+      "engine": "Artemis",
+      "signals": [
+        "artemis_pfs",
+        "artemis_runtime"
+      ]
+    },
+    {
+      "stage": "extract",
+      "ok": true,
+      "skipped": false,
+      "seconds": 16.79,
+      "detail": "3 个 .pfs 3977 条 + 31 个散装媒体，4008 个文件，对账 0 差",
+      "mode": "static",
+      "archives": [
+        {
+          "archive": "Toshiue_Kanojo.pfs",
+          "expected": 3282,
+          "got": 3282,
+          "identity_ok": true,
+          "listable": true
+        },
+        {
+          "archive": "Toshiue_Kanojo.pfs.000",
+          "expected": 624,
+          "got": 624,
+          "identity_ok": true,
+          "listable": true
+        },
+        {
+          "archive": "Toshiue_Kanojo.pfs.001",
+          "expected": 71,
+          "got": 71,
+          "identity_ok": true,
+          "listable": true
+        },
+        {
+          "archive": "(散装 mp3/jpg/ASF .dat)",
+          "expected": 31,
+          "got": 31,
+          "listable": true
+        }
+      ],
+      "loose_media": 31,
+      "actual_total": 4008,
+      "identity": {
+        "Toshiue_Kanojo.pfs": true,
+        "Toshiue_Kanojo.pfs.000": true,
+        "Toshiue_Kanojo.pfs.001": true
+      },
+      "raw_by_ext": {
+        ".ini": 1,
+        ".ttf": 2,
+        ".ast": 67,
+        ".tbl": 6,
+        ".png": 1006,
+        ".ipt": 5,
+        ".iet": 2,
+        ".lua": 54,
+        ".asb": 3,
+        ".glsl": 40,
+        ".hlsl": 40,
+        ".ogg": 2568,
+        ".sli": 182,
+        ".dat": 1,
+        ".wmv": 1,
+        ".jpg": 1,
+        ".mp3": 29
+      },
+      "expected_total": 4008
+    },
+    {
+      "stage": "postprocess",
+      "ok": true,
+      "skipped": true,
+      "seconds": 0.34,
+      "detail": "无待转格式（.tlg/.pna），无需后处理"
+    },
+    {
+      "stage": "verify",
+      "ok": true,
+      "skipped": false,
+      "seconds": 216.98,
+      "detail": "图片 1007/1007、音频 2597/2597、视频 1/1，失败 0",
+      "verified": true,
+      "files_checked": 4008,
+      "image_ok": 1007,
+      "image_fail": 0,
+      "audio_ok": 2597,
+      "audio_fail": 0,
+      "video_ok": 1,
+      "video_fail": 0,
+      "nonmedia": 403,
+      "zero_byte": 0,
+      "zero_byte_examples": [],
+      "media_minutes": 389.3,
+      "fail_examples": []
+    },
+    {
+      "stage": "manifest",
+      "ok": true,
+      "skipped": false,
+      "seconds": 1.41,
+      "detail": "写入 D:\\K\\deepseek\\_extracted\\Toshiue Kanojo\\manifest.json",
+      "path": "D:\\K\\deepseek\\_extracted\\Toshiue Kanojo\\manifest.json"
+    }
+  ],
+  "generated_at": "2026-11-02T20:10:46+0800",
+  "ok": true,
+  "total_seconds": 235.5
+}
