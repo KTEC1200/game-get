@@ -738,7 +738,8 @@ v0.1.1「未做」清单的 8 项全部落地，另加随包工具许可证逐�
 1. **raw 非空默认拒绝重跑**：`--out` 指向已有产物时，preflight 直接失败并给两个出口
    （`--overwrite` 清空 / `--reuse-raw` 复用）。GUI 会弹「清空重跑还是换目录」二选一。
    原因：旧实现静默叠跑，产物数虚高而 `reconcile` 照样 `diff=0` —— 一份完美格式的假记录。
-2. **GUI 默认输出目录改了**：便携版落 `%USERPROFILE%\Documents\GalgameUnpacker\_extracted\<游戏名>`
+2. **GUI 默认输出目录改了**：便携版落 `%USERPROFILE%\GalgameUnpacker\_extracted\<游戏名>`
+   （**不是 Documents** —— 未签名 exe 在「文档」下建目录会被终端防护拦，见下一条）
    （原先是程序安装目录，卸载即删、用户找不到）；源码态仍是 `<仓库>\_extracted\<游戏名>`。
 3. **manifest 多了 `verify.status`**：单值枚举 `ok/partial/failed/skipped`。
    `verified=False` 不再等同于失败 —— `reason=disabled`（--no-verify）/`not-run`（加密 krkr）

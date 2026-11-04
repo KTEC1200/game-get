@@ -3,17 +3,18 @@
 个人自用/学习项目：**自动解包 galgame，产出视频、音频、图片三类资源**。
 不做：打包回写、文本提取、翻译、对外分发。仅用于个人已购游戏的资源提取与学习。
 
-当前版本 **v0.2.0**（Windows 10/11 x64，Python 3.14 + PyInstaller onedir，便携 zip）。
+当前版本 **v0.2.1**（Windows 10/11 x64，Python 3.14 + PyInstaller onedir，便携 zip）。
 v0.2.0 加**半自动协作**：解不动时给可执行的人工方案（工具 / 步骤 / 产物路径 / 续跑命令），
-不再只抛一个错误码。v0.1.2 的重跑口径（`--overwrite`）、`manifest.verify.status`
-单值结论、`source.archives` 统一键名保持不变。
+不再只抛一个错误码。v0.2.1 修实测 P0：默认输出目录从「文档」改到用户目录根
+（未签名 exe 写「文档」会被终端防护拒），点「开始」先做可写性预检，阶段日志写不进去
+也不再中断运行。
 
 ## 安装
 
 **只提供便携版**（2026-11-04 决定不做安装器：本机的火绒 + 深信服 EDR 会拦安装器的
 敏感写入，而安装器只换来「卸载键 + 开始菜单快捷方式」，对私人工具没价值）。
 
-- 解压 `packaging/Output/GalgameUnpacker-0.2.0-portable.zip` 到任意可写目录，
+- 解压 `packaging/Output/GalgameUnpacker-0.2.1-portable.zip` 到任意可写目录，
   双击 `orchestrator\orchestrator.exe`（不带参数即进 GUI）
 - 或直接拷 `_spike_pkg/dist/orchestrator/` 整个目录（等价）
 - 不写注册表、不需要管理员权限、卸载 = 删目录
@@ -25,8 +26,12 @@ v0.2.0 加**半自动协作**：解不动时给可执行的人工方案（工具
 **GUI（推荐）**：`orchestrator.exe --gui` —— 拖（或浏览）一个游戏目录 → 开始解包 →
 跑完弹交付摘要（交付数/对账/验收），manifest 报告在输出目录 `manifest.json`。
 运行中可点「取消」（在当前阶段跑完的边界生效，已完成的产物保留）；运行中关窗会先确认。
-**默认输出目录**：便携版 `%USERPROFILE%\Documents\GalgameUnpacker\_extracted\<游戏名>`，
+**默认输出目录**：便携版 `%USERPROFILE%\GalgameUnpacker\_extracted\<游戏名>`，
 源码运行 `<仓库>\_extracted\<游戏名>`。输出目录已有上一轮产物时会先问「清空重跑还是换目录」。
+
+> 为什么不放「文档」：未签名的 exe 在 `Documents` 下建文件夹会被火绒/EDR 按进程信誉拦截
+> （实测 `WinError 5`，同一个路径用 Python 源码跑却正常）。输出目录不可写时点「开始」
+> 会直接弹窗让你换位置，不会跑到一半才炸。
 
 **CLI**：
 

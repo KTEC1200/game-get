@@ -45,16 +45,32 @@ APP_ROOT = Path(sys.executable).parent if FROZEN else Path(__file__).resolve().p
 
 
 def user_output_root() -> Path:
-    """安装态的产物根：文档目录（没有就退到用户主目录）。
+    """安装态的产物根：**用户主目录下的 GalgameUnpacker**（不进 Documents）。
 
-    为什么不能沿用 exe 所在目录（2026-11-04 修）：安装态的 APP_ROOT 是
-    `{localappdata}\\Programs\\GalgameUnpacker` —— 产物写进程序目录有两个后果，
-    卸载时被一并删掉、用户根本找不到。产物是给人看的图片/音频/视频，
-    必须落在用户会主动打开的位置。
+    为什么不是 Documents（2026-11-04 用户实测踩到）：火绒 + 深信服 EDR 按进程信誉
+    拦截未签名 exe 在「文档」这类受保护目录里创建文件夹，实测 `PermissionError:
+    [WinError 5]`，而同样的路径用 Python 源码跑是通的 —— 说明拦的是 exe 不是路径。
+    用户主目录根下不属于敏感区，也不会被 OneDrive 重定向。
     """
-    home = Path.home()
-    docs = home / "Documents"
-    return (docs if docs.is_dir() else home) / "GalgameUnpacker"
+    return Path.home() / "GalgameUnpacker"
+
+
+def ensure_writable(path: Path) -> str | None:
+    """输出目录能不能写：None = 可以，否则返回原因（给弹窗用）。
+
+    为什么要预检：默认目录可能被终端防护拦（见 `user_output_root` 的说明）。
+    与其让工作线程在第一次写阶段日志时炸成 `worker-aborted`（用户只看到一句
+    「运行异常（看日志）」，而日志恰好就是写不进去的那个东西），
+    不如在点「开始」的那一刻就说清楚，并且允许当场换目录。
+    """
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / ".galunpack-write-test"
+        probe.write_text("x", encoding="utf-8")
+        probe.unlink()
+    except OSError as exc:
+        return f"{type(exc).__name__}: {exc}"
+    return None
 
 
 def _output_root() -> Path:
@@ -310,6 +326,16 @@ class App:
             messagebox.showerror("Galgame Unpacker", "游戏目录不存在")
             return
         out = Path(self.var_out.get().strip().strip('"') or default_out_dir(game))
+        # 输出目录不可写就别启动线程：默认目录可能被终端防护按进程信誉拦
+        # （未签名 exe 写「文档」实测 WinError 5）。在这里拦下，用户能当场换目录。
+        why = ensure_writable(out)
+        if why:
+            messagebox.showerror(
+                "输出目录不可写",
+                f"{out}\n\n{why}\n\n"
+                f"请点「浏览」换一个位置 —— 建议在 D 盘新建一个目录，"
+                f"或改用用户目录下的 GalgameUnpacker。")
+            return
         # 已有产物必须先问：默认 auto 会静默叠跑（产物数虚高但对账自洽），
         # 拒绝则让用户换个目录 —— 两条路都比「跑完给一个假数字」强。
         overwrite = False

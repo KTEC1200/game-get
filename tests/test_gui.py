@@ -373,19 +373,19 @@ def test_poll_survives_an_event_handler_exception(monkeypatch):
 # 输出目录口径（2026-11-04）
 # ---------------------------------------------------------------------------
 
-def test_default_out_dir_uses_documents_when_frozen(monkeypatch, tmp_path):
-    """安装态默认落「文档」，不落程序安装目录。"""
+def test_default_out_dir_uses_user_root_when_frozen(monkeypatch, tmp_path):
+    """便携版默认落「用户目录\\GalgameUnpacker」，不落程序安装目录。"""
     monkeypatch.setattr(gui, "FROZEN", True)
     monkeypatch.setattr(gui, "user_output_root",
-                        lambda: tmp_path / "Documents" / "GalgameUnpacker")
+                        lambda: tmp_path / "GalgameUnpacker")
 
     out = gui.default_out_dir(Path(r"D:/HY/Some Game"))
 
-    assert out == tmp_path / "Documents" / "GalgameUnpacker" / "_extracted" / "Some Game"
+    assert out == tmp_path / "GalgameUnpacker" / "_extracted" / "Some Game"
 
 
 def test_default_out_dir_never_lands_in_install_dir_when_frozen(monkeypatch):
-    """★核心★ 安装态产物不许落在 exe 所在目录 —— 卸载程序会把它一起删掉。"""
+    """★核心★ 便携版产物不许落在 exe 所在目录 —— 删程序目录会连产物一起删。"""
     monkeypatch.setattr(gui, "FROZEN", True)
 
     out = gui.default_out_dir(Path("Some Game"))
@@ -393,16 +393,36 @@ def test_default_out_dir_never_lands_in_install_dir_when_frozen(monkeypatch):
     assert gui.APP_ROOT not in out.parents
 
 
-def test_user_output_root_prefers_documents(tmp_path, monkeypatch):
-    docs = tmp_path / "Documents"
-    docs.mkdir()
+def test_user_output_root_is_under_home_not_documents(tmp_path, monkeypatch):
+    """★实测踩过★ 产物根必须在 home 下、**不进 Documents**。
+
+    2026-11-04 用户实测：未签名 exe 在 `Documents` 下建目录被终端防护拒绝
+    （WinError 5），同一个路径用 Python 源码跑却通 —— 拦的是 exe 不是路径。
+    """
+    (tmp_path / "Documents").mkdir()
     monkeypatch.setattr(gui.Path, "home", staticmethod(lambda: tmp_path))
-    assert gui.user_output_root() == docs / "GalgameUnpacker"
+
+    root = gui.user_output_root()
+
+    assert root == tmp_path / "GalgameUnpacker"
+    assert "Documents" not in root.parts
 
 
-def test_user_output_root_falls_back_to_home_without_documents(tmp_path, monkeypatch):
-    monkeypatch.setattr(gui.Path, "home", staticmethod(lambda: tmp_path))
-    assert gui.user_output_root() == tmp_path / "GalgameUnpacker"
+def test_ensure_writable_passes_and_creates_dir(tmp_path):
+    assert gui.ensure_writable(tmp_path / "new-out") is None
+    assert (tmp_path / "new-out").is_dir()
+
+
+def test_ensure_writable_returns_reason_on_permission_error(tmp_path, monkeypatch):
+    """不可写要返回原因（弹窗要显示），而不是抛异常把 Tk 打死。"""
+    def boom(*_a, **_k):
+        raise PermissionError(13, "拒绝访问")
+
+    monkeypatch.setattr(gui.Path, "mkdir", boom)
+
+    why = gui.ensure_writable(tmp_path / "x")
+
+    assert why and "PermissionError" in why
 
 
 def test_has_stale_products_counts_only_files(tmp_path):

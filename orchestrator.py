@@ -198,9 +198,22 @@ class Ctx:
         return self.out_dir / "png"
 
     def log(self, stage: str, text: str) -> None:
-        self.work_dir.mkdir(parents=True, exist_ok=True)
-        with (self.work_dir / f"{stage}.log").open("a", encoding="utf-8") as fh:
-            fh.write(text.rstrip("\n") + "\n")
+        """把一行写进 `_work/<stage>.log`。**写不进去也不许把整轮跑挂掉。**
+
+        2026-11-04 用户实测：默认输出目录落在被终端防护拦的路径上，`mkdir` 抛
+        `PermissionError`，异常从 `stage_detect` 一路穿到 GUI 的 `_worker`，
+        变成 `worker-aborted` —— 一次「日志写不了」被放大成「功能不可用」。
+        日志是诊断，不是正确性；降级到 stderr 并只提示一次，别刷屏。
+        """
+        try:
+            self.work_dir.mkdir(parents=True, exist_ok=True)
+            with (self.work_dir / f"{stage}.log").open("a", encoding="utf-8") as fh:
+                fh.write(text.rstrip("\n") + "\n")
+        except OSError as exc:
+            if not getattr(self, "_log_broken", False):
+                self._log_broken = True
+                print(f"[WARN] 阶段日志写不进去（{type(exc).__name__}: {exc}），"
+                      f"后续日志丢弃：{self.work_dir}", file=sys.stderr)
 
 
 def _count(root: Path, exts: set[str] | None = None) -> tb.Products:

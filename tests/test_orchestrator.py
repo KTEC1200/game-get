@@ -3135,3 +3135,22 @@ def test_dry_run_predicts_manual_intervention_for_kirikiri(tmp_path, monkeypatch
     assert payload["auto_feasible"] is False
     assert payload["manual"]["code"] == "kirikiri-encrypted"
     assert "需要人工介入" in captured.err        # 人看的区块走 stderr
+
+
+def test_ctx_log_degrades_when_work_dir_is_unusable(tmp_path, capsys):
+    """★实测踩过★ 日志写不进去不许把整轮跑挂掉。
+
+    2026-11-04：默认输出目录被终端防护拦，`Ctx.log` 的 mkdir 抛 PermissionError，
+    异常从 stage_detect 穿到 GUI worker，界面只显示「运行异常（看日志）」——
+    而日志恰好就是写不进去的那个东西。日志是诊断，不是正确性。
+    """
+    ctx = _ctx(tmp_path)
+    blocked = tmp_path / "out" / "blocked"
+    blocked.write_text("i am a file", encoding="utf-8")
+    ctx.work_dir = blocked / "sub"
+
+    ctx.log("detect", "hello")            # 修前：NotADirectoryError 直接穿出去
+
+    assert "阶段日志写不进去" in capsys.readouterr().err
+    ctx.log("detect", "again")            # 只提示一次，不刷屏
+    assert capsys.readouterr().err == ""

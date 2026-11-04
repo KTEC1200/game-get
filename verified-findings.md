@@ -1446,7 +1446,7 @@ Unity 链路一次跑 58 轮 AssetStudio（1441 条音频），每轮 `find_tool
 根本找不到自己的图/音频/视频。
 
 **修法**：源码态保持 `<仓库>/_extracted/<游戏名>`（开发者纪律不变）；便携版改为
-`%USERPROFILE%\Documents\GalgameUnpacker\_extracted\<游戏名>`（Documents 不存在时退到主目录）。
+`%USERPROFILE%\GalgameUnpacker\_extracted\<游戏名>`（**不进 Documents**，原因见 §23）。
 README 与 GUI 首行日志同步写明。
 
 ### 21.9 随包工具许可证（对外分发前的硬阻塞，已核实完）
@@ -1604,3 +1604,52 @@ manifest 不写 `manual` 块。这条边界由 `test_unknown_failure_returns_non
 
 测试：`test_manual.py` 12 → **14 条**（+GUI 失败排查方向、+Tyrano 点名 asar_tool），
 `test_failure_carries_manual_plan_for_encrypted_kirikiri` 增加 manual.log 断言。
+
+## 23. v0.2.0 实测第一个 P0：默认输出目录被终端防护拦（2026-11-04）
+
+### 23.1 现象
+
+用户双击便携版 → 选游戏 → 点「开始」，GUI 立刻弹「运行异常（看日志）」，
+摘要显示 `本轮失败：worker-aborted（本轮未产出 manifest）`。日志窗口里的 traceback：
+
+```
+gui.py:469 in _worker → orchestrator.py:2380 in run → orchestrator.py:264 in stage_detect
+→ gui.py:463 in sink → orchestrator.py:201 in log → pathlib mkdir ×3
+PermissionError: [WinError 5] 拒绝访问。: 'C:\Users\27025\Documents\GalgameUnpack...'
+```
+
+### 23.2 根因（两层，缺一不成灾）
+
+1. **路径选错**：v0.2.0 把便携版默认输出改成了 `%USERPROFILE%\Documents\GalgameUnpacker`。
+   火绒 + 深信服 EDR 按进程信誉拦**未签名 exe** 在「文档」这类受保护目录里创建文件夹。
+   实测对比：同一路径下，shell 与 `python.exe` 都能 mkdir + 写文件，
+   **只有冻结的 orchestrator.exe 被拒** —— 拦的是 exe 不是路径
+   （与 §20 / antivirus §5 的安装器被拦同源）。
+2. **失败放大**：`Ctx.log()` 第一步就 `work_dir.mkdir(parents=True)`，而 GUI 的 `_worker`
+   不像 `main()` 那样预建目录。于是「日志写不了」直接抛穿到 worker，被 `except BaseException`
+   兜成 `worker-aborted` —— 用户看到的是一句「运行异常（看日志）」，
+   而日志恰好就是写不进去的那个东西。**诊断通道本身变成了单点故障。**
+
+### 23.3 修法（三处）
+
+1. `gui.user_output_root()` → `Path.home() / "GalgameUnpacker"`（用户目录根下，非敏感区、
+   不受 OneDrive 重定向影响）。
+2. `gui.ensure_writable(path)`：点「开始」时先 mkdir + 写探针文件，失败弹
+   「输出目录不可写」并提示换到 D 盘 —— 当场可修，不留到运行中。
+3. `Ctx.log()` 降级：`OSError` 时往 stderr 打**一次**警告，后续日志丢弃，绝不抛。
+   日志是诊断不是正确性；这条对所有「输出目录不可写」的场景都成立，
+   不只是这次的具体路径。
+
+### 23.4 证据
+
+- 复现对比：shell 与 `python.exe` 写 `Documents\GalgameUnpacker` 均成功；
+  冻结 exe 在同一步 `mkdir` 抛 WinError 5。
+- 回归：`test_user_output_root_is_under_home_not_documents`（断言路径不含 `Documents`）、
+  `test_ensure_writable_returns_reason_on_permission_error`、
+  `test_ctx_log_degrades_when_work_dir_is_unusable`（且断言只提示一次）。
+
+### 23.5 教训
+
+**「默认值」必须按最恶劣的运行环境选，不是按最舒服的。** 开发机上 Documents 可写、
+OneDrive 没开、杀软没装 —— 三个条件全中才会以为它安全。同一个 bug 在源码态永远复现不了，
+因为拦的是 exe 的信誉。
