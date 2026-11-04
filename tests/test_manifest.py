@@ -353,3 +353,71 @@ def test_iter_final_files_and_counts_agree_on_exclude(tmp_path):
     ex = ["a.hg3"]
     assert len(mf.iter_final_files(raw, png, exclude=ex)) == mf.counts(raw, png, exclude=ex)["final"]["total"]
 
+
+
+# ---------------------------------------------------------------- 规范化（2026-11-04）
+
+def test_normalise_archives_maps_every_legacy_alias():
+    """四条链路的历史键名都要能翻成规范三键（否则下游还得按链路分支）。"""
+    got = mf.normalise_archives([
+        {"archive": "a.rpa", "expected": 10, "got": 10},          # orchestrator 内部形态
+        {"name": "b.xp3", "files": 7, "total_after": 7},          # 旧 krkr 形态
+        {"name": "c.int", "entries": 3},                          # cs2/unity/pfs 形态
+    ])
+    assert got == [
+        {"name": "a.rpa", "entries": 10, "extracted": 10},
+        {"name": "b.xp3", "entries": None, "extracted": 7, "total_after": 7},
+        {"name": "c.int", "entries": 3, "extracted": None},
+    ]
+
+
+def test_normalise_archives_extracted_is_not_entries():
+    """★核心★ 没有地面真相时 entries 必须是 None —— 实测数不许冒充期望数。
+
+    混用这两个字段的后果是「没对账」看起来像「对上了」，正是本项目最忌讳的假绿。
+    """
+    got = mf.normalise_archives([{"name": "enc.xp3", "files": 3000}])
+    assert got[0]["entries"] is None
+    assert got[0]["extracted"] == 3000
+
+
+def test_normalise_archives_drops_unreadable_items_and_keeps_extras():
+    got = mf.normalise_archives([None, "x", {"name": "a", "listable": False}])
+    assert got == [{"name": "a", "entries": None, "extracted": None, "listable": False}]
+
+
+def test_build_normalises_source_archives(tmp_path):
+    """归一化必须在 build 这个唯一出口生效，不靠每个调用方自觉。"""
+    raw, png = _blocks(tmp_path)
+    man = mf.build(tool="t", engine="KiriKiri",
+                   source={"game_dir": "g", "archives": [{"archive": "a", "expected": 1, "got": 1}]},
+                   counts_block=mf.counts(raw, png),
+                   reconcile_block=mf.reconcile(2, 2), verify={}, postprocess=[])
+    assert man["source"]["archives"] == [{"name": "a", "entries": 1, "extracted": 1}]
+
+
+def test_verify_status_enum_covers_all_four_outcomes():
+    assert mf.verify_status({}) == "skipped"
+    assert mf.verify_status({"verified": False, "reason": "not-run"}) == "skipped"
+    assert mf.verify_status({"verified": False, "reason": "disabled"}) == "skipped"
+    assert mf.verify_status({"verified": False, "reason": "no-products"}) == "failed"
+    assert mf.verify_status({"verified": True, "fail_total": 0}) == "ok"
+    assert mf.verify_status({"verified": True, "fail_total": 3}) == "partial"
+
+
+def test_verify_status_falls_back_to_media_counts():
+    """老 manifest 没有 fail_total：退回三类媒体失败计数，不能一律报 ok。"""
+    assert mf.verify_status({"verified": True, "image_fail": 0, "audio_fail": 0,
+                             "video_fail": 0}) == "ok"
+    assert mf.verify_status({"verified": True, "image_fail": 2}) == "partial"
+
+
+def test_build_writes_verify_status_and_four_fail_fields(tmp_path):
+    raw, png = _blocks(tmp_path)
+    man = mf.build(tool="t", engine=None, source={}, counts_block=mf.counts(raw, png),
+                   reconcile_block=mf.reconcile(2, 2),
+                   verify={"verified": True, "fail_total": 0}, postprocess=[])
+    v = man["verify"]
+    assert v["status"] == "ok"
+    for k in ("image_fail", "audio_fail", "video_fail", "zero_byte"):
+        assert k in v, f"verify 块缺判定字段：{k}"

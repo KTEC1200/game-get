@@ -275,21 +275,55 @@ def _bin_root() -> Path | None:
     return p if p.is_dir() else None
 
 
-def _load_config() -> dict:
-    """读 toolbridge.json。找不到/坏掉都静默返回 {}——配置是可选增强，不能拖垮主流程。"""
-    here = Path(__file__).resolve().parent
-    merged: dict = {}
-    def _home_dir() -> Path:
-        """用户主目录；当前 DSH 会话下 expanduser('~') 可能抛 RuntimeError，兜底到 %USERPROFILE% / ~ 字符串本身。"""
+def _home_dir() -> Path:
+    """用户主目录；当前 DSH 会话下 expanduser('~') 可能抛 RuntimeError，兜底到 %USERPROFILE% / ~ 字符串本身。"""
+    try:
+        h = Path.home()
+        if str(h) != "~":
+            return h
+    except Exception:
+        pass
+    up = os.environ.get("USERPROFILE") or os.environ.get("HOME")
+    return Path(up) if up else Path("~")
+
+
+def _config_paths() -> tuple[Path, ...]:
+    """配置文件候选（后者覆盖前者）。独立成函数：缓存与读取共用同一份候选。"""
+    return (Path(__file__).resolve().parent / CONFIG_NAME,
+            _home_dir() / ".toolbridge.json")
+
+
+#: `_load_config` 的进程内缓存。`key` 是「候选路径 + mtime_ns + size」，用户改配置
+#: （哪怕同一秒内）下一次调用就会失效重建，不会读到过期值。
+_CONFIG_CACHE: dict = {"key": None, "data": {}}
+
+
+def _config_stamp(paths: tuple[Path, ...]) -> tuple:
+    stamp = []
+    for p in paths:
         try:
-            h = Path.home()
-            if str(h) != "~":
-                return h
-        except Exception:
-            pass
-        up = os.environ.get("USERPROFILE") or os.environ.get("HOME")
-        return Path(up) if up else Path("~")
-    for cand in (here / CONFIG_NAME, _home_dir() / ".toolbridge.json"):
+            st = p.stat()
+        except OSError:
+            stamp.append((str(p), None, None))
+        else:
+            stamp.append((str(p), st.st_mtime_ns, st.st_size))
+    return tuple(stamp)
+
+
+def _load_config() -> dict:
+    """读 toolbridge.json。找不到/坏掉都静默返回 {}——配置是可选增强，不能拖垮主流程。
+
+    缓存理由（2026-11-04）：Unity 链路一次跑 58 轮 AssetStudio（1441 条音频），
+    每轮 `find_tool` 都要读两个 JSON 再解析——纯重复 I/O。缓存按 mtime+size 失效，
+    比「启动时读一次」安全：用户中途改配置也能生效。
+    返回浅拷贝：调用方就算手滑改了结果，也污染不到缓存。
+    """
+    paths = _config_paths()
+    key = _config_stamp(paths)
+    if _CONFIG_CACHE["key"] == key:
+        return dict(_CONFIG_CACHE["data"])
+    merged: dict = {}
+    for cand in paths:
         try:
             if cand.is_file():
                 data = json.loads(cand.read_text(encoding="utf-8"))
@@ -297,7 +331,9 @@ def _load_config() -> dict:
                     merged.update(data)
         except Exception:
             continue
-    return merged
+    _CONFIG_CACHE["key"] = key
+    _CONFIG_CACHE["data"] = merged
+    return dict(merged)
 
 
 def find_tool(key: str, override: str | os.PathLike | None = None) -> Path:

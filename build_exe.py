@@ -44,7 +44,7 @@ PACKAGING = REPO / "packaging"
 
 #: 应用版本号 —— 安装器文件名与 /DVERSION 都从这里来（软件还没有 GUI/关于页，
 #: 等要展示版本的地方多了再挪进独立 VERSION 文件）。
-APP_VERSION = "0.1.1"
+APP_VERSION = "0.1.2"
 
 #: (源相对路径, 包内目标目录)。目标目录 "." = _internal 根（与仓库根布局镜像，
 #: 各模块的 `Path(__file__).parent` 定位才能命中）。
@@ -233,17 +233,30 @@ BUNDLE_TOOLS: list[tuple[str, str, str | list[str]]] = [
 ]
 
 #: 随包工具的许可证状态（蓝图 §5.2：聚合分发 ≠ 补许可证义务的豁免）。
-#: 「蓝图已核实」= galgame-ai-unpack-workflow-plan.md §3 的核对结论；
-#: 「未核实」= 别在对外分发前当它是有许可证的。
+#: 2026-11-04 逐项核实（证据随条目写清，换构建/换工具时必须重核）：
+#:   · 结论来源：上游仓库 README / GitHub API license 字段 / 本机 exe 版本信息 /
+#:     `ffprobe -version` 的 configuration 行。
+#:   · 「无许可证」= 仓库没有 LICENSE 文件 → 默认保留所有权利，**不能**当它可分发。
 TOOL_LICENSES: list[tuple[str, str, str]] = [
-    ("garbro", "MIT（蓝图已核实：morkt/GARbro）",
+    ("garbro", "MIT（已核实：morkt/GARbro）",
      "https://github.com/morkt/GARbro"),
     ("assetstudio", "MIT（上游 Perfare/AssetStudio 为 MIT；本 CLI 分支的具体 fork 未核实）",
      "https://github.com/Perfare/AssetStudio"),
-    ("tlg2png", "未核实（分发前必须补）", ""),
-    ("krkr", "未核实（KrkrExtract，分发前必须补）", ""),
-    ("krkrz", "未核实（KrkrzExtract，分发前必须补）", ""),
-    ("ffprobe", "LGPL/GPL 视构建配置而定，本共享构建未核实；GPL 构建对外分发须提供对应源码（蓝图 §5.2）",
+    ("tlg2png", "⚠ 无许可证（已核实：vn-tools/tlg2png 仓库无 LICENSE 文件，"
+                "GitHub API license=null，仓库已归档）——默认保留所有权利，"
+                "未经权利人许可不得随包对外分发；自用不受此限",
+     "https://github.com/vn-tools/tlg2png"),
+    ("krkr", "GPL-3.0（已核实：xmoezzz/KrkrExtract，README 明示全部源码 GPLv3；"
+             "本目录 KrkrExtract.Lite.exe 版本信息 Copyright © 2020 对应其 lite 分支）。"
+             "对外分发须随包提供对应源码或书面报价，并附 GPL-3.0 全文",
+     "https://github.com/xmoezzz/KrkrExtract"),
+    ("krkrz", "GPL-3.0（已核实：xmoezzz/KrkrzExtract，GitHub license=GPL-3.0；"
+              "本目录 KrkrzExtract.exe 版本信息 Copyright X'moe (C) 2018 v1.0.0.0 对应其 release）。"
+              "对外分发须随包提供对应源码或书面报价，并附 GPL-3.0 全文",
+     "https://github.com/xmoezzz/KrkrzExtract"),
+    ("ffprobe", "GPL-3.0-or-later（已核实：本机构建 `ffprobe -version` 的 configuration "
+                "含 --enable-gpl --enable-version3，BtbN/FFmpeg-Builds 风格）。"
+                "对外分发须随包提供对应源码或书面报价（蓝图 §5.2）",
      "https://ffmpeg.org"),
 ]
 
@@ -257,10 +270,14 @@ def _write_tool_notice(bin_root: Path) -> None:
             lines.append(f"    上游:   {url}")
     lines += [
         "",
-        "注意:",
-        "  * 当前定位是个人自用，暂未对外分发；一旦对外分发，必须把每个工具的",
-        "    许可证全文放进本目录，并履行 GPL 组件（如 ffprobe GPL 构建）的源码义务。",
-        "  * 工具本体不修改、以独立进程调用（toolbridge argv 数组）——聚合而非衍生。",
+        "分发前必须处理（2026-11-04 逐项核实后的结论）:",
+        "  * krkr / krkrz / ffprobe 是 GPL-3.0 组件：对外分发时必须随包提供对应源码",
+        "    （或书面报价）、GPL-3.0 全文与版权声明。",
+        "  * tlg2png 上游仓库无许可证（默认保留所有权利）：对外分发前必须换掉",
+        "    （例如改用 GARbro 的 TLG 转换或自研解码器），否则属于未经授权分发。",
+        "  * 工具本体不修改、以独立进程调用（toolbridge argv 数组）——聚合而非衍生；",
+        "    但这**不豁免**各工具自身的许可证义务。",
+        "  * 当前定位是个人自用，未对外分发。",
     ]
     (bin_root / "NOTICE.txt").write_text("\n".join(lines), encoding="utf-8")
 

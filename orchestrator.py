@@ -183,6 +183,10 @@ class Ctx:
     verify_jobs: int | None = None
     #: `--strict`：对账没有地面真相、或验收没执行，也算失败（见 run() 里的说明）。
     strict: bool = False
+    #: `--overwrite`：输出目录已有上一轮产物时先清空 raw/ 与 png/ 再跑。
+    #: 默认 False = 遇到残留**直接失败**。理由：残留混进本轮时产物数照样能自洽，
+    #: 只是数字全错（上一轮 3500 + 本轮 3500 会报成 7000 且 diff=0）——这是最难查的假绿。
+    overwrite: bool = False
 
     @property
     def raw_dir(self) -> Path:
@@ -390,6 +394,21 @@ def stage_preflight(ctx: Ctx) -> Stage:
     """
     st = Stage("preflight")
     t0 = time.time()
+    # 1) 重跑口径（放在体积统计**之前**）：raw 非空又没说要覆盖，后面几十秒的体积统计
+    #    和余量判断全是白做，用户拿到的还是一句「跑完了但数字不对」。先快问快答。
+    if not ctx.reuse_raw:
+        stray = sum(1 for p in ctx.raw_dir.rglob("*") if p.is_file()) \
+            if ctx.raw_dir.is_dir() else 0
+        if stray and not ctx.overwrite:
+            st.ok = False
+            st.detail = (f"输出目录已有上一轮产物（raw/ 里 {stray} 个文件）：{ctx.out_dir}。"
+                         f"直接重跑会把新旧产物混在一起——产物数照样能自洽，但数字是假的。"
+                         f"要清空重跑加 --overwrite；只想复用/验收已有产物用 --reuse-raw。")
+            ctx.log("preflight", f"[ERROR] raw 非空且未指定 --overwrite: "
+                                 f"{ctx.raw_dir}（{stray} 个文件）")
+            st.seconds = time.time() - t0
+            return st
+
     # 先说一句再干活：`_tree_bytes` 整段没有逐文件输出，大样本/机械盘要几十秒，
     # 不打招呼的话 GUI 上看起来就像「卡死在 preflight」（2026-11-04 用户实测 SUMMER）。
     ctx.log("preflight", "正在统计游戏目录体积（大样本可能要几十秒，期间无逐文件输出）…")
@@ -1354,7 +1373,11 @@ def stage_extract_unity(ctx: Ctx) -> Stage:
     ctx.log("extract", "正在用 AssetStudio 枚举资产清单（JSON 口径；大样本 1-3 分钟）…")
     exp = unity.expected_counts(data_dir, as_exe, tmp_root=ctx.work_dir / "unity")
     if exp["total"] == 0:
-        st.detail = "AssetStudio JSON 枚举到 0 个资产"
+        # 把子进程诊断拼进失败原因：AssetStudio 起不来（DLL 缺/被拦）和「游戏真没资产」
+        # 在计数上都是 0，只有 rc 与 stderr 能区分这两件事。
+        extra = "；".join(exp.get("errors") or [])
+        st.detail = ("AssetStudio JSON 枚举到 0 个资产"
+                     + (f"（子进程诊断：{extra}）" if extra else ""))
         return st
 
     expected_total = exp["total"]
@@ -1365,6 +1388,9 @@ def stage_extract_unity(ctx: Ctx) -> Stage:
                            f"图片+音频第一遍；大样本要几分钟，无中间输出）…")
         got = unity.extract_all(data_dir, ctx.raw_dir, as_exe, tmp_root=ctx.work_dir / "unity")
         archives = got.get("archives", [])
+        for e in got.get("errors") or []:
+            # stderr 在冻结包里不进 GUI 日志，所以把子进程诊断再抄一份到阶段日志
+            ctx.log("extract", f"  [WARN] Convert {e}")
 
         # Audio：单次 Convert 必然丢一批（FSB5 静默丢失，rc 仍是 0），
         # 一律走「枚举名字 → 按名对账 → 只补缺的」（2026-11-02 Happiness Double Room 实测：
@@ -1962,7 +1988,9 @@ def stage_verify(ctx: Ctx) -> Stage:
         st.ok = True
         st.skipped = True
         st.detail = "按 --no-verify 跳过（manifest 会标记未验收）"
-        st.data = {"verified": False}
+        # reason 是 `manifest.verify_status()` 区分「没验」与「验失败」的唯一依据：
+        # verified=False 但 reason=disabled 属于**主动跳过**，报 failed 会冤枉一次正常运行。
+        st.data = {"verified": False, "reason": "disabled"}
         st.seconds = time.time() - t0
         return st
 
@@ -2112,6 +2140,9 @@ def stage_verify(ctx: Ctx) -> Stage:
     }
     st.seconds = time.time() - t0
     total_fail = img_fail + audio_fail + video_fail + probe_fail + (0 if zero_ok else 1)
+    # `fail_total` 是 manifest.verify.status 的判定依据（单值结论的输入）。
+    # 它必须由阶段自己写：把所有失败维度加总的规则只有这里知道，下游再拼一次必然漏。
+    st.data["fail_total"] = total_fail
     if total_fail:
         st.detail = f"{total_fail} 个产物验收失败" + nonmedia_note
         return st
@@ -2201,6 +2232,10 @@ def build_manifest(ctx: Ctx, stages: list[Stage], engine: str | None) -> dict:
             "video_ok": verify_data.get("video_ok"),
             "video_fail": verify_data.get("video_fail"),
             "zero_byte": verify_data.get("zero_byte"),
+            # status 的判定依据（`manifest.verify_status` 优先读它）。阶段自己算的总失败数
+            # 比下游再拼一次可靠：零字节超护栏这类结论只有阶段知道。
+            "fail_total": verify_data.get("fail_total"),
+            **({"reason": verify_data["reason"]} if verify_data.get("reason") else {}),
             "media_minutes": verify_data.get("media_minutes"),
             # 非媒体文件也要进交付记录（批次 B4）：它们是「没验」的文件，
             # 只躺在 stage 的 data 里等于只有翻日志的人才知道。按扩展名聚合，
@@ -2322,6 +2357,26 @@ def run(ctx: Ctx) -> tuple[int, dict]:
     stages.append(st)
     if not st.ok:
         return _finish_failure(ctx, stages, engine, 1, "preflight-failed", t_all)
+
+    # 1.9 清场（--overwrite）：preflight 已经拦过「raw 非空又没说要覆盖」的情况，
+    #     走到这里只可能是用户明确要求覆盖。png/ 一起清——只清 raw 会让上一轮的
+    #     转换成品混进本轮交付（final 口径直接多出一批不该有的图）。
+    if ctx.overwrite and not ctx.reuse_raw:
+        cleared: dict[str, int] = {}
+        for name, d in (("raw", ctx.raw_dir), ("png", ctx.png_dir)):
+            if not d.is_dir():
+                continue
+            n = sum(1 for p in d.rglob("*") if p.is_file())
+            if not drop_tree(d):
+                stages.append(Stage("reset", ok=False,
+                                    detail=f"--overwrite 清空 {name}/ 失败：{d}（受保护目录或"
+                                           f"安全删除守卫拦住）"))
+                return _finish_failure(ctx, stages, engine, 1, "reset-failed", t_all)
+            cleared[name] = n
+        if cleared:
+            detail = "、".join(f"{k}/ {v} 个文件" for k, v in cleared.items())
+            stages.append(Stage("reset", ok=True, detail=f"--overwrite 已清空 {detail}"))
+            ctx.log("reset", f"--overwrite 清空 {cleared}")
 
     def cancel_now(next_stage: str) -> tuple[int, dict] | None:
         """阶段边界检查取消；命中就收尾（manifest 照写，`error="cancelled"`）。
@@ -2468,6 +2523,9 @@ def main(argv: list[str] | None = None) -> int:
                     help=f"跳过 detect 强制指定引擎（已实现: {', '.join(IMPLEMENTED)}）")
     ap.add_argument("--reuse-raw", default=None,
                     help="跳过 extract，直接复用已有 raw 产物（断点续传）")
+    ap.add_argument("--overwrite", action="store_true",
+                    help="输出目录已有上一轮产物时先清空 raw/ 与 png/ 再跑"
+                         "（默认遇到残留直接失败，避免新旧产物混成假数字）")
     ap.add_argument("--allow-gui", action="store_true",
                     help="允许 GUI 自动化链路（加密 KiriKiri，慢）")
     ap.add_argument("--no-verify", action="store_true")
@@ -2494,7 +2552,7 @@ def main(argv: list[str] | None = None) -> int:
     ctx = Ctx(game_dir=game_dir, out_dir=out_dir, work_dir=work_dir,
               manifest_path=manifest_path, reuse_raw=reuse,
               allow_gui=a.allow_gui, do_verify=not a.no_verify, engine=a.engine,
-              verify_jobs=a.verify_jobs, strict=a.strict)
+              verify_jobs=a.verify_jobs, strict=a.strict, overwrite=a.overwrite)
 
     if a.dry_run:
         st = stage_detect(ctx)
@@ -2572,7 +2630,8 @@ def main(argv: list[str] | None = None) -> int:
         if v.get("verified"):
             # 注意：verify **有失败文件**时 verified 仍为 True（计数才是结论），
             # 这条分支照样要打印，别把它当成「没验」。
-            print(f"验收   : 图片 {v.get('image_ok')}/{v.get('image_fail')}失败、"
+            # status 是单值枚举（manifest.verify_status 算的），有失败文件时是 partial。
+            print(f"验收   : [{v.get('status')}] 图片 {v.get('image_ok')}/{v.get('image_fail')}失败、"
                   f"音频 {v.get('audio_ok')}/{v.get('audio_fail')}失败、"
                   f"视频 {v.get('video_ok')}/{v.get('video_fail')}失败、"
                   f"媒体 {v.get('media_minutes')} 分钟")

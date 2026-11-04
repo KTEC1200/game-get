@@ -367,3 +367,48 @@ def test_poll_survives_an_event_handler_exception(monkeypatch):
     app._poll()
     assert app.root.after_calls == 2
     assert any("tail" in line for line in logs), "后续事件没被消费"
+
+
+# ---------------------------------------------------------------------------
+# 输出目录口径（2026-11-04）
+# ---------------------------------------------------------------------------
+
+def test_default_out_dir_uses_documents_when_frozen(monkeypatch, tmp_path):
+    """安装态默认落「文档」，不落程序安装目录。"""
+    monkeypatch.setattr(gui, "FROZEN", True)
+    monkeypatch.setattr(gui, "user_output_root",
+                        lambda: tmp_path / "Documents" / "GalgameUnpacker")
+
+    out = gui.default_out_dir(Path(r"D:/HY/Some Game"))
+
+    assert out == tmp_path / "Documents" / "GalgameUnpacker" / "_extracted" / "Some Game"
+
+
+def test_default_out_dir_never_lands_in_install_dir_when_frozen(monkeypatch):
+    """★核心★ 安装态产物不许落在 exe 所在目录 —— 卸载程序会把它一起删掉。"""
+    monkeypatch.setattr(gui, "FROZEN", True)
+
+    out = gui.default_out_dir(Path("Some Game"))
+
+    assert gui.APP_ROOT not in out.parents
+
+
+def test_user_output_root_prefers_documents(tmp_path, monkeypatch):
+    docs = tmp_path / "Documents"
+    docs.mkdir()
+    monkeypatch.setattr(gui.Path, "home", staticmethod(lambda: tmp_path))
+    assert gui.user_output_root() == docs / "GalgameUnpacker"
+
+
+def test_user_output_root_falls_back_to_home_without_documents(tmp_path, monkeypatch):
+    monkeypatch.setattr(gui.Path, "home", staticmethod(lambda: tmp_path))
+    assert gui.user_output_root() == tmp_path / "GalgameUnpacker"
+
+
+def test_has_stale_products_counts_only_files(tmp_path):
+    assert gui.has_stale_products(tmp_path) is False
+    (tmp_path / "raw").mkdir()
+    assert gui.has_stale_products(tmp_path) is False, "空目录不算残留"
+    (tmp_path / "png").mkdir()
+    (tmp_path / "png" / "a.png").write_bytes(b"x")
+    assert gui.has_stale_products(tmp_path) is True

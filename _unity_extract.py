@@ -15,6 +15,7 @@ Convert 导出数对账都走 expected_counts()，别另写一份。
 AudioClip 若是 FSB5 容器，单次 Convert 只能导出约 30%，
 需要多轮 --names 分组累积（复用 _as_audio_collect2.py 的思路）。
 """
+import hashlib
 import importlib
 import itertools
 import json
@@ -49,12 +50,60 @@ def _as_exe() -> Path:
 
 def _run_as(data_dir: Path, tmp: Path, type_name: str, export_type: str,
             as_exe: Path | None = None) -> subprocess.CompletedProcess:
-    """跑一次 AssetStudio 导出。"""
+    """跑一次 AssetStudio 导出，**带上 rc 与输出**返回。
+
+    为什么要把 rc/stderr 透出来（2026-11-04）：旧实现直接丢掉返回值，AssetStudio
+    起不来（DLL 缺、路径错、被拦）和「这个游戏确实没这类资产」在日志里长得一模一样
+    —— 都是「导出了 0 个」。rc 只作**诊断**不当成功判据（坑 4：它能 exit=0 却一个不导），
+    但 rc≠0 时的 stderr 是唯一能解释「为什么一个都没有」的证据。
+
+    环境走 toolbridge 的清洗版：PyInstaller 冻结后 `_MEI` 目录会混进 PATH，
+    .NET 子进程继承后会优先加载包内的同名 DLL（蓝图 §4.3 高风险项）。
+    """
     as_exe = as_exe or _as_exe()
     cmd = [str(as_exe), str(data_dir), str(tmp),
            "--game", "Normal", "--types", type_name,
            "--export_type", export_type, "--group_assets", "ByType"]
-    return subprocess.run(cmd, capture_output=True, timeout=1800)
+    tb._clear_dll_dir()
+    try:
+        return subprocess.run(cmd, capture_output=True, timeout=1800,
+                              env=tb._sanitize_env())
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(cmd, -9, b"", b"AssetStudio timeout after 1800s")
+    except OSError as exc:
+        return subprocess.CompletedProcess(
+            cmd, -2, b"", f"{type(exc).__name__}: {exc}".encode("utf-8", "replace"))
+
+
+def _proc_tail(proc: subprocess.CompletedProcess, limit: int = 400) -> str:
+    """子进程输出的尾部（stderr 优先）——拼进日志/失败原因用。"""
+    err = (proc.stderr or b"").decode("utf-8", "replace").strip()
+    out = (proc.stdout or b"").decode("utf-8", "replace").strip()
+    text = err or out
+    if not text:
+        return "(无输出)"
+    return text[-limit:].replace("\r", " ").replace("\n", " ")
+
+
+def _digest(p: Path, chunk: int = 1 << 20) -> str:
+    h = hashlib.sha1()
+    with p.open("rb") as fh:
+        while True:
+            b = fh.read(chunk)
+            if not b:
+                break
+            h.update(b)
+    return h.hexdigest()
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    """同名文件是不是同一份内容（先比大小，再比摘要）。"""
+    try:
+        if a.stat().st_size != b.stat().st_size:
+            return False
+    except OSError:
+        return False
+    return _digest(a) == _digest(b)
 
 
 def _run_audio_collect(script: Path, data_dir: Path, audio_dir: Path) -> int:
@@ -125,16 +174,24 @@ def expected_counts(data_dir: Path, as_exe: Path | None = None,
     root = _scratch_root(tmp_root, Path(tempfile.gettempdir()) / "unity_extract_json")
     root.mkdir(parents=True, exist_ok=True)
     by_type = {}
+    errors: list[str] = []
     for t in UNITY_TYPES:
         tmp = _fresh(root, f"_json_{t}")
-        _run_as(data_dir, tmp, t, "JSON", as_exe)
+        proc = _run_as(data_dir, tmp, t, "JSON", as_exe)
         by_type[t] = len(list(tmp.rglob("*.json")))
+        if proc.returncode != 0:
+            # rc≠0 时**必须**留下证据：否则「工具起不来」和「真没有这类资产」都是 0，
+            # 调用方只能猜。这里只报不抛 —— 是否致命由调用方按 total/逐类计数判。
+            msg = f"{t}: rc={proc.returncode}，{_proc_tail(proc)}"
+            errors.append(msg)
+            print(f"[WARN] JSON 枚举异常 {msg}", file=sys.stderr)
         _drop(tmp)
     return {
         "by_type": by_type,
         "total": sum(by_type.values()),
         "unlistable": [],
         "types": list(UNITY_TYPES),
+        "errors": errors,
     }
 
 
@@ -152,10 +209,18 @@ def extract_all(data_dir: Path, out_dir: Path, as_exe: Path | None = None,
     root.mkdir(parents=True, exist_ok=True)
     by_type = {}
     archives = []
+    errors: list[str] = []
     for t in UNITY_TYPES:
         cat = UNITY_CATEGORIES[t]
         tmp = _fresh(root, f"_conv_{t}")
-        _run_as(data_dir, tmp, t, "Convert", as_exe)
+        proc = _run_as(data_dir, tmp, t, "Convert", as_exe)
+        if proc.returncode != 0:
+            # 不在这里判失败：真正判据是落盘数 vs 枚举数。但 rc 与 stderr 必须留痕，
+            # 否则「导 0 个」永远查不出是工具挂了还是资产本来就没有。
+            msg = f"{t}: rc={proc.returncode}，{_proc_tail(proc)}"
+            errors.append(msg)
+            print(f"[WARN] Convert {t} 异常 rc={proc.returncode}：{_proc_tail(proc)}",
+                  file=sys.stderr)
         # AssetStudio 产物在 <tmp>/<TypeName>/
         subs = [p for p in tmp.iterdir() if p.is_dir()]
         src = subs[0] if subs else tmp
@@ -171,17 +236,32 @@ def extract_all(data_dir: Path, out_dir: Path, as_exe: Path | None = None,
             except OSError:
                 pass
         if not moved:
+            # 合并时必须**保留相对路径**（2026-11-04 修）：旧实现用 `relative_to(src).name`
+            # 拍平，AssetStudio 一旦按子目录输出（BySource/多级分组），不同目录下的同名
+            # 文件就会互相顶掉，而 `if not tgt.exists(): skip` 让这件事完全无声。
+            # 现在：同路径同内容 = 重复导出，跳过；同路径不同内容 = 真冲突，报错。
             dst.mkdir(parents=True, exist_ok=True)
             for f in src.rglob("*"):
-                if f.is_file():
-                    tgt = dst / f.relative_to(src).name
-                    if not tgt.exists():
-                        shutil.copy2(f, tgt)
+                if not f.is_file():
+                    continue
+                tgt = dst / f.relative_to(src)
+                if tgt.exists():
+                    if _same_file(tgt, f):
+                        continue
+                    raise ValueError(
+                        f"Unity 产物同名不同内容：{tgt}（来源 {f}）——"
+                        f"拒绝静默覆盖，请清空 raw/ 后加 --overwrite 重跑")
+                tgt.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(f, tgt)
         n = sum(1 for f in dst.rglob("*") if f.is_file())
         by_type[t] = n
-        archives.append({"name": t, "entries": n})
+        # 规范三键：这里只有实测导出数，没有「期望」（期望在 expected_counts 的
+        # JSON 口径里），所以 entries=None、extracted=n —— 别把实测数写成 entries，
+        # 那会让「没对账」看起来像「对上了」。
+        archives.append({"name": t, "entries": None, "extracted": n})
         _drop(tmp)
-    return {"by_type": by_type, "total": sum(by_type.values()), "archives": archives}
+    return {"by_type": by_type, "total": sum(by_type.values()), "archives": archives,
+            "errors": errors}
 
 
 def write_manifest(out_dir: Path, exp: dict, got: dict,

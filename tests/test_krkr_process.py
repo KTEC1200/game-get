@@ -110,3 +110,44 @@ def test_pids_by_exe_path_survives_enumeration_failure(tmp_path, monkeypatch):
 
     assert kae.pids_by_exe_path(tmp_path / "game.exe") == []
     assert any("枚举进程失败" in line for line in logs)
+
+
+# ---------------------------------------------------------------------------
+# 窗口收拾范围（2026-11-04）
+# ---------------------------------------------------------------------------
+
+def test_close_all_explorers_requires_hint():
+    """★核心★ 不许无差别关资源管理器窗口 —— 用户可能正在拷文件，那是数据损失。
+
+    hint 不设默认值就是护栏：想改回「全关」必须先改签名，这条测试会拦住。
+    """
+    import inspect
+    p = inspect.signature(kae.close_all_explorers).parameters["hint"]
+    assert p.default is inspect.Parameter.empty
+
+
+def test_all_cabinets_filters_by_window_title(monkeypatch):
+    """只收标题含 stage 名的窗口；用户自己的资源管理器不在名单里。"""
+    titles = {101: "_krkr_stage", 102: "我的文档"}
+
+    class FakeUser32:
+        def EnumWindows(self, cb, _lp):
+            for h in titles:
+                if not cb(h, 0):
+                    break
+
+        def GetClassNameW(self, _h, buf, _n):
+            buf.value = "CabinetWClass"
+
+        def GetWindowTextLengthW(self, h):
+            return len(titles[h])
+
+        def GetWindowTextW(self, h, buf, _n):
+            buf.value = titles[h]
+
+    monkeypatch.setattr(kae, "user32", FakeUser32())
+
+    assert kae.all_cabinets("_krkr_stage") == [101]
+    assert kae.all_cabinets() == [101, 102], "不给 hint 时仍可枚举全部（供调试）"
+    assert kae.find_explorer_by_title_hint("我的文档") == 102
+    assert kae.find_explorer_by_title_hint("") is None

@@ -120,15 +120,23 @@ def enumerate_names(src: Path, exe: Path, work: Path) -> list[str] | None:
     """
     tmp = _fresh(Path(work), "_names")
     try:
-        subprocess.run(
+        toolbridge._clear_dll_dir()
+        proc = subprocess.run(
             [str(exe), str(src), str(tmp), "--game", "Normal",
              "--types", "AudioClip", "--export_type", "JSON",
              "--group_assets", "BySource"],
-            capture_output=True, timeout=TIMEOUT)
+            capture_output=True, timeout=TIMEOUT,
+            env=toolbridge._sanitize_env())
     except (subprocess.TimeoutExpired, OSError) as exc:
         print(f"[WARN] 音频名字枚举失败（{type(exc).__name__}: {exc}）", file=sys.stderr)
         _drop(tmp)
         return None
+    if proc.returncode != 0:
+        # 只报不判死：JSON 可能部分落盘（这工具本来就不可靠），
+        # 但 rc 与 stderr 是「为什么少了几条」的唯一线索，不能丢。
+        err = (proc.stderr or b"").decode("utf-8", "replace").strip()
+        print(f"[WARN] 音频名字枚举 rc={proc.returncode}："
+              f"{err[-300:].replace(chr(10), ' ') or '(无输出)'}", file=sys.stderr)
 
     names: list[str] = []
     for p in tmp.rglob("*.json"):
@@ -151,18 +159,32 @@ def _name_pattern(names: list[str]) -> str:
 
 def _export(exe: Path, src: Path, tmp: Path, pattern: str,
             export_type: str = "Convert") -> int:
-    """跑一次 AssetStudio 导出。返回退出码（**只作诊断，不当成功判据**）。"""
+    """跑一次 AssetStudio 导出。返回退出码（**只作诊断，不当成功判据**）。
+
+    环境走 toolbridge 的清洗版：冻结包里的 `_MEI` 目录混进 PATH 会让 .NET
+    子进程优先加载包内同名 DLL（蓝图 §4.3）。
+    """
     _drop(tmp)
     tmp.mkdir(parents=True, exist_ok=True)
+    toolbridge._clear_dll_dir()
     try:
         proc = subprocess.run(
             [str(exe), str(src), str(tmp), "--game", "Normal",
              "--types", "AudioClip", "--names", pattern,
              "--export_type", export_type, "--group_assets", "ByType"],
-            capture_output=True, timeout=TIMEOUT)
+            capture_output=True, timeout=TIMEOUT,
+            env=toolbridge._sanitize_env())
+        if proc.returncode != 0:
+            err = (proc.stderr or b"").decode("utf-8", "replace").strip()
+            print(f"[WARN] 音频导出 rc={proc.returncode}："
+                  f"{err[-300:].replace(chr(10), ' ') or '(无输出)'}", file=sys.stderr)
         return proc.returncode
     except subprocess.TimeoutExpired:
+        print(f"[WARN] 音频导出超时（{TIMEOUT}s）", file=sys.stderr)
         return -1
+    except OSError as exc:
+        print(f"[WARN] 音频导出起不来：{type(exc).__name__}: {exc}", file=sys.stderr)
+        return -2
 
 
 def _merge(dest: Path, tmp: Path) -> int:

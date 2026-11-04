@@ -23,7 +23,7 @@
 
 > **🚀 接手顺序（新会话只做这三步）**
 > ① 读本文档「状态 / 下一步 / ⚠️ 五个坑」；
-> ② 跑基线：`C:\Python314\python.exe tests\run_all.py`（**不要用裸 `python`**，它没有 pytest；2026-11-03 收尾：见 §「2026-11-03 软件加固」的最终数字）
+> ② 跑基线：`C:\Python314\python.exe tests\run_all.py`（**不要用裸 `python`**，它没有 pytest；2026-11-04 收尾：**tests=655 / 0 failures / 0 errors / 10 skipped**）
 >    + `C:\Python314\python.exe tests\make_golden.py --check`（应零漂移）；
 > ③ 按「下一步」当前项开工。**改完先回写本文档 + `verified-findings.md`，再清临时产物，最后提交。**
 
@@ -288,7 +288,7 @@ dry-run 命中 rules+cases（case_path 在包内）、extract in-process **1585/
    Tk 冒烟）。纪律：**GUI 线程只碰 Tk、worker 只塞队列**；`ctx.log` 实例属性遮蔽做日志回流。
 5. ~~README + requirements~~ ✅：`README.md`（安装/用法/引擎表/外部工具配置）随安装包分发。
 
-### ③ 下一步（当前：**等用户实测 v0.1.0 的反馈再推进**）
+### ③ 下一步（当前：**仍是等用户实测反馈**；v0.1.1 的 8 项遗留已于 2026-11-04 全部清完 → v0.1.2）
 
 > 2026-11-02 用户指示：**「不管加密 krkr 了……让我测试完再推进剩余队列」**——
 > 剩余队列全部挂起，先等真实使用反馈。
@@ -325,9 +325,11 @@ dry-run 命中 rules+cases（case_path 在包内）、extract in-process **1585/
 （3500/3500、图片 2059、音频 1441、rc=0）。下一步仍是**等用户实测 v0.1.0 反馈**；
 未验证的只剩「KiriKiri 索引兜底的**自然**窗口缺失场景」（目前只有注入式模拟证据）。
 
-**用户测试时的入口**：安装包 `packaging/Output/GalgameUnpacker-0.1.0-setup.exe`（免管理员），
-GUI：`orchestrator.exe --gui`；CLI 用法见随包 `README.md`。测试反馈回来后的修法照旧纪律：
-改逻辑 + 回写文档 + 提交 push。
+**用户测试时的入口**：安装包 `packaging/Output/GalgameUnpacker-0.1.2-setup.exe`（免管理员），
+GUI：`orchestrator.exe --gui`；CLI 用法见随包 `README.md`。
+**重跑注意**：输出目录已有产物时默认拒绝（`--overwrite` 清空重跑 / `--reuse-raw` 复用），
+这是 2026-11-04 新加的口径 —— 别把「跑失败」当成 bug，先看 detail 里给的出口。
+测试反馈回来后的修法照旧纪律：改逻辑 + 回写文档 + 提交 push。
 
 ### ③ 搁置（需用户配合交互，等指示）
 夕凪荘 22 个加密 BGM 的内存 dump（工具 `_bgm_dump2.py` 已备好，需玩到标题画面/播 BGM 时跑；静态进展见 §15.3）、
@@ -708,8 +710,67 @@ SPITE / Swipe Right / 常識改変学園 / あまねぇ / 高慢妻陥落！！ 
 - **不要并发跑两个 pytest**（共用 `%TEMP%\pytest-of-<user>\` 的编号目录，互相删对方 tmp →
   成片的 `FileNotFoundError`，看起来像 155 条真失败）。
 
-### 未做（明确留给下一轮，别当成遗漏）
-- raw 非空重跑（`--overwrite` 开关）、GUI 默认输出目录口径、Unity 子进程透出 rc/env、
-  `close_all_explorers()` 收窄到 stage 相关窗口、`find_tool` 配置缓存、`source.archives` 键名统一、
-  Unity 合并路径拍平、manifest 加 `verify.status` 单值枚举（前置：verify 块补 4 字段 + 抽纯函数）。
-- 引擎侧：加密 krkr 剩余约 7 部（需用户放样本）、E-mote、夕凪荘 BGM。
+### 当时未做 —— ✅ 2026-11-04 全部完成（明细见文末 §「2026-11-04 收尾（v0.1.2）」）
+
+- ~~raw 非空重跑（`--overwrite` 开关）~~、~~GUI 默认输出目录口径~~、~~Unity 子进程透出 rc/env~~、
+  ~~`close_all_explorers()` 收窄到 stage 相关窗口~~、~~`find_tool` 配置缓存~~、
+  ~~`source.archives` 键名统一~~、~~Unity 合并路径拍平~~、~~manifest 加 `verify.status` 单值枚举~~。
+- 引擎侧仍挂起（需要用户配合/样本）：加密 krkr 剩余约 7 部（需用户放样本）、E-mote、夕凪荘 BGM。
+
+## 2026-11-04 收尾（v0.1.2）—— 8 项遗留全清 + 许可证核实
+
+v0.1.1「未做」清单的 8 项全部落地，另加随包工具许可证逐项核实。**没有新增引擎链路**，
+这一轮改的全是「交付记录能不能信」和「重跑会不会给出假数字」。
+
+### 会改变用户行为的四件事（测试反馈时别当成新 bug）
+
+1. **raw 非空默认拒绝重跑**：`--out` 指向已有产物时，preflight 直接失败并给两个出口
+   （`--overwrite` 清空 / `--reuse-raw` 复用）。GUI 会弹「清空重跑还是换目录」二选一。
+   原因：旧实现静默叠跑，产物数虚高而 `reconcile` 照样 `diff=0` —— 一份完美格式的假记录。
+2. **GUI 默认输出目录改了**：安装态落 `%USERPROFILE%\Documents\GalgameUnpacker\_extracted\<游戏名>`
+   （原先是程序安装目录，卸载即删、用户找不到）；源码态仍是 `<仓库>\_extracted\<游戏名>`。
+3. **manifest 多了 `verify.status`**：单值枚举 `ok/partial/failed/skipped`。
+   `verified=False` 不再等同于失败 —— `reason=disabled`（--no-verify）/`not-run`（加密 krkr）
+   是「没验」，判 `skipped`。
+4. **`source.archives` 全链路统一三键** `{name, entries, extracted}`。
+   `entries` = 地面真相（没有就是 null），`extracted` = 实测落盘。读 manifest 的脚本如果
+   以前按 `files`/`total_after`/`archive` 取值，现在要改（别名只在入口翻译，输出只有规范键）。
+
+### 修掉的真问题（按风险排序）
+
+1. **raw 非空静默叠跑**（最危险）：preflight 只读拦截 + `run()` 里 `reset` 阶段清 raw/png +
+   GUI 询问。清不掉就失败，绝不「清一半继续」。
+2. **Unity 合并产物拍平路径**：`relative_to(src).name` → `relative_to(src)`；
+   同名不同内容直接报错，不再 `if not exists: skip` 静默丢文件。
+3. **Unity 子进程 rc/stderr 被吞**：`_run_as` 返回 `CompletedProcess`、超时/OSError 变
+   rc=-9/-2 诊断、env 走 `_sanitize_env`+`_clear_dll_dir`；`expected_counts`/`extract_all`
+   返回 `errors`，orchestrator 拼进 detail 与阶段日志。`_as_audio_collect2` 同步。
+4. **`close_all_explorers()` 关用户窗口**：按 stage 目录名过滤，hint 故意不设默认值。
+5. **GUI 默认输出落安装目录**：见上。
+6. **`find_tool` 重复读配置**：按 `(path, mtime_ns, size)` 缓存，返回浅拷贝。
+7. **`source.archives` 三套键名**：`manifest.normalise_archives` 挂在 `build()` 唯一出口。
+8. **verify 结论要消费方自己拼**：`verify_status()` 纯函数 + `fail_total` 输入。
+
+### 许可证核实结论（对外分发前的硬阻塞）
+
+`build_exe.TOOL_LICENSES` 已从「未核实」升级为逐项结论（依据写在条目里）：
+**KrkrExtract = GPL-3.0、KrkrzExtract = GPL-3.0、ffprobe = GPL-3.0-or-later（本机构建
+`--enable-gpl --enable-version3`）、tlg2png = 无许可证（vn-tools/tlg2png 仓库无 LICENSE，
+API license=null）**，garbro/assetstudio 为 MIT。
+→ 个人自用不受影响；**对外分发前**：GPL 组件必须随包给源码或书面报价 + GPL 全文，
+tlg2png 必须换掉（GARbro 的 TLG 转换或自研）。详见 verified-findings §21.9。
+
+### 基线（收尾实测）
+
+- `C:/Python314/python.exe tests/run_all.py` → **tests=655 failures=0 errors=0 skipped=10 → PASS**
+  （开工前 626；新增 29 条）
+- `C:/Python314/python.exe tests/make_golden.py --check` → **6 fixture + 12 真实样本零漂移**
+- 新增 `tests/test_unity_extract.py`（7 条：rc/env 透出 + 合并路径）
+
+### 仍未做（都要用户配合或样本）
+
+- 用户实测 v0.1.2 的反馈（当前最高优先级，等这个）
+- KiriKiri 索引兜底的**自然**窗口缺失场景（仍只有注入式模拟证据）
+- 安装器卸载键/开始菜单快捷方式的真实桌面验证（会话内写过滤测不了）
+- 夕凪荘 22 BGM dump、GUI 弹窗行为确认（需人盯着游戏跑）
+- 加密 krkr 剩余 ~7 部（用户 2026-11-02 划走，样本在盘）、E-mote、AI 兜底（A1/A2/A3，最后才考虑）

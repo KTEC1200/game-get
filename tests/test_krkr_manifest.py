@@ -87,12 +87,19 @@ def test_manifest_marks_verify_not_done(tmp_path):
 
 
 def test_manifest_records_per_archive(tmp_path):
+    """逐包明细走 manifest 的规范三键（2026-11-04 统一）。
+
+    加密包没有索引 → `entries` 必须是 None（没对账 ≠ 对上了）；
+    本包实测新增数进 `extracted`。早前的 files/total_after 别名已不再产出。
+    """
     out = _fake_output(tmp_path)
-    per = [{"name": "data.xp3", "files": 3, "total_after": 3},
-           {"name": "voice.xp3", "files": 2, "total_after": 5}]
+    per = [{"name": "data.xp3", "entries": None, "extracted": 3, "total_after": 3},
+           {"name": "voice.xp3", "entries": None, "extracted": 2, "total_after": 5}]
     man, _c = kae.write_manifest(out, tmp_path / "game", per, tmp_path / "m.json")
 
     assert man["source"]["archives"] == per
+    assert all(a["entries"] is None for a in man["source"]["archives"]), \
+        "加密包没有地面真相，entries 不能填成实测数"
     assert man["source"]["encrypted"] is True
 
 

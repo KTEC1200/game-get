@@ -38,15 +38,45 @@ try:
 except Exception:                                        # noqa: BLE001
     HAS_DND = False
 
-#: 应用根：冻结态 = exe 所在目录（安装到 {localappdata}\Programs\GalgameUnpacker，可写）；
+#: 应用根：冻结态 = exe 所在目录（安装到 {localappdata}\Programs\GalgameUnpacker）；
 #: 源码态 = 仓库根（产物按纪律落 <仓库>/_extracted/<游戏名>/）。
-APP_ROOT = Path(sys.executable).parent if getattr(sys, "frozen", False) \
-    else Path(__file__).resolve().parent
+FROZEN = bool(getattr(sys, "frozen", False))
+APP_ROOT = Path(sys.executable).parent if FROZEN else Path(__file__).resolve().parent
+
+
+def user_output_root() -> Path:
+    """安装态的产物根：文档目录（没有就退到用户主目录）。
+
+    为什么不能沿用 exe 所在目录（2026-11-04 修）：安装态的 APP_ROOT 是
+    `{localappdata}\\Programs\\GalgameUnpacker` —— 产物写进程序目录有两个后果，
+    卸载时被一并删掉、用户根本找不到。产物是给人看的图片/音频/视频，
+    必须落在用户会主动打开的位置。
+    """
+    home = Path.home()
+    docs = home / "Documents"
+    return (docs if docs.is_dir() else home) / "GalgameUnpacker"
+
+
+def _output_root() -> Path:
+    """产物根：源码态守仓库纪律，安装态守「用户找得到」纪律。"""
+    return user_output_root() if FROZEN else APP_ROOT
 
 
 def default_out_dir(game_dir: Path) -> Path:
-    """产物默认落 <应用根>/_extracted/<游戏名>/（与 CLI/planner 同一约定）。"""
-    return APP_ROOT / "_extracted" / game_dir.name
+    """产物默认落 <产物根>/_extracted/<游戏名>/（与 CLI/planner 同一约定）。"""
+    return _output_root() / "_extracted" / game_dir.name
+
+
+def has_stale_products(out_dir: Path) -> bool:
+    """输出目录里是否已有上一轮产物（判据与 orchestrator 的 preflight 一致：数文件）。
+
+    有残留就必须问用户：静默叠跑的产物数照样能自洽，但数字是假的。
+    """
+    for sub in ("raw", "png"):
+        d = out_dir / sub
+        if d.is_dir() and any(p.is_file() for p in d.rglob("*")):
+            return True
+    return False
 
 
 def normalize_dropped(raw: str) -> list[Path]:
@@ -266,6 +296,18 @@ class App:
             messagebox.showerror("Galgame Unpacker", "游戏目录不存在")
             return
         out = Path(self.var_out.get().strip().strip('"') or default_out_dir(game))
+        # 已有产物必须先问：默认 auto 会静默叠跑（产物数虚高但对账自洽），
+        # 拒绝则让用户换个目录 —— 两条路都比「跑完给一个假数字」强。
+        overwrite = False
+        if has_stale_products(out):
+            if not messagebox.askyesno(
+                    "输出目录已有产物",
+                    f"{out}\n\n里面已经有上一轮的产物。\n\n"
+                    f"是：清空 raw/ 与 png/ 后重新解包（旧产物会删除）\n"
+                    f"否：取消本次运行，请换一个输出目录",
+                    icon="warning"):
+                return
+            overwrite = True
         self._cancel_ev = threading.Event()      # 每次运行一个新位，别带上一轮的状态
         self._close_when_done = False
         self._crashed = False
@@ -279,7 +321,8 @@ class App:
         # 第一行就告诉用户产物落在哪：跑十几分钟的活儿，最常被问的就是这个
         self._log(f"输出目录：{out}")
         threading.Thread(target=self._worker,
-                         args=(game, out, bool(self.var_gui.get()), self._cancel_ev),
+                         args=(game, out, bool(self.var_gui.get()), self._cancel_ev,
+                               overwrite),
                          daemon=True).start()
 
     def _cancel(self) -> None:
@@ -380,7 +423,7 @@ class App:
     # ---- 工作线程（不碰任何 Tk） ----
 
     def _worker(self, game: Path, out: Path, allow_gui: bool,
-                cancel_ev: threading.Event) -> None:
+                cancel_ev: threading.Event, overwrite: bool = False) -> None:
         """跑一次全链，并**保证**最后一定有一条结果入队。
 
         为什么是 `except BaseException` + `finally` 兜一条 `done`（批次 C7，2026-11-03）：
@@ -398,6 +441,7 @@ class App:
                            work_dir=out / "_work",
                            manifest_path=out / "manifest.json",
                            allow_gui=allow_gui,
+                           overwrite=overwrite,
                            should_stop=cancel_ev.is_set)
             orig_log = ctx.log
 

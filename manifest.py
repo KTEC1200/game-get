@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Mapping
 
 #: 后处理会「吃掉」的中间格式 —— raw 里有、final 里没有，差额由 converted 解释。
 #: 这是**唯一出处**：orchestrator 直接引用（`CONVERTIBLE = set(manifest.CONVERTIBLE)`），
@@ -151,6 +152,98 @@ def counts_flat(out_dir: Path) -> dict:
     return {"raw": raw, "final": final, "converted": {}}
 
 
+# ---------------------------------------------------------------- 规范化
+#
+# 2026-11-04：`source.archives` 的键名在四条链路里各写各的
+# （orchestrator 用 archive/expected/got，krkr 用 name/files/total_after，
+#  cs2/unity/pfs 用 name/entries）。下游读 manifest 的人得按链路分支写兼容代码，
+#  ——「同一份契约」就名存实亡了。这里定死**规范三键**，别名在入口一次翻译完。
+#
+# 语义必须分清（早前混用过的根源）：
+#   entries   = **地面真相**（归档索引/枚举声明的条目数），没有就是 None
+#   extracted = **实际落盘数**。加密 krkr 没有索引，只有实测新增数 —— 它属于 extracted，
+#               绝不能塞进 entries，否则「没对过账」会看起来像「对上了」。
+
+ARCHIVE_FIELDS = ("name", "entries", "extracted")
+
+#: 规范名 ← 历史别名（按优先级）。改规范名等于改契约，必须同步 README 与测试。
+_ARCHIVE_ALIASES: dict[str, tuple[str, ...]] = {
+    "name": ("name", "archive"),
+    "entries": ("entries", "expected"),
+    "extracted": ("extracted", "got", "files"),
+}
+_ALIAS_SET = {a for aliases in _ARCHIVE_ALIASES.values() for a in aliases}
+
+
+def normalise_archives(items) -> list[dict]:
+    """把任意链路的 `source.archives` 归一成 `{name, entries, extracted}`。
+
+    三个规范键**总是存在**（没有就是 None），其余附加键（`listable`/`note`/
+    `total_after` 等）原样保留 —— 归一化是为了让核心字段可预测，不是为了砍信息。
+    非 Mapping 的条目原样丢弃：manifest 是交付记录，宁可少一条脏数据，
+    也不要让下游拿到一个没法读的裸值。
+    """
+    out: list[dict] = []
+    for item in items or []:
+        if not isinstance(item, Mapping):
+            continue
+        rec: dict = {}
+        for canon in ARCHIVE_FIELDS:
+            rec[canon] = None
+            for alias in _ARCHIVE_ALIASES[canon]:
+                if alias in item:
+                    rec[canon] = item[alias]
+                    break
+        for k, v in item.items():
+            if k not in _ALIAS_SET:
+                rec[k] = v
+        out.append(rec)
+    return out
+
+
+#: `verify.status` 的单值枚举（唯一出处）。消费方只认这一个字段判「验没验成」，
+#: 不要再自己去拼 image_fail/audio_fail/... —— 那种拼法每加一类媒体就要改一次。
+VERIFY_STATUSES = ("ok", "partial", "failed", "skipped")
+
+#: 判定 status 所需要的基础失败计数（缺省补 None = 该链路没测这一项）。
+_VERIFY_FAIL_FIELDS = ("image_fail", "audio_fail", "video_fail", "zero_byte")
+
+
+def verify_status(verify: Mapping | None) -> str:
+    """把 verify 块压成一个结论：ok / partial / failed / skipped。
+
+    · `skipped` —— 没验：没有 verified 字段，或明确写了 reason=disabled/not-run。
+      加密 KiriKiri 走 GUI 解包、本来就不验收，属于这一类，不是「验失败了」。
+    · `failed`  —— 验了但没走完（取消 / 没有产物 / 验收阶段自身报错）。
+    · `partial` —— 走完了，但有文件没过（`fail_total > 0`）。
+    · `ok`      —— 走完了且失败为 0。
+
+    优先用 `fail_total`（stage_verify 已经算好的总失败数，含零字节超护栏的那一条）；
+    老 manifest 没有这个字段时退回三类媒体失败计数之和。
+    """
+    v = verify or {}
+    if "verified" not in v:
+        return "skipped"
+    if not v.get("verified"):
+        return "skipped" if v.get("reason") in ("disabled", "not-run") else "failed"
+    total = v.get("fail_total")
+    if isinstance(total, int):
+        return "partial" if total > 0 else "ok"
+    counted = [v.get(k) for k in ("image_fail", "audio_fail", "video_fail")]
+    if any(isinstance(n, int) and n > 0 for n in counted):
+        return "partial"
+    return "ok"
+
+
+def normalise_verify(verify: Mapping | None) -> dict:
+    """补齐判定所需字段并写入 `status`（其余字段原样保留）。"""
+    out: dict = dict(verify or {})
+    for k in _VERIFY_FAIL_FIELDS:
+        out.setdefault(k, None)
+    out["status"] = verify_status(out)
+    return out
+
+
 def reconcile(expected: int | None, actual: int) -> dict:
     """对账块。
 
@@ -174,17 +267,25 @@ def build(*, engine: str | None, source: dict, counts_block: dict,
     """按契约拼一份 manifest（不落盘）。
 
     参数全部是纯数据，调用方各自填自己的阶段细节 —— 契约稳定，阶段信息自由。
+
+    `source.archives` 与 `verify` 在这里统一规范化（`normalise_archives` /
+    `normalise_verify`）：四条链路各写各的键名，下游就得按链路分支兼容；
+    归一化放在**唯一出口**，新链路天然守规矩，不用每个作者记一遍。
     """
     import time as _time
+
+    src = dict(source or {})
+    if "archives" in src:
+        src["archives"] = normalise_archives(src["archives"])
 
     man: dict = {
         "manifest_version": MANIFEST_VERSION,
         "tool": tool,
         "engine": engine,
-        "source": source,
+        "source": src,
         "counts": counts_block,
         "postprocess": postprocess,
-        "verify": verify,
+        "verify": normalise_verify(verify),
         "reconcile": reconcile_block,
         "png_dir": png_dir or {"total": 0, "by_ext": {}, "bytes": 0},
         "stages": stages or [],

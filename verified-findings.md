@@ -1307,3 +1307,170 @@ python -u _spike_pkg/run_probe.py
    同一session里「写的人自己也信了」的验收命令，风险最高。
 3. **成员会犯「凭名字推断、没跟到定义」的错**（QA 自己错了两次）：定案前要求给出
    可复现命令，而不是结论。
+
+## 21. v0.1.2 收尾（2026-11-04）——重跑口径、契约归一、子进程诊断
+
+v0.1.1 遗留 8 项（「未做，明确留给下一轮」）+ 许可证核实，本轮全部处理完。
+基线：开工前 626 tests / 0 failures / 0 errors / 9 skipped、golden 零漂移；
+收尾后见 §21.10。
+
+### 21.1 raw 非空静默叠跑（最危险的一条）
+
+**问题**：`--out` 指向已有产物的目录时，旧实现直接往里写。后果不是报错，而是
+「上一轮 3500 + 本轮 3500 = 7000」，而 `reconcile` 拿本轮 expected 去比落盘总数照样
+`diff=0` —— 一份**看起来完美**的交付记录。对账纪律只能抓住「索引 vs 落盘」，
+抓不住「落盘里有不属于本轮的东西」。
+
+**修法**（三处，缺一不可）：
+1. `stage_preflight` 开头做**只读**检查：raw 非空且既没 `--reuse-raw` 也没 `--overwrite`
+   → 当场 `ok=False`，detail 同时给出两个出口（覆盖 / 复用）。放在体积统计**之前**：
+   否则用户白等几十秒的 `_tree_bytes` 才被告知跑不了。
+2. `run()` 在 preflight 之后、extract 之前清场（`reset` 阶段）：`raw/` 与 `png/` **一起**清。
+   只清 raw 会让上一轮的转换成品混进本轮 final 口径。清不掉（守卫/受保护目录）→ 直接
+   失败 `reset-failed`，绝不「清一半继续跑」。
+3. GUI 侧：`has_stale_products()` 检测到残留 → `askyesno` 二选一（清空重跑 / 取消换目录），
+   选「是」才把 `overwrite=True` 交给 `Ctx`。GUI 不该让用户去背命令行开关。
+
+**证据**：`test_preflight_fails_on_stale_raw_without_overwrite`（且断言预检**不删**文件）、
+`test_run_stops_before_extract_when_stale_raw`（extract 调用次数 = 0）、
+`test_run_overwrite_clears_raw_and_png_then_extracts`、`test_preflight_does_not_block_reuse_raw`。
+
+### 21.2 `source.archives` 四条链路三套键名
+
+**问题**：orchestrator 内部用 `archive/expected/got`，写 manifest 前转成 `name/entries/extracted`；
+krkr 直接写 `name/files/total_after`；cs2/unity/pfs 写 `name/entries`。读 manifest 的下游
+必须按链路分支兼容 —— 「同一份契约」名存实亡。
+
+**修法**：`manifest.normalise_archives()` 做**唯一**归一化，挂在 `manifest.build()` 这个
+唯一出口上（新链路天然守规矩，不用每个作者记一遍）。规范三键 `{name, entries, extracted}`
+总是存在，附加键（`listable`/`note`/`total_after`）原样保留。
+
+**语义必须分清**（这是当初混用的根源）：
+- `entries` = **地面真相**（索引/枚举声明的条目数），没有就是 `None`
+- `extracted` = **实际落盘数**
+
+所以 krkr 的 `files`（加密包实测新增）映射到 `extracted`，`entries` 留 `None` ——
+加密包没有索引，把实测数写进 entries 等于伪造对账。cs2 反过来：有索引没实测，
+`entries=2 / extracted=None`。
+
+**连带改动**：`krkr_auto_extract` 产出改为直接写规范键；`_unity_extract.extract_all`
+的 archives 从 `{name, entries: n}` 改为 `{name, entries: None, extracted: n}`（原来把实测
+数写成 entries，语义是错的）；`test_cs2_int_extract` / `test_krkr_manifest` 断言同步。
+
+### 21.3 `manifest.verify.status` 单值结论
+
+**问题**：verify 块有 8 个散字段，消费方要自己拼「验没验成」。拼错的方式有很多：
+把 `verified=False` 当失败（冤枉 `--no-verify` 的正常运行）、只看 `verified` 忽略
+`image_fail>0`（有坏图却报 ok）。
+
+**修法**：`manifest.verify_status()` 纯函数，四态 `ok/partial/failed/skipped`：
+- `skipped`：没有 `verified` 字段，或 `reason in (disabled, not-run)`
+- `failed`：验了但没走完（`cancelled` / `no-products`）
+- `partial`：走完了但有失败（`fail_total > 0`）
+- `ok`：走完了且 0 失败
+
+判定输入优先 `fail_total`（stage_verify 自己算的总失败数，含「零字节超护栏」这一条
+只有阶段知道的信息），老 manifest 退回三类媒体失败计数。`normalise_verify()` 在 build 时
+补齐 4 个判定字段（`image_fail/audio_fail/video_fail/zero_byte`）并写入 status。
+
+**关键细节**：`reason` 是「没验」与「验失败」的唯一区分依据。为此
+`stage_verify` 的 `--no-verify` 分支补 `reason="disabled"`，krkr 的 `write_manifest`
+补 `reason="not-run"`。CLI 摘要打印 `[ok]/[partial]` 前缀。
+
+### 21.4 Unity 子进程的 rc/stderr 被吞（假绿的温床）
+
+**问题**：`_unity_extract._run_as()` 直接丢掉 `CompletedProcess`。于是「AssetStudio 起不来
+（缺 DLL / 被安全软件拦 / 路径错）」和「这个游戏确实没这类资产」在日志里**长得一模一样**
+——都是 `0`。而 AssetStudio 的 rc 本来就不可信（坑 4：exit=0 也能一个不导），所以 rc
+不能当成功判据；但 rc≠0 时的 stderr 是唯一能解释「为什么一个都没有」的证据。
+
+**修法**：
+1. `_run_as` 返回 `CompletedProcess`，捕获 `TimeoutExpired`（rc=-9）与 `OSError`（rc=-2），
+   把异常变成可读诊断而不是裸栈。
+2. 子进程环境走 `toolbridge._sanitize_env()` + `_clear_dll_dir()`（蓝图 §4.3：冻结包
+   `_MEI` 目录混进 PATH，.NET 会优先加载包内同名 DLL）。这条此前只覆盖 toolbridge 的
+   出口，`_unity_extract` / `_as_audio_collect2` 这两个自己 `subprocess.run` 的地方漏了。
+3. `expected_counts` / `extract_all` 返回 `errors` 列表（`"<type>: rc=N，<stderr 尾 400 字>"`）；
+   orchestrator 把 errors 拼进 `st.detail`（枚举 0 个时）和阶段日志（stderr 在冻结包不进 GUI）。
+4. `_as_audio_collect2.enumerate_names` / `_export` 同样补 rc 告警与 env 清洗。
+
+**证据**：`test_run_as_passes_sanitized_env`（注入 `PYTHONHOME`，断言被洗掉）、
+`test_run_as_turns_missing_exe_into_diagnostic`（rc=-2）、
+`test_expected_counts_reports_rc_and_stderr`（rc=3 仍照数，但 errors 有 stderr）、
+`test_extract_all_reports_convert_rc`。
+
+### 21.5 Unity 合并产物时把路径拍平（静默丢文件）
+
+`extract_all` 的断点续跑分支用 `relative_to(src).name` 把产物拍平到 `dst/` 根下，
+并且 `if not tgt.exists(): copy`。AssetStudio 一旦按子目录输出（`BySource`/多级分组），
+不同目录下的同名文件就互相顶掉，而且**完全无声** —— 计数看起来正常，少的那几个
+永远不会出现在任何报告里。
+
+**修法**：保留相对路径 `dst / f.relative_to(src)`；同路径同内容（size + sha1）= 重复导出，
+跳过；同路径不同内容 = 真冲突，抛 `ValueError` 拒绝静默覆盖，提示清空 raw 加 `--overwrite`。
+
+**证据**：`test_merge_keeps_relative_paths`（`sub/a.png` 必须落在子目录里）、
+`test_merge_refuses_conflicting_same_name`、`test_merge_skips_identical_duplicate`。
+
+### 21.6 `find_tool` 每次调用都读配置
+
+Unity 链路一次跑 58 轮 AssetStudio（1441 条音频），每轮 `find_tool` → `_load_config`
+都要 stat + 读 + 解析两个 JSON。纯重复 I/O。
+
+**修法**：进程内缓存，key = `(路径, mtime_ns, size)` 三元组 —— 用户中途改配置（哪怕同一秒）
+下一次调用就失效重建，比「启动读一次」安全。返回浅拷贝，调用方改不脏缓存。
+`_config_paths()` / `_config_stamp()` 独立成函数便于测试定位。
+
+**证据**：`test_load_config_is_cached_across_calls` 用「改内容 + 把 mtime 还原」证明第二次
+**真的没读盘**（若读盘会拿到新值）——这比数调用次数更硬，不依赖 monkeypatch 计数。
+
+### 21.7 `close_all_explorers()` 会关掉用户自己的窗口
+
+旧实现枚举**所有** `CabinetWClass` 然后关掉。用户当时可能正在拷文件 —— 这不是「副作用」，
+是数据损失。而它存在的目的只是清掉自动化自己 `explorer /select` 开出来的窗口。
+
+**修法**：`all_cabinets(hint)` 按窗口标题过滤；`close_all_explorers(hint)` 的 hint
+**故意不设默认值**（签名即护栏，想改回全关必须改签名，`test_close_all_explorers_requires_hint`
+会拦住）。调用处传 `os.path.basename(stage)`。`find_explorer_by_title_hint` 复用同一枚举。
+
+### 21.8 GUI 默认输出落进程序安装目录
+
+冻结态 `APP_ROOT` = `{localappdata}\Programs\GalgameUnpacker`，`default_out_dir` 又把产物
+写在 `<APP_ROOT>/_extracted/` 下。两个后果：卸载程序把它一起删掉；用户在那个隐藏目录里
+根本找不到自己的图/音频/视频。
+
+**修法**：源码态保持 `<仓库>/_extracted/<游戏名>`（开发者纪律不变）；安装态改为
+`%USERPROFILE%\Documents\GalgameUnpacker\_extracted\<游戏名>`（Documents 不存在时退到主目录）。
+README 与 GUI 首行日志同步写明。
+
+### 21.9 随包工具许可证（对外分发前的硬阻塞，已核实完）
+
+| 工具 | 结论 | 依据 |
+|---|---|---|
+| garbro | MIT | morkt/GARbro |
+| assetstudio | MIT（上游）；本 CLI fork 未核实 | Perfare/AssetStudio |
+| **tlg2png** | **无许可证（保留所有权利）** | GitHub API `license=null`；vn-tools/tlg2png 仓库无 LICENSE 文件，已归档 |
+| **krkr** (KrkrExtract.Lite) | **GPL-3.0** | xmoezzz/KrkrExtract README 明示 GPLv3；exe 版本信息 Copyright © 2020 对应 lite 分支 |
+| **krkrz** (KrkrzExtract) | **GPL-3.0** | xmoezzz/KrkrzExtract `license=GPL-3.0`；exe 版本信息 X'moe (C) 2018 v1.0.0.0 对应 release |
+| **ffprobe** | **GPL-3.0-or-later** | 本机构建 `ffprobe -version` 的 configuration 含 `--enable-gpl --enable-version3`（BtbN 风格） |
+
+**结论**：三个 GPL-3.0 组件 + 一个无许可证组件。当前定位是个人自用，不受影响；
+**一旦对外分发**，必须：① GPL 组件随包提供对应源码或书面报价、附 GPL-3.0 全文与版权声明；
+② tlg2png 必须换掉（GARbro 的 TLG 转换或自研解码器），否则属于未经授权分发。
+「独立进程调用 = 聚合而非衍生」不豁免各工具自身的许可证义务。
+已写入 `build_exe.TOOL_LICENSES`（含依据）与生成的 `bin/NOTICE.txt`。
+
+### 21.10 收尾基线
+
+`C:/Python314/python.exe tests/run_all.py` → **junit: tests=655 failures=0 errors=0
+skipped=10 → PASS**（开工前 626，新增 29 条：Unity 7 / overwrite 5 / manifest 7 /
+配置缓存 3 / 窗口 2 / GUI 5）。
+`C:/Python314/python.exe tests/make_golden.py --check` → **6 个 fixture + 12 个真实样本
+全部与基线一致**（detect 链路未动，零漂移）。
+
+变更文件：
+`manifest.py`（+2 纯函数）、`orchestrator.py`（preflight/run/reset/verify.status/--overwrite）、
+`gui.py`（输出目录 + 残留询问）、`toolbridge.py`（配置缓存）、
+`_unity_extract.py`（rc/env/合并路径）、`_as_audio_collect2.py`（rc/env）、
+`krkr_auto_extract.py`（窗口收窄 + archives 键名）、`build_exe.py`（版本 0.1.2 + 许可证）、
+`README.md`；新增 `tests/test_unity_extract.py`。

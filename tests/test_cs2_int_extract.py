@@ -191,7 +191,10 @@ def test_write_manifest_records_ground_truth(tmp_path: Path):
                                "method": "archive-index"}
     assert man["source"]["main_key"] == "212C5F31"
     assert man["source"]["passphrase_found"] is False
-    assert man["source"]["archives"] == [{"name": "pcm.int", "entries": 2}]
+    # 规范三键（2026-11-04）：entries=地面真相，extracted=实测。这里没有实测数就填 None，
+    # 不许把「索引声明 2 条」同时当成「落盘了 2 条」—— 那让没对过账看起来像对上了。
+    assert man["source"]["archives"] == [
+        {"name": "pcm.int", "entries": 2, "extracted": None}]
     assert man["counts"]["raw"]["total"] == 2
     assert man["verify"]["verified"] is False          # 不信口开河说自己验过了
     assert (tmp_path / "m.json").is_file()

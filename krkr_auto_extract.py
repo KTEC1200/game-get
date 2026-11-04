@@ -167,21 +167,33 @@ def find_ui_window(pid):
     user32.EnumWindows(cb, 0)
     return res[0]
 
-def all_cabinets():
+def all_cabinets(hint=None):
+    """枚举资源管理器窗口；给了 hint 就只收标题含它的那些。
+
+    为什么要 hint（2026-11-04）：原来无差别枚举 `CabinetWClass`，`close_all_explorers`
+    会把用户自己开着的资源管理器一并关掉——用户可能正在拷文件，这是实打实的数据损失。
+    自动化只该收拾**它自己开出来**的窗口。
+    """
     res = []
+    needle = hint.lower() if hint else None
     @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
     def cb(h, lp):
         c = ctypes.create_unicode_buffer(64)
         user32.GetClassNameW(h, c, 64)
         if c.value == "CabinetWClass":
-            res.append(h)
+            if needle is None or needle in wnd_text(h).lower():
+                res.append(h)
         return True
     user32.EnumWindows(cb, 0)
     return res
 
-def close_all_explorers():
+def close_all_explorers(hint):
+    """关掉本次 stage 开出来的资源管理器窗口（hint = stage 目录名）。
+
+    **必须**给 hint（签名故意不设默认值）：无差别关闭会把用户自己的窗口一起关掉。
+    """
     for _ in range(6):
-        wins = all_cabinets()
+        wins = all_cabinets(hint)
         if not wins:
             return
         for h in wins:
@@ -229,16 +241,11 @@ def uia_item_rect(exp_hwnd, item_name):
     return None
 
 def find_explorer_by_title_hint(hint):
-    res = [None]
-    @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
-    def cb(h, lp):
-        c = ctypes.create_unicode_buffer(64)
-        user32.GetClassNameW(h, c, 64)
-        if c.value == "CabinetWClass" and hint and hint in wnd_text(h):
-            res[0] = h
-        return True
-    user32.EnumWindows(cb, 0)
-    return res[0]
+    """标题含 hint 的资源管理器窗口；多个时取最后一个（与历史行为一致）。"""
+    if not hint:
+        return None
+    wins = all_cabinets(hint)
+    return wins[-1] if wins else None
 
 def drag(x0, y0, x1, y1):
     user32.SetCursorPos(x0, y0)
@@ -305,7 +312,7 @@ def write_manifest(outdir, game_dir, per_archive, path):
                         "故 reconcile 标记为未对账"},
         counts_block=counts_block,
         reconcile_block=mf.reconcile(None, counts_block["raw"]["total"]),
-        verify={"verified": False,
+        verify={"verified": False, "reason": "not-run",
                 "note": "本工具不做内容级验收，请用 orchestrator.py 或 _verify_media.py"},
         postprocess=[{"tool": "KrkrExtract(内置 tlg→png)", "in": None,
                       "ok": None, "fail": None}] if png_dir.is_dir() else [],
@@ -454,7 +461,7 @@ def main(argv: list[str] | None = None) -> int:
     if only:
         xp3s = [f for f in xp3s if f.lower() in only]
     for fn in xp3s:
-        close_all_explorers()
+        close_all_explorers(os.path.basename(stage))
         subprocess.Popen(["explorer.exe", "/select," + os.path.join(stage, fn)])
         time.sleep(3.5)
         exp = find_explorer_by_title_hint(os.path.basename(stage))
@@ -495,7 +502,11 @@ def main(argv: list[str] | None = None) -> int:
         drag(ix, iy, tx, ty)
         total, by_ext, size_total = wait_task_done(outdir, ui)
         log("%s done: +%d files (total %d)" % (fn, total - before, total))
-        per_archive.append({"name": fn, "files": total - before, "total_after": total})
+        # 键名走 manifest 的规范三键（2026-11-04）：加密包没有索引，
+        # `entries`（地面真相）只能是 None；本包实测新增数属于 `extracted`。
+        # 早前写成 `files/total_after`，下游读 source.archives 得按链路分支兼容。
+        per_archive.append({"name": fn, "entries": None, "extracted": total - before,
+                            "total_after": total})
         before = total
 
     total, by_ext, size_total = count_files(outdir)
@@ -530,7 +541,7 @@ def main(argv: list[str] | None = None) -> int:
         log("moved output to %s" % dst)
 
     if not args.keep_stage:
-        close_all_explorers()
+        close_all_explorers(os.path.basename(stage))
         for p in pids_by_exe_path(stage_exe):
             subprocess.run(["taskkill", "/F", "/PID", str(p)], capture_output=True)
     return 0

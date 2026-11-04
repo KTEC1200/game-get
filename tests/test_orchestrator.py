@@ -224,7 +224,9 @@ def test_verify_skipped_by_flag(tmp_path):
     _write(ctx.raw_dir / "a.ogg")
     st = orch.stage_verify(ctx)
     assert st.ok and st.skipped
-    assert st.data == {"verified": False}
+    # reason=disabled 让 manifest.verify.status 判成 skipped 而不是 failed：
+    # 「主动没验」和「验失败」必须能分开，否则 --no-verify 的正常运行会被记成失败。
+    assert st.data == {"verified": False, "reason": "disabled"}
 
 
 def test_verify_empty_output_is_failure(tmp_path):
@@ -2957,3 +2959,85 @@ def test_preflight_skips_in_reuse_mode(tmp_path, monkeypatch):
     assert "复用模式" in st.detail
     assert st.data["source_bytes"] == 200 * 1024 ** 2
     assert st.data["required_bytes"] is None
+
+
+# ==========================================================================
+# 第 15 节：重跑口径（2026-11-04，v0.1.2）—— raw 非空不许静默叠跑
+# ==========================================================================
+
+def test_preflight_fails_on_stale_raw_without_overwrite(tmp_path):
+    """★核心★ raw 非空 + 没说要覆盖 → 提取前就失败，且**不许删**用户产物。
+
+    静默叠跑的后果不是报错，而是产物数虚高、对账照样 diff=0 ——
+    「上一轮 3500 + 本轮 3500 = 7000」看起来像一个完美的交付记录。
+    """
+    ctx = _ctx(tmp_path)
+    _write(ctx.raw_dir / "old.ogg", b"old")
+
+    st = orch.stage_preflight(ctx)
+
+    assert st.ok is False
+    assert "--overwrite" in st.detail and "--reuse-raw" in st.detail
+    assert (ctx.raw_dir / "old.ogg").is_file(), "预检是只读的，不能顺手清盘"
+
+
+def test_preflight_allows_stale_raw_when_overwrite_is_set(tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path, overwrite=True)
+    _write(ctx.raw_dir / "old.ogg", b"old")
+    monkeypatch.setattr(orch.shutil, "disk_usage",
+                        lambda _p: type("U", (), {"free": 100 * 1024 ** 3})())
+
+    st = orch.stage_preflight(ctx)
+
+    assert st.ok is True, st.detail
+
+
+def test_preflight_does_not_block_reuse_raw(tmp_path):
+    """--reuse-raw 的 raw 本来就非空——守卫不能把复用模式自己挡在门外。"""
+    ctx = _ctx(tmp_path, reuse_raw=tmp_path / "old_raw")
+    _write(ctx.raw_dir / "old.ogg", b"old")
+
+    st = orch.stage_preflight(ctx)
+
+    assert st.ok is True
+    assert "复用模式" in st.detail
+
+
+def test_run_stops_before_extract_when_stale_raw(tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path, engine="Ren'Py")
+    _write(ctx.raw_dir / "old.ogg", b"old")
+    called = {"n": 0}
+
+    def fake_extract(c):
+        called["n"] += 1
+        return _fake_stage("extract", expected_total=0)
+
+    monkeypatch.setattr(orch, "stage_extract_renpy", fake_extract)
+    rc, res = orch.run(ctx)
+    assert rc == 1
+    assert res["error"] == "preflight-failed"
+    assert called["n"] == 0, "预检失败后不该进解包"
+
+
+def test_run_overwrite_clears_raw_and_png_then_extracts(tmp_path, monkeypatch):
+    """--overwrite：raw/ 与 png/ 都清（只清 raw 会让上一轮的图混进 final 口径）。"""
+    ctx = _ctx(tmp_path, engine="Ren'Py", overwrite=True)
+    _write(ctx.raw_dir / "old.ogg", b"old")
+    _png(ctx.png_dir / "old.png")
+
+    def fake_extract(c):
+        _png(c.raw_dir / "new.png")
+        return _fake_stage("extract",
+                           archives=[{"archive": "x.rpa", "expected": 1, "got": 1}],
+                           expected_total=1)
+
+    monkeypatch.setattr(orch, "stage_extract_renpy", fake_extract)
+    monkeypatch.setattr(orch, "stage_postprocess", lambda c: _fake_stage("postprocess"))
+
+    rc, man = orch.run(ctx)
+    assert rc == 0, man
+    assert not (ctx.raw_dir / "old.ogg").exists(), "旧 raw 必须被清掉"
+    assert not (ctx.png_dir / "old.png").exists(), "旧 png 必须被清掉"
+    assert (ctx.raw_dir / "new.png").is_file()
+    reset = [s for s in man["stages"] if s["stage"] == "reset"]
+    assert reset and reset[0]["ok"] is True, "清场要留下可复盘的一条 stage"

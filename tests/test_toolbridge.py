@@ -952,3 +952,107 @@ def test_drop_tree_treats_system_exit_as_delete_failure(tmp_path, monkeypatch):
 
     assert tb.drop_tree(d) is False
     assert d.exists(), "删不掉就得留着，别假装删掉了"
+
+
+# ---------------------------------------------------------------------------
+# 配置缓存（2026-11-04）
+# ---------------------------------------------------------------------------
+
+def _isolate_config(tmp_path, monkeypatch) -> Path:
+    """把配置候选收窄到一个临时文件，并清掉上一轮留下的缓存。"""
+    cfg = tmp_path / "toolbridge.json"
+    monkeypatch.setattr(tb, "_config_paths", lambda: (cfg,))
+    tb._CONFIG_CACHE["key"] = None
+    tb._CONFIG_CACHE["data"] = {}
+    return cfg
+
+
+def test_load_config_is_cached_across_calls(tmp_path, monkeypatch):
+    """★核心★ 同一份配置连读两次只解析一次（Unity 链路 58 轮调用的主要开销）。
+
+    证明方式：改内容但把 mtime/size 还原 → 若还读到旧值，说明第二次根本没读盘。
+    """
+    cfg = _isolate_config(tmp_path, monkeypatch)
+    cfg.write_text('{"a": 1}', encoding="utf-8")
+    st = cfg.stat()
+
+    assert tb._load_config() == {"a": 1}
+    cfg.write_text('{"a": 2}', encoding="utf-8")          # 同长度
+    os.utime(cfg, ns=(st.st_atime_ns, st.st_mtime_ns))    # mtime 还原成一样
+
+    assert tb._load_config() == {"a": 1}, "缓存没生效（第二次还在读盘）"
+
+
+def test_load_config_invalidates_when_file_changes(tmp_path, monkeypatch):
+    cfg = _isolate_config(tmp_path, monkeypatch)
+    cfg.write_text('{"a": 1}', encoding="utf-8")
+    assert tb._load_config() == {"a": 1}
+
+    st = cfg.stat()
+    cfg.write_text('{"a": 2}', encoding="utf-8")
+    os.utime(cfg, ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000))   # +10ms
+
+    assert tb._load_config() == {"a": 2}, "改了配置还读旧值 —— 缓存永不失效"
+
+
+def test_load_config_returns_a_copy(tmp_path, monkeypatch):
+    """调用方改了结果也不能污染缓存（否则一次手滑就让全进程读到脏配置）。"""
+    cfg = _isolate_config(tmp_path, monkeypatch)
+    cfg.write_text('{"a": 1}', encoding="utf-8")
+
+    got = tb._load_config()
+    got["a"] = 999
+
+    assert tb._load_config() == {"a": 1}
+
+
+# ---------------------------------------------------------------------------
+# 配置缓存（2026-11-04）
+# ---------------------------------------------------------------------------
+
+def _isolate_config(tmp_path, monkeypatch) -> Path:
+    """把配置候选收窄到一个临时文件，并清掉上一轮留下的缓存。"""
+    cfg = tmp_path / "toolbridge.json"
+    monkeypatch.setattr(tb, "_config_paths", lambda: (cfg,))
+    tb._CONFIG_CACHE["key"] = None
+    tb._CONFIG_CACHE["data"] = {}
+    return cfg
+
+
+def test_load_config_is_cached_across_calls(tmp_path, monkeypatch):
+    """★核心★ 同一份配置连读两次只解析一次（Unity 链路 58 轮调用的主要开销）。
+
+    证明方式：改内容但把 mtime/size 还原 → 若还读到旧值，说明第二次根本没读盘。
+    """
+    cfg = _isolate_config(tmp_path, monkeypatch)
+    cfg.write_text('{"a": 1}', encoding="utf-8")
+    st = cfg.stat()
+
+    assert tb._load_config() == {"a": 1}
+    cfg.write_text('{"a": 2}', encoding="utf-8")          # 同长度
+    os.utime(cfg, ns=(st.st_atime_ns, st.st_mtime_ns))    # mtime 还原成一样
+
+    assert tb._load_config() == {"a": 1}, "缓存没生效（第二次还在读盘）"
+
+
+def test_load_config_invalidates_when_file_changes(tmp_path, monkeypatch):
+    cfg = _isolate_config(tmp_path, monkeypatch)
+    cfg.write_text('{"a": 1}', encoding="utf-8")
+    assert tb._load_config() == {"a": 1}
+
+    st = cfg.stat()
+    cfg.write_text('{"a": 2}', encoding="utf-8")
+    os.utime(cfg, ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000))   # +10ms
+
+    assert tb._load_config() == {"a": 2}, "改了配置还读旧值 —— 缓存永不失效"
+
+
+def test_load_config_returns_a_copy(tmp_path, monkeypatch):
+    """调用方改了结果也不能污染缓存（否则一次手滑就让全进程读到脏配置）。"""
+    cfg = _isolate_config(tmp_path, monkeypatch)
+    cfg.write_text('{"a": 1}', encoding="utf-8")
+
+    got = tb._load_config()
+    got["a"] = 999
+
+    assert tb._load_config() == {"a": 1}
