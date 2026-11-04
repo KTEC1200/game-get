@@ -3,7 +3,10 @@
 个人自用/学习项目：**自动解包 galgame，产出视频、音频、图片三类资源**。
 不做：打包回写、文本提取、翻译、对外分发。仅用于个人已购游戏的资源提取与学习。
 
-当前版本 **v0.4.1**（Windows 10/11 x64，Python 3.14 + PyInstaller onedir，便携 zip）。
+当前版本 **v0.4.2**（Windows 10/11 x64，Python 3.14 + PyInstaller onedir，便携 zip）。
+v0.4.2 给 exe 补上**文件身份**：公司/产品/描述/版本/图标（原先 PyInstaller 全留空，
+在按进程信誉拦截的安全软件眼里与未知程序无异）；新增 `start-gui.bat`，
+可用系统 Python 直接跑、完全绕开未签名 exe 的写入拦截。
 v0.4.1 修两类「输出目录建不出来」：游戏目录名含 `|` 等非法字符时改落父目录；
 真写不进去时弹目录选择框让用户自己挑（不再自动跳到程序目录）。
 v0.4.0 改默认输出为 `<游戏目录>\output`、路径统一 resolve。
@@ -14,7 +17,7 @@ v0.3.1 修可写性探针误报；v0.3.0 加失败日志。
 **只提供便携版**（2026-11-04 决定不做安装器：本机的火绒 + 深信服 EDR 会拦安装器的
 敏感写入，而安装器只换来「卸载键 + 开始菜单快捷方式」，对私人工具没价值）。
 
-- 解压 `packaging/Output/GalgameUnpacker-0.4.1-portable.zip` 到任意可写目录，
+- 解压 `packaging/Output/GalgameUnpacker-0.4.2-portable.zip` 到任意可写目录，
   双击 `orchestrator\orchestrator.exe`（不带参数即进 GUI）
 - 或直接拷 `_spike_pkg/dist/orchestrator/` 整个目录（等价）
 - 不写注册表、不需要管理员权限、卸载 = 删目录
@@ -150,8 +153,12 @@ UI 自动化约 40 分钟、依赖真实桌面/DPI/虚拟桌面，而人手把 x
 | 显示器 | 加密 KiriKiri 的 GUI 自动化链路（`--allow-gui`）需要真实桌面 + 200% DPI 缩放已适配 |
 
 **终端防护提示**：本程序与随包工具均未签名。火绒/企业 EDR 等按进程信誉拦截的软件可能
-拦新程序的敏感写入——遇到「拒绝访问」类报错，把解压目录整套放行；
-详见 `antivirus-false-positives.md`。
+拦新程序的敏感写入——遇到「拒绝访问」类报错，把解压目录整套放行。
+
+**如果加白名单不方便**：仓库根的 `start-gui.bat` 用系统 Python 直接跑（不进 exe），
+等于借用 `python.exe` 已有的信任，可完全绕开这条限制。双击即开图形界面；
+带参数则用控制台版运行（`start-gui.bat --gui-smoke` 自检）。
+原理与更多办法见 `antivirus-false-positives.md` §7。
 
 ## 支持的引擎（9 条链路）
 

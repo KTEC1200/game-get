@@ -1815,3 +1815,69 @@ planner 的 `<repo>/_extracted` 约定未动 —— 只影响 GUI 默认值，CL
 落到父目录且清掉非法字符）、`test_default_out_dir_normal_name_stays_inside`（正常名字不被
 特例带偏）、`test_open_out_falls_back_to_existing_parent`、`test_open_out_warns_when_no_usable_parent`。
 基线：**688 tests / 0 failures / 0 errors / 11 skipped**。
+
+## 28. 「为什么只拦我，别的软件怎么不拦」（2026-11-04，v0.4.2）
+
+### 28.1 问题
+
+用户在 `Output\orchestrator\failures.log` 里反复看到输出目录写入失败，问：
+为什么只有这个程序被拦，其他软件都没事，能怎么办。
+
+### 28.2 机制：拦的是身份证据，不是代码行为
+
+终端防护给 exe 打分靠多层证据，本项目 v0.4.1 及以前**五项里缺四项**：
+
+| 证据 | 主流软件 | 本工具（改前） |
+|---|---|---|
+| 数字签名 | OV/EV 证书 | 无 |
+| 文件属性（公司/产品/描述/版本） | 齐全 | **全空**（PyInstaller 默认不写） |
+| 云端信誉 | 百万装机多年积累 | 零，且每次构建哈希都变 |
+| 二进制结构 | 已备案 | PyInstaller bootloader（打包器/壳是恶意软件重灾区） |
+| 安装来源 | 商店/官网 | 自打 zip |
+
+签名的作用不是加密，而是让系统能回答「这是谁做的」。答不出来就是「未知程序」，
+而「未知程序 + 往受保护位置写入」正是勒索软件的经典开局 —— 所以拦的是**模式**，
+不是这个程序。同一份逻辑用 `python.exe` 跑就不拦，因为它在白名单里（§23 实测过）。
+
+### 28.3 本轮补的两项（免费，但不能根治）
+
+1. **版本资源**：`build_exe.version_file()` 生成 `VSVersionInfo` 并 `--version-file` 传入，
+   实测嵌入成功：`Company=Personal Build / Product=Galgame Unpacker /
+   Desc=Galgame Unpacker（galgame 资源解包）/ FileVersion=0.4.2 /
+   Copyright=个人自用，不对外分发`。填的是真实信息，不冒充任何厂商。
+2. **图标**：`build_exe.icon_file()` 用 Pillow 现生成 6 种尺寸（16~256）的 ico。
+   没有图标时，拦截弹窗与任务栏里都是空白框，用户认不出这是自己装的东西。
+   无 Pillow 时返回 None，构建照常 —— 图标是加分项，不是前置条件。
+
+这两项只降低「误判为未知程序」的概率，**不改变未签名这个事实**，所以不能承诺解决。
+
+### 28.4 真正能立刻解决的：走 `python.exe`
+
+新增仓库根的 `start-gui.bat`：探测 `C:\Python314` → `py -3.14/3.13/3.12/3.11` →
+`PATH` 里的 `python`，取第一个能 `import PIL, tkinter` 的解释器；双击用 `pythonw`
+（不弹黑框），带参数用 `python`（能看到输出）。写入发生在 `python.exe` 里，
+exe 完全不参与，因此绕开了整条信誉判定。实测 `start-gui.bat --gui-smoke` rc=0。
+
+**写 bat 踩的两个坑**（下次别再踩）：
+- **必须 GBK 编码**。cmd 按系统 OEM 代码页解析 `.bat` 文件本身；UTF-8 的中文注释会被
+  当命令执行（实测输出几十行「不是内部或外部命令」）。`chcp 65001` 无效 ——
+  它在这一行被执行后才生效，而文件已经按旧代码页解析过了。
+- **必须 CRLF 行尾**。用 Python 写 bat 时 `write_text` 默认 LF，标签/goto 会失配。
+
+### 28.5 完整办法清单（写进 `antivirus-false-positives.md` §7）
+
+| # | 办法 | 成本 | 效果 |
+|---|---|---|---|
+| 1 | `start-gui.bat` 跑源码 | 0 | 100% 绕开 |
+| 2 | 火绒信任区 / EDR 找 IT 加白 | 0 | 100% |
+| 3 | 补版本信息 + 图标（本轮） | 0 | 降误判概率，不保证 |
+| 4 | 厂商误报申诉 | 0，等几天 | 下次特征更新后生效 |
+| 5 | 代码签名（Certum 个人约 €29/年） | 花钱 | 根治「未知发布者」 |
+
+### 28.6 验证
+
+- 版本资源：读 `VersionInfo` 六个字段全部非空，版本 0.4.2 与 `APP_VERSION` 一致
+- 图标：ICO 头校验 `00 00 01 00`，6 个尺寸齐全；128×128 目视确认清晰
+- 回归：**693 tests / 0 failures / 0 errors / 10 skipped**
+- 冻结包：`--gui-smoke` rc=0
+- 新增测试 5 条（版本字段齐全、四段补零、非法版本串不崩、ICO 合法、无 Pillow 返回 None）

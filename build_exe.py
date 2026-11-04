@@ -42,7 +42,16 @@ PACKAGING = REPO / "packaging"
 
 #: 应用版本号 —— 便携包文件名与收尾摘要都从这里来（软件还没有 GUI/关于页，
 #: 等要展示版本的地方多了再挪进独立 VERSION 文件）。
-APP_VERSION = "0.4.1"
+APP_VERSION = "0.4.2"
+
+#: exe 的文件属性（Windows「详细信息」页，也是安全软件弹窗里显示的名字）。
+#: 为什么必须填（2026-11-04 实测）：PyInstaller 默认产物**这些字段全是空**，
+#: 加上未签名，恰好构成「未知程序」画像 —— 终端防护按进程信誉拦它时，
+#: 弹窗上连个名字都没有，用户也没法判断这是自己装的东西。
+#: 填的是真实信息（不伪装成别家产品），只解决「认不出」这一层，不解决签名。
+APP_PUBLISHER = "Personal Build"
+APP_DESC = "Galgame Unpacker（galgame 资源解包）"
+APP_COPYRIGHT = "个人自用，不对外分发"
 
 #: (源相对路径, 包内目标目录)。目标目录 "." = _internal 根（与仓库根布局镜像，
 #: 各模块的 `Path(__file__).parent` 定位才能命中）。
@@ -71,6 +80,93 @@ def data_args() -> tuple[list[str], list[str]]:
     return args, missing
 
 
+def version_file() -> Path:
+    """生成 PyInstaller 版本资源，返回文件路径。
+
+    PyInstaller 默认不写版本资源，成品 exe 的「属性 → 详细信息」是空的。
+    在按进程信誉拦截的安全软件眼里，「无签名 + 无公司 + 无描述 + 无图标」
+    与陌生/可疑程序长得一样；填真实信息至少让弹窗能显示它是什么。
+
+    格式是 PyInstaller 约定的 Python 字面量（`VSVersionInfo(...)`），
+    内容只描述这个文件本身，不冒充任何厂商。
+    """
+    nums = []
+    for part in (APP_VERSION.split(".") + ["0", "0", "0", "0"])[:4]:
+        try:
+            nums.append(int(part))
+        except ValueError:
+            nums.append(0)
+    quad = tuple(nums)
+    strings = [
+        ("CompanyName", APP_PUBLISHER),
+        ("FileDescription", APP_DESC),
+        ("FileVersion", APP_VERSION),
+        ("InternalName", "orchestrator"),
+        ("LegalCopyright", APP_COPYRIGHT),
+        ("OriginalFilename", "orchestrator.exe"),
+        ("ProductName", "Galgame Unpacker"),
+        ("ProductVersion", APP_VERSION),
+    ]
+    body = ",\n".join(
+        f"          StringStruct({k!r}, {v!r})" for k, v in strings)
+    text = (
+        "VSVersionInfo(\n"
+        "  ffi=FixedFileInfo(\n"
+        f"    filevers={quad!r},\n"
+        f"    prodvers={quad!r},\n"
+        "    mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0,\n"
+        "    date=(0, 0)\n"
+        "  ),\n"
+        "  kids=[\n"
+        "    StringFileInfo([\n"
+        "      StringTable('040904B0', [\n"
+        f"{body}\n"
+        "      ])\n"
+        "    ]),\n"
+        "    VarFileInfo([VarStruct('Translation', [1033, 1200])])\n"
+        "  ]\n"
+        ")\n"
+    )
+    out = SPEC / "version_info.txt"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text, encoding="utf-8")
+    return out
+
+
+def icon_file() -> Path | None:
+    """生成 exe 图标（没有 Pillow 就返回 None，构建照常进行）。
+
+    图标不是装饰：任务栏、资源管理器、安全软件弹窗里没有图标时是一个通用空白框，
+    用户认不出、也没法在拦截弹窗里判断「这是我自己装的那个解包工具」。
+    """
+    out = SPEC / "orchestrator.ico"
+    if out.is_file():
+        return out
+    try:
+        from PIL import Image, ImageDraw
+    except Exception:
+        return None
+    try:
+        size = 256
+        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        d.rounded_rectangle((8, 8, size - 8, size - 8), radius=52,
+                            fill=(38, 45, 58, 255))
+        # 三条「抽屉」横线 + 底下一个开口的箱体：表达「从包里取东西」
+        d.rounded_rectangle((58, 96, size - 58, 122), radius=8,
+                            fill=(232, 196, 106, 255))
+        d.rounded_rectangle((58, 138, size - 58, 164), radius=8,
+                            fill=(232, 196, 106, 255))
+        d.rounded_rectangle((58, 180, size - 98, 206), radius=8,
+                            fill=(232, 196, 106, 200))
+        out.parent.mkdir(parents=True, exist_ok=True)
+        img.save(out, format="ICO",
+                 sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)])
+    except Exception:
+        return None
+    return out if out.is_file() else None
+
+
 def check() -> int:
     args, missing = data_args()
     for a in DATA_FILES:
@@ -95,7 +191,11 @@ def build(no_bundle_tools: bool = False) -> int:
     cmd = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
            "--onedir", "--name", "orchestrator",
            "--distpath", str(DIST), "--workpath", str(BUILD), "--specpath", str(SPEC),
+           "--version-file", str(version_file()),
            *args, str(REPO / "orchestrator.py")]
+    ico = icon_file()
+    if ico is not None:
+        cmd += ["--icon", str(ico)]
     # GUI 壳（--gui）的拖拽增强：tkinterdnd2 带原生 tkdnd 二进制，必须 collect-all；
     # 没装也能构建（gui.py 探测后退化成浏览+粘贴）。
     import importlib.util

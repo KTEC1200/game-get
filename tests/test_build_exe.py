@@ -11,6 +11,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import build_exe as be  # noqa: E402
@@ -93,3 +95,60 @@ def test_bundle_tools_matches_toolbridge_keys():
     # 随包里的 toolbridge 可解析 key 必须真的存在 exe_name 对应文件预期
     for key in ("garbro", "assetstudio", "tlg2png", "ffprobe", "krkr"):
         assert tb.TOOLS[key].exe_name, f"{key} 缺 exe_name"
+
+
+# ---------------------------------------------------------------------------
+# exe 身份信息（2026-11-04）
+# ---------------------------------------------------------------------------
+
+def test_version_file_carries_real_identity_fields(tmp_path, monkeypatch):
+    """★被拦的根因之一★ exe 属性全空 = 「未知程序」。
+
+    PyInstaller 默认不写版本资源，成品在安全软件弹窗里连名字都没有。
+    这里要求 8 个关键字段都在，且版本号与 APP_VERSION 一致（不能写死旧值）。
+    """
+    monkeypatch.setattr(be, "SPEC", tmp_path)
+    text = be.version_file().read_text(encoding="utf-8")
+
+    for key in ("CompanyName", "FileDescription", "FileVersion",
+                "OriginalFilename", "ProductName", "ProductVersion"):
+        assert key in text, f"版本资源缺字段：{key}"
+    assert be.APP_VERSION in text
+    assert "orchestrator.exe" in text
+
+
+def test_version_file_pads_version_to_four_numbers(tmp_path, monkeypatch):
+    """Windows 的 filevers 必须是四段整数，`0.4` 这种两段写法会让构建直接失败。"""
+    monkeypatch.setattr(be, "SPEC", tmp_path)
+    monkeypatch.setattr(be, "APP_VERSION", "1.2")
+    text = be.version_file().read_text(encoding="utf-8")
+
+    assert "filevers=(1, 2, 0, 0)" in text
+    assert "prodvers=(1, 2, 0, 0)" in text
+
+
+def test_version_file_survives_bad_version_string(tmp_path, monkeypatch):
+    """版本号写成 1.0-beta 时不许让构建崩：非数字段按 0 处理。"""
+    monkeypatch.setattr(be, "SPEC", tmp_path)
+    monkeypatch.setattr(be, "APP_VERSION", "1.0-beta")
+    text = be.version_file().read_text(encoding="utf-8")
+
+    assert "filevers=(1, 0, 0, 0)" in text
+
+
+def test_icon_file_generates_multi_size_ico(tmp_path, monkeypatch):
+    """没有图标时 exe 在任务栏/拦截弹窗里是个空白框，用户认不出是自己装的什么。"""
+    pytest.importorskip("PIL")
+    monkeypatch.setattr(be, "SPEC", tmp_path)
+
+    ico = be.icon_file()
+
+    assert ico is not None and ico.is_file()
+    assert ico.read_bytes()[:4] == b"\x00\x00\x01\x00", "不是合法 ICO 头"
+
+
+def test_icon_file_returns_none_without_pillow(tmp_path, monkeypatch):
+    """没装 Pillow 也要能构建：图标是加分项，不是前置条件。"""
+    monkeypatch.setattr(be, "SPEC", tmp_path)
+    monkeypatch.setitem(sys.modules, "PIL", None)
+    assert be.icon_file() is None

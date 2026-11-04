@@ -36,6 +36,9 @@ banben/
 .vscode/
 .idea/
 _spike_pkg/orchestrator.spec
+# 构建时生成的 exe 身份资源（版本信息 + 图标，由 build_exe.version_file/icon_file 现生成）
+_spike_pkg/version_info.txt
+_spike_pkg/orchestrator.ico
 # 安装器产物（可重建，不入库）
 packaging/Output/
 
