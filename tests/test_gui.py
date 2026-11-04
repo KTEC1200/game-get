@@ -467,48 +467,54 @@ def test_worker_crash_writes_failure_log(tmp_path, monkeypatch):
     assert "crash" in kinds and "done" in kinds, "崩溃后必须收敛，界面不能卡在运行中"
 
 
-def test_writable_fallback_returns_first_writable_candidate(tmp_path, monkeypatch):
-    """★核心★ 默认目录写不进去时，要能自动找到一个真能写的位置。"""
-    monkeypatch.setattr(gui.Path, "home", staticmethod(lambda: tmp_path / "home"))
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
-    monkeypatch.setattr(gui.tempfile, "gettempdir", lambda: str(tmp_path / "tmp"))
-
-    alt, tried = gui.writable_fallback(Path("Some Game"))
-
-    assert alt == tmp_path / "home" / "GalgameUnpacker" / "_extracted" / "Some Game"
-    assert tried == [], "第一个就成功，不该有失败记录"
-    assert alt.is_dir()
-
-
-def test_writable_fallback_reports_every_failure(tmp_path, monkeypatch):
-    """★核心★ 三处都不行 → 返回 None + 每处的原因。
-
-    这是「浏览哪个位置都没用」的判定依据：全部失败说明是进程级拦截，
-    弹窗必须直接讲加白名单，而不是继续让用户换目录。
-    """
-    monkeypatch.setattr(gui.Path, "home", staticmethod(lambda: tmp_path / "home"))
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
-    monkeypatch.setattr(gui.tempfile, "gettempdir", lambda: str(tmp_path / "tmp"))
-    monkeypatch.setattr(gui, "ensure_writable", lambda p: "PermissionError: 拒绝访问")
-
-    alt, tried = gui.writable_fallback(Path("G"))
-
-    assert alt is None
-    assert len(tried) == 3, "三个候选都要报出来，用户/我们才知道试过哪些"
-    assert all("PermissionError" in t for t in tried)
-
-
-def test_open_out_warns_when_directory_is_gone(tmp_path, monkeypatch):
+def test_open_out_warns_when_no_usable_parent(tmp_path, monkeypatch):
     """★实测踩过★ 点「打开输出目录」没反应，用户以为按钮坏了。
 
-    实际是路径没指对（曾被写成相对路径）或目录被清理。静默返回=最差体验，
-    必须明确提示「目录不存在」。
+    现在的行为：有上级就打开上级并说明（见下一条测试）；**连上级都不存在**
+    （盘符没了、目录全被删）才明确警告 —— 无论如何不能静默返回。
     """
     app = _shell_app(_FakeRoot())
-    app._last_out = tmp_path / "gone"
+    app._last_out = Path("Z:/no/such/drive/output")     # 盘符不存在
     seen: list = []
     monkeypatch.setattr(gui.messagebox, "showwarning", lambda *a, **k: seen.append(a))
 
     app._open_out()
 
-    assert seen, "目录不存在时必须提示，不能静默无反应"
+    assert seen, "没有可打开的目录时必须提示，不能静默无反应"
+
+
+def test_default_out_dir_falls_back_to_parent_for_illegal_names(tmp_path):
+    """★实测踩过★ 游戏目录名含 `|` 时，不能在里面建子目录。
+
+    实测 `D://HY//【PC】… | Ore o Hoshigaru…` 用 CreateDirectory 直接报
+    「文件名、目录名或卷标语法不正确」—— 这类目录是从压缩包/别的系统带来的，
+    NTFS 允许它存在，但**不允许在它下面创建新目录**。这时产物落到父目录下、
+    名字清洗过的目录。
+    """
+    game = tmp_path / "【PC】俺を欲しがる二人の母 | Ore o Hoshigaru"
+
+    out = gui.default_out_dir(game)
+
+    assert out.parent == tmp_path, "必须换到父目录，不能还是游戏目录的子路径"
+    assert "|" not in out.name, "名字里的非法字符要清掉"
+    assert out.name.endswith("-output")
+
+
+def test_default_out_dir_normal_name_stays_inside(tmp_path):
+    """正常名字（无非法字符）仍然落在 `<游戏>/output`，不要被上面的特例带偏。"""
+    assert gui.default_out_dir(tmp_path / "教师催眠2") == tmp_path / "教师催眠2" / "output"
+
+
+def test_open_out_falls_back_to_existing_parent(tmp_path, monkeypatch):
+    """目录没建成（解包在 preflight/extract 就失败）时，打开最近存在的上级并说明。"""
+    app = _shell_app(_FakeRoot())
+    app._last_out = tmp_path / "not-created" / "output"
+    opened: list = []
+    notes: list = []
+    monkeypatch.setattr(gui.os, "startfile", lambda p: opened.append(p))
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: notes.append(a))
+
+    app._open_out()
+
+    assert opened and opened[0] == tmp_path
+    assert notes, "退到上级必须说明，否则用户会以为打开的是产物目录"

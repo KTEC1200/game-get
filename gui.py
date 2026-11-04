@@ -26,7 +26,6 @@ import os
 import os
 import queue
 import sys
-import tempfile
 import threading
 import traceback
 from pathlib import Path
@@ -66,40 +65,32 @@ def ensure_writable(path: Path) -> str | None:
     return None
 
 
-def writable_fallback(game_dir: Path) -> tuple[Path | None, list[str]]:
-    """默认位置写不进去时，找一个**真的能写**的产物目录。
+#: Windows 文件名非法字符。`【PC】… | Ore o Hoshigaru…` 这种目录名在 NTFS 里**能存在**
+#: （从压缩包/别的系统带来的），但**不能在里面创建子目录**：`CreateDirectory` 直接报
+#: 「文件名、目录名或卷标语法不正确」（2026-11-04 实测）。
+_ILLEGAL = set('<>:"/\\|?*') | {chr(i) for i in range(32)}
 
-    返回 `(可用路径, 每个候选的失败说明)`。全部不行时第一项为 None ——
-    那说明终端防护是按进程拦的，换目录解决不了，只能加白名单（弹窗会说清楚）。
 
-    候选顺序按「用户会不会去翻」排：用户目录 → 本地应用数据 → 系统临时目录。
-    前两个是给人看的，最后一个只保证能跑（临时目录可能被清理）。
-    """
-    home = Path.home()
-    bases = [
-        home / "GalgameUnpacker",
-        Path(os.environ.get("LOCALAPPDATA") or home) / "GalgameUnpacker",
-        Path(tempfile.gettempdir()) / "GalgameUnpacker",
-    ]
-    tried: list[str] = []
-    for base in bases:
-        cand = base / "_extracted" / game_dir.name
-        why = ensure_writable(cand)
-        if why is None:
-            return cand, tried
-        tried.append(f"{cand}  ← {why}")
-    return None, tried
+def _legal_component(name: str) -> str:
+    """把目录名清洗成能在 Windows 上安全当目录名的字符串。"""
+    cleaned = "".join("_" if ch in _ILLEGAL else ch for ch in name).strip(" .")
+    return cleaned or "game"
 
 
 def default_out_dir(game_dir: Path) -> Path:
     """产物默认落 **`<游戏目录>/output`**（2026-11-04 用户要求）。
 
-    为什么放游戏旁边：测试时产物跑到程序目录下（相对路径 + 默认根算错），回头根本找不到。
-    放在游戏旁边最符合直觉——解完就在原地，换盘/换机器跟着走，也不用去 C 盘翻。
+    但如果游戏目录名里有 Windows 非法字符（`|` `?` `*` 等），就没法在里面建子目录 ——
+    这时退到**父目录**下一个清洗过名字的目录，形如 `<父目录>/【PC】…_…-output`。
+    父目录名通常合法（它是由资源管理器正常创建的）。
 
-    游戏目录不可写（只读安装、光盘、受保护目录）时由 `_start` 的可写预检接管，
-    退到 `writable_fallback`（用户目录 / LOCALAPPDATA / TEMP），不会因此卡死。
+    游戏目录不可写（只读安装、光盘、受保护目录）时由 `_start` 的预检接管：
+    弹目录选择框让用户自己挑，**不再自动跳到某个猜出来的位置**（实测会跳到程序目录，
+    用户根本找不到）。
     """
+    name = game_dir.name
+    if any(ch in _ILLEGAL for ch in name):
+        return game_dir.parent / f"{_legal_component(name)}-output"
     return game_dir / "output"
 
 
@@ -257,7 +248,7 @@ class App:
         opt = ttk.Frame(frm)
         opt.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(6, 0))
         self.var_gui = tk.BooleanVar(value=False)
-        ttk.Checkbutton(opt, text="允许 GUI 自动化（加密 KiriKiri，约 40 分钟）",
+        ttk.Checkbutton(opt, text="用于加密的 krkr",
                         variable=self.var_gui).pack(side="left")
         self.btn_run = ttk.Button(opt, text="开始解包", command=self._start)
         self.btn_run.pack(side="right")
@@ -337,18 +328,32 @@ class App:
             self.var_out.set(d)
 
     def _open_out(self) -> None:
-        """打开输出目录。**目录不存在要明确说一句**——静默无反应最伤：
-        用户会以为按钮坏了，实际是路径没指对（相对路径 + cwd 变化）或被清理了。
+        """打开输出目录。**任何失败都要说话**——静默无反应会让人以为按钮坏了。
+
+        三种情况：目录在 → 打开；目录没建成（解包在 preflight/extract 就失败）→
+        退到最近存在的上级并说明；`os.startfile` 本身失败 → 把错误显示出来。
         """
         if not self._last_out:
             return
-        if self._last_out.is_dir():
-            os.startfile(self._last_out)                     # noqa: S606
-        else:
-            messagebox.showwarning(
-                "输出目录不存在",
-                f"{self._last_out}\n\n本轮可能没有产出，或该目录已被清理。\n"
-                f"完整原因看输出目录里的 manifest.json 或软件目录的 failures.log。")
+        target = self._last_out
+        note = ""
+        if not target.is_dir():
+            parent = next((p for p in target.parents if p.is_dir()), None)
+            if parent is None:
+                messagebox.showwarning(
+                    "输出目录不存在",
+                    f"{target}\n\n本轮可能没有产出，或该目录已被清理。\n"
+                    f"完整原因看软件目录的 failures.log。")
+                return
+            note = f"（{target} 尚未创建，已打开它的上级：{parent}）"
+            target = parent
+        try:
+            os.startfile(target)                             # noqa: S606
+        except OSError as exc:
+            messagebox.showerror("打不开目录", f"{target}\n\n{exc}")
+            return
+        if note:
+            messagebox.showinfo("输出目录尚未创建", note)
 
     def _start(self) -> None:
         # 一律 resolve 成绝对路径：相对路径会让 `is_dir()` / `os.startfile`
@@ -365,23 +370,35 @@ class App:
         # ——「浏览哪个位置都没用」说明是进程级拦截，让用户继续试目录是浪费时间。
         why = ensure_writable(out)
         if why:
-            alt, tried = writable_fallback(game)
-            if alt is None:
+            # 记一笔：用户下次发 failures.log 时能直接看到「哪一步、哪个路径、什么错」，
+            # 不用再靠截图猜（这条失败发生在起跑之前，不走 _finish_failure）。
+            faillog.log_failure(error="output-not-writable", game_dir=game, out_dir=out,
+                                extra={"detail": why, "stage": "pre-start-write-probe"},
+                                rc=1)
+            # 不再自动猜一个"能写的位置"：实测会跳到程序目录（用户找不到，删程序还丢产物）。
+            # 直接让用户选，默认从游戏目录的父目录开始。
+            messagebox.showwarning(
+                "输出目录不可写",
+                f"{out}\n\n{why}\n\n"
+                "接下来打开目录选择框，请选一个你自己找得到、并且能写的位置。\n\n"
+                "如果换位置仍然不行，说明是安全软件在拦这个程序的写入 ——\n"
+                "把解压目录加入火绒「信任区」（或让 IT 放行 EDR），别继续换目录。")
+            picked = filedialog.askdirectory(
+                title="选择输出目录（默认位置不可写）",
+                initialdir=str(game.parent if game.parent.is_dir() else game))
+            if not picked:
+                return
+            out = Path(picked).expanduser().resolve()
+            why2 = ensure_writable(out)
+            if why2:
+                faillog.log_failure(error="output-not-writable", game_dir=game, out_dir=out,
+                                    extra={"detail": why2, "stage": "user-picked"}, rc=1)
                 messagebox.showerror(
-                    "所有位置都写不进去",
-                    "试过这些位置全部失败：\n\n"
-                    + "\n".join(tried)
-                    + "\n\n这不是目录选错了，是安全软件在拦这个程序的写入。\n"
-                      "请把解压目录加入火绒/EDR 的信任区（或联系管理员放行）后重试。")
+                    "这个位置也写不进去",
+                    f"{out}\n{why2}\n\n"
+                    "这不是目录选错了，是安全软件在拦这个程序的写入。\n"
+                    "请把解压目录加入信任区后再试，或换一台没有管控的机器。")
                 return
-            if not messagebox.askyesno(
-                    "输出目录不可写，已找到替代位置",
-                    f"原位置：{out}\n{why}\n\n"
-                    f"改用这个位置继续吗？\n{alt}\n\n"
-                    f"（这是程序自动探测到可写的地方；不想用就点「否」再手动选一个）",
-                    icon="warning"):
-                return
-            out = alt
             self.var_out.set(str(out))
         # 已有产物必须先问：默认 auto 会静默叠跑（产物数虚高但对账自洽），
         # 拒绝则让用户换个目录 —— 两条路都比「跑完给一个假数字」强。

@@ -1769,3 +1769,49 @@ planner 的 `<repo>/_extracted` 约定未动 —— 只影响 GUI 默认值，CL
   `test_default_out_dir_shares_name_with_game_but_is_a_subdir`、
   `test_open_out_warns_when_directory_is_gone`
 - 基线：**687 tests / 0 failures / 0 errors / 10 skipped**
+
+## 27. 「输出目录不可写」分裂成两种病（2026-11-04，v0.4.1）
+
+用户反馈「输出目录还是打不开，而且不可写」。用 .NET `Directory.CreateDirectory` 逐条实测，
+发现是**两个完全不同的原因**，之前被同一条 WinError 5 混在一起：
+
+| 目录 | 实测结果 | 真正原因 |
+|---|---|---|
+| `D:\HY\教师催眠2\output` | **可创建、可写文件** | 不是权限问题 —— 是**未签名 exe 被终端防护拦**（用 .NET 的普通进程能写，冻结 exe 不能） |
+| `D:\HY\【PC】… \| Ore o Hoshigaru…\output` | **创建失败：「文件名、目录名或卷标语法不正确」** | 目录名含 **`\|`**（Windows 非法字符）。这种目录从压缩包/别的系统带来，NTFS 能存、**但不能在其下建子目录** |
+
+### 27.1 为什么之前「浏览哪个位置都没用」
+
+两个坑叠在一起：
+
+- 非法字符那条：无论选哪个**子路径**都报「语法不正确」，但被 Python 包成了
+  `PermissionError`，看起来像权限；
+- 真拦截那条：换任何目录都一样被拦。
+
+### 27.2 修法
+
+1. **非法字符**：`default_out_dir` 检测游戏目录名，含 `<>:"/\|?*` 或控制字符时，
+   落到**父目录**下清洗过名字的 `<清洗名>-output`（父目录通常由资源管理器正常创建，名字合法）。
+2. **真写不进去**：**删掉** `writable_fallback`（它按环境变量猜位置，实测把产物猜到了
+   **程序目录**下，用户找不到、删程序还丢产物）。改成弹目录选择框让用户自己挑，
+   默认从游戏目录的父目录开始；再失败就直说「是安全软件在拦，去加白名单」。
+3. **打开输出目录**：目录没建成时（解包在 preflight/extract 就失败）退到最近存在的上级
+   并弹一句说明；`os.startfile` 失败也把错误显示出来 —— 任何情况都不许静默。
+4. 可写性失败写进 `failures.log`（`error=output-not-writable`），用户下次发日志能直接看到
+   哪个路径、什么错，不用靠截图猜。
+
+### 27.3 教训
+
+**同一个错误码下可能藏着两种病。** `PermissionError: [WinError 5]` 既可能是 ACL，
+也可能是终端防护，还可能是「路径里有非法字符被系统拒绝」。不下到「具体哪个路径、
+换一个进程试一次」的层面，就会一直在错误的维度上打补丁。
+
+另外：`Path.home()` / `LOCALAPPDATA` 这类环境变量在别人机器上不可靠 ——
+用户机器上的 fallback 就是靠它们算到了程序目录。**凡是要猜路径，宁可不猜，让用户选。**
+
+### 27.4 验证
+
+新增测试：`test_default_out_dir_falls_back_to_parent_for_illegal_names`（含 `|` 的名字必须
+落到父目录且清掉非法字符）、`test_default_out_dir_normal_name_stays_inside`（正常名字不被
+特例带偏）、`test_open_out_falls_back_to_existing_parent`、`test_open_out_warns_when_no_usable_parent`。
+基线：**688 tests / 0 failures / 0 errors / 11 skipped**。
