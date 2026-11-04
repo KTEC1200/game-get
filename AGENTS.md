@@ -793,3 +793,70 @@ tlg2png 必须换掉（GARbro 的 TLG 转换或自研）。详见 verified-findi
 - 加密 krkr 剩余 ~7 部（用户 2026-11-02 划走，样本在盘）、E-mote、AI 兜底（A1/A2/A3，最后才考虑）
 - ~~夕凪荘 22 BGM dump~~（2026-11-04 用户明确舍弃）
 - ~~安装器卸载键/开始菜单验证~~（安装器已删除，不存在这项）
+
+## 2026-11-04 半自动协作（失败时给可执行方案）
+
+### 一句话
+
+把「全自动跑不通 → 抛一个 error code」改成「全自动跑不通 → 告诉你 3 分钟人工怎么做，
+做完接着跑」。理由：有些障碍的自动绕过成本远高于人工（加密 KiriKiri 的 UI 自动化
+约 40 分钟且挑环境，人工拖 xp3 只要 3 分钟）。
+
+### 改造范围（只覆盖真能省事的场景）
+
+| code | 触发条件 | 人工方案 | 产物落点 |
+|---|---|---|---|
+| `kirikiri-encrypted` | extract 失败 + engine=KiriKiri + detail 不含 GUI 失败 | KrkrExtract 手动拖 xp3 | `raw/` + `png/` |
+| `kirikiri-gui-failed` | 同上，但 detail 含「GUI 链路失败」 | 同上 + 提示安全软件拦进程 | `raw/` + `png/` |
+| `unity-no-assets` | extract 失败 + engine=Unity | AssetStudio.GUI 导出 | `raw/Image_Texture2D` 等 |
+| `engine-no-chain` | rc=2（引擎判出但没链路） | 专用工具解到 `raw/` | `raw/` |
+| `detect-failed` | rc=3（判不出引擎） | 确认根目录 / `--engine` 强制 | — |
+
+**不做的**：preflight 空间不足（换盘即可）、raw 非空（已有两个出口）、verify 失败
+（产物已在，人工无从下手）。没有合适方案时 `plan_for()` 返回 `None`、manifest 不写
+`manual` 块 —— **不硬凑**，编出来的指引比错误码更害人。
+
+### 交互提示形式（三处消费同一份数据）
+
+1. **CLI**：`manual.render_dict()` 打区块 —— 分隔线 / 原因 / 需要准备 / 编号步骤 /
+   产物路径 / 可直接复制的续跑命令 / 备选方案。放在所有统计之后（失败时用户最需要的
+   是「现在干什么」）。
+2. **GUI**：`gui.summarize_text()` 追加「需要人工介入」+ **前 3 步** + 「还有 N 步」
+   ——弹窗再长就没人读了，完整步骤在日志与 manifest 里。
+3. **manifest**：`manual` 块（`code/summary/why/needs/steps/target/then/alternatives`），
+   机器可读；`res["manual"]` 与 `man["manual"]` 是**同一份**数据。
+4. **`--dry-run`**：KiriKiri 样本多探一次 `garbro -l`（几秒），列不出就当场给方案 +
+   `auto_feasible=false`。stdout 保持纯 JSON，人读区块走 stderr。
+
+### 验收标准（每条都有测试）
+
+1. 5 个失败码各有一份方案，且三件套齐全：`needs` / `steps` / `target`+`then`
+   （`tests/test_manual.py` 12 条）。
+2. 路径带空格时命令必须加引号 —— 用户是复制粘贴，不是自己拼。
+3. 三处同一份：`res["manual"] == man["manual"]`
+   （`test_failure_carries_manual_plan_for_encrypted_kirikiri`）。
+4. 无方案不硬凑：Ren'Py extract 失败时 manifest **没有** `manual` 块。
+5. dry-run 预判：KiriKiri + garbro 列不出 → `auto_feasible=false` + `manual`，
+   且 stdout 仍是合法 JSON（`test_dry_run_predicts_manual_intervention_for_kirikiri`）。
+6. 人工做完能续跑：方案里的 `then` 直接用既有 `--reuse-raw`（**不新增命令**，
+   人工产物与自动产物走同一条验收/后处理链路）。
+7. GUI 只显示前 3 步、超出要报「还有 N 步」（`test_summarize_text_includes_manual_plan`）。
+
+### 待办优先级（2026-11-04 重排）
+
+| 级别 | 事项 | 状态 |
+|---|---|---|
+| P0 | 无 | 当前没有阻塞交付的事项 |
+| P1 | **解包速度优化** | 用户 2026-11-04 指定：没明确待办就优先做这个（下手点见下） |
+| P1 | 半自动协作打磨 | 第一版已上线；剩余：`--allow-gui` 是否默认禁用以外的默认值/提示措辞迭代 |
+| P2 | 用户实测 v0.1.2 反馈 | 等用户 |
+| P3 | KiriKiri **自然**窗口缺失验证 | 等样本/时机（现有只有注入式模拟证据） |
+| P3 | GUI 弹窗确认（GARbro.GUI 选密钥） | 等用户开一次 GUI；建议直接划走 |
+| P4 | 加密 krkr 7 部 / E-mote / AI 兜底 | 用户划走 / 盘面 0 命中 / 最后才考虑 |
+| 舍弃 | 夕凪荘 BGM、安装器 | 用户 2026-11-04 明确 |
+
+**速度优化的下手点（先量再改，别猜）**：Unity 音频收集是当前最贵的一段
+（Happiness Double Room 1441 条要 58 次 AssetStudio 调用、十几分钟），
+候选方向：批量 50→100 的丢失率对比、按名字分片到独立临时目录并行后合并（注意同名冲突）、
+以及先确认瓶颈在进程启动还是磁盘 IO。verify 已 8 路并行（3500 文件 68s），
+preflight 的 `_tree_bytes` 在大样本上是几十秒（已有提示）——这两个优先级低于 Unity 音频。

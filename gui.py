@@ -175,6 +175,19 @@ def summarize_text(rc: int, man: dict) -> str | None:
         # 「没验」也是信息：非媒体文件不计失败，但要让用户知道有多少没看
         lines.append(f"另有 {ver.get('nonmedia')} 个非媒体文件未验收"
                      f"（按扩展名见 manifest.verify.nonmedia_by_ext）")
+    # 人工介入方案放最后：失败时用户最需要的是「我现在干什么」，不是统计数字。
+    # 只显示前 3 步 —— 弹窗再长就没人读了，完整步骤在日志与 manifest.manual 里。
+    plan = man.get("manual") or {}
+    if plan:
+        steps = plan.get("steps") or []
+        lines.append("")
+        lines.append(f"需要人工介入：{plan.get('summary', '')}")
+        for i, s in enumerate(steps[:3], 1):
+            lines.append(f"  {i}) {s}")
+        if len(steps) > 3:
+            lines.append(f"  …还有 {len(steps) - 3} 步，完整步骤看日志 / manifest 的 manual 块")
+        if plan.get("then"):
+            lines.append(f"做完后：{plan['then']}")
     return "\n".join(lines)
 
 

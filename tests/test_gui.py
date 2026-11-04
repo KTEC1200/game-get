@@ -412,3 +412,30 @@ def test_has_stale_products_counts_only_files(tmp_path):
     (tmp_path / "png").mkdir()
     (tmp_path / "png" / "a.png").write_bytes(b"x")
     assert gui.has_stale_products(tmp_path) is True
+
+
+def test_summarize_text_includes_manual_plan():
+    """★半自动协作★ 失败摘要要带「需要人工介入」与前 3 步（弹窗不能长到没人读）。"""
+    man = {
+        "manifest_version": 1,
+        "engine": "KiriKiri",
+        "counts": {"final": {"total": 0}},
+        "reconcile": {"method": "no-index-available", "diff": None,
+                      "expected": None, "actual": 0},
+        "verify": {"status": "skipped"},
+        "error": "extract-failed",
+        "manual": {
+            "code": "kirikiri-encrypted",
+            "summary": "xp3 自动解不开",
+            "steps": ["第一步", "第二步", "第三步", "第四步"],
+            "then": 'orchestrator.exe "g" --reuse-raw "r"',
+        },
+    }
+
+    text = gui.summarize_text(1, man)
+
+    assert "需要人工介入：xp3 自动解不开" in text
+    assert "第一步" in text and "第三步" in text
+    assert "第四步" not in text, "只显示前 3 步"
+    assert "还有 1 步" in text
+    assert "--reuse-raw" in text

@@ -59,6 +59,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import galgame_dispatch as gd          # noqa: E402
 import case_lib                        # noqa: E402  （案例库查表：签名算法唯一出处）
 import manifest                        # noqa: E402
+import manual                          # noqa: E402  （人工介入方案：失败时给可执行步骤，见 manual.py）
 import rpa_tool                        # noqa: E402
 import toolbridge as tb                # noqa: E402
 import rpa_extract_organized           # noqa: E402  （兄弟链路一律 in-process 调 main()，见 _run_sibling）
@@ -2286,21 +2287,57 @@ def _write_manifest(ctx: Ctx, man: dict) -> Path | None:
     return ctx.manifest_path
 
 
+def _prog_name() -> str:
+    """给人工方案里的命令用：冻结包是 exe，源码态是 python 脚本。"""
+    return "orchestrator.exe" if getattr(sys, "frozen", False) else "python orchestrator.py"
+
+
+def _manual_tools() -> dict[str, str]:
+    """人工方案里要写「随包工具的绝对路径」—— 找不到就留空，让方案用兜底文案。
+
+    只解析两个真正会用到 GUI 的工具：krkr（加密 xp3）与 assetstudio（Unity 兜底）。
+    解析失败绝不能连累失败路径本身（那会把「给建议」变成「又炸一次」）。
+    """
+    out: dict[str, str] = {}
+    for key in ("krkr", "assetstudio"):
+        try:
+            out[key] = str(tb.find_tool(key))
+        except Exception:                                   # noqa: BLE001
+            continue
+    return out
+
+
 def _finish_failure(ctx: Ctx, stages: list[Stage], engine: str | None,
                     rc: int, error: str, t_all: float) -> tuple[int, dict]:
     """非 0 退出路径的统一收尾：本轮 manifest 落盘（`ok=False` + `error`）并返回包装结果。
 
     `counts` / `verify` 一律是**本轮真实数据**：没跑到的阶段就是 null / 0，
     绝不回填上一轮的数字（伪造一份「看起来完成了」的交付记录是本项目最贵的错）。
+
+    半自动协作（2026-11-04）：失败不是终点。这里同时产出一份**人工介入方案**
+    （`manual` 块），明确告诉用户做什么能把这一轮救回来 —— 有些障碍人工 3 分钟，
+    自动绕 40 分钟还不一定成（见 manual.py 的模块说明）。
     """
     man = build_manifest(ctx, stages, engine)
     man["ok"] = False
     man["error"] = error
     man["total_seconds"] = round(time.time() - t_all, 1)
     man["stages"] = [s.as_dict() for s in stages]
+
+    plan = manual.plan_for(error, engine=engine, game_dir=ctx.game_dir,
+                           out_dir=ctx.out_dir, raw_dir=ctx.raw_dir,
+                           png_dir=ctx.png_dir, prog=_prog_name(),
+                           tools=_manual_tools(), stages=man["stages"])
+    if plan is not None:
+        man["manual"] = plan.as_dict()
+
     _write_manifest(ctx, man)
-    return rc, {"error": error, "engine": engine, "manifest": man,
-                "stages": man["stages"]}
+    res = {"error": error, "engine": engine, "manifest": man, "stages": man["stages"]}
+    if plan is not None:
+        # 同一份数据两处消费：main() 打终端区块、GUI 摘要取前几步。
+        # 存 dict 而不是对象：res 有时会被 --json 写盘（对象不可序列化）。
+        res["manual"] = man["manual"]
+    return rc, res
 
 
 def _run_stage(name: str, fn, ctx: Ctx) -> Stage:
@@ -2563,10 +2600,34 @@ def main(argv: list[str] | None = None) -> int:
         st = stage_detect(ctx)
         payload = {"game_dir": str(game_dir), "out": str(out_dir),
                    "detect": st.as_dict()}
+        plan = None
         if st.ok:
             # dry-run 也把案例库查表带上：这正是「先看有没有现成解法」的场合
             payload["case_lookup"] = stage_case_lookup(ctx, st.data).as_dict()
+            # 半自动协作的「提前告知」（2026-11-04）：KiriKiri 先探一次 GARbro 能不能
+            # 列目录。列不出 → 正式跑大概率要人工介入，别让用户等 40 分钟才知道。
+            # 代价是 dry-run 对 KiriKiri 样本多几秒（一次 garbro -l），值得。
+            engine = st.data.get("engine")
+            probe: tuple[bool, str] | None = None
+            if engine == "KiriKiri":
+                xp3s = _kirikiri_xp3(ctx.game_dir)
+                if xp3s:
+                    biggest = max(xp3s, key=lambda p: p.stat().st_size)
+                    print(f"[dry-run] 探针：garbro -l {biggest.name}（几秒）", file=sys.stderr)
+                    ok_list, _n, _out = tb.garbro_list(biggest)
+                    probe = (ok_list, biggest.name)
+                    payload["auto_feasible"] = ok_list
+            plan = manual.dry_run_plan(engine, game_dir=ctx.game_dir, out_dir=ctx.out_dir,
+                                       raw_dir=ctx.raw_dir, png_dir=ctx.png_dir,
+                                       xp3_probe=probe, prog=_prog_name(),
+                                       tools=_manual_tools())
+            if plan is not None:
+                payload["manual"] = plan.as_dict()
         print(json.dumps(payload, ensure_ascii=False, indent=2))
+        if plan is not None:
+            # stdout 保持纯 JSON（可能有脚本在解析），人看的区块走 stderr
+            print(file=sys.stderr)
+            print(manual.render_dict(payload["manual"]), file=sys.stderr)
         return 0 if st.ok else 3
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -2653,6 +2714,12 @@ def main(argv: list[str] | None = None) -> int:
         if man.get("error"):
             print(f"失败原因: {man.get('error')}")
         print(f"manifest: {manifest_path}")
+    # 人工介入方案独立成块、放在最后：失败时用户最需要的不是统计数字，而是「我现在干什么」。
+    # 数据来源与 GUI/manifest 同一份（res["manual"] 或 man["manual"]），不另拼文案。
+    plan = res.get("manual") or (man or {}).get("manual")
+    if plan:
+        print()
+        print(manual.render_dict(plan))
     print(f"总耗时: {el:.1f}s   退出码: {rc}")
 
     if a.json:

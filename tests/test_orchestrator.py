@@ -3065,3 +3065,70 @@ def test_manifest_verify_status_skipped_when_stage_never_ran(tmp_path, monkeypat
     assert man["ok"] is False
     assert man["verify"]["status"] == "skipped", "没验过的事不能被记成「验失败」"
     assert man["verify"]["reason"] == "not-run"
+
+
+# ==========================================================================
+# 第 16 节：半自动协作（2026-11-04）—— 失败时给可执行的人工方案
+# ==========================================================================
+
+def test_failure_carries_manual_plan_for_encrypted_kirikiri(tmp_path, monkeypatch):
+    """★核心★ 加密 KiriKiri 失败必须带「做什么 + 放哪 + 之后跑什么」三条。
+
+    只报一句「提取失败」等于把用户扔在半路：他不知道该用哪个工具、
+    产物该放哪、放完怎么继续。这三件事缺一件，半自动模式就是空话。
+    """
+    ctx = _ctx(tmp_path, engine="KiriKiri")
+
+    def fake_extract(c):
+        return orch.Stage("extract", ok=False,
+                          detail="GARbro 列不出目录（可能是加密 xp3，也可能是 Console 假阴性）")
+
+    monkeypatch.setattr(orch, "stage_extract_kirikiri", fake_extract)
+
+    rc, res = orch.run(ctx)
+    man = orch._result_manifest(res)
+
+    assert rc == 1
+    plan = man["manual"]
+    assert plan["code"] == "kirikiri-encrypted"
+    assert plan["steps"], "没有步骤就不是方案"
+    assert plan["target"].endswith("raw")
+    assert "--reuse-raw" in plan["then"]
+    assert res["manual"] == plan, "CLI 与 manifest 必须消费同一份，别各拼一遍"
+
+
+def test_failure_without_a_usable_hint_does_not_invent_manual_block(tmp_path, monkeypatch):
+    """没有合适的人工方案时不许硬凑（编出来的指引比错误码更害人）。"""
+    ctx = _ctx(tmp_path, engine="Ren'Py")
+
+    def fake_extract(c):
+        return orch.Stage("extract", ok=False, detail="索引坏了")
+
+    monkeypatch.setattr(orch, "stage_extract_renpy", fake_extract)
+
+    rc, res = orch.run(ctx)
+    man = orch._result_manifest(res)
+
+    assert rc == 1
+    assert "manual" not in man
+
+
+def test_dry_run_predicts_manual_intervention_for_kirikiri(tmp_path, monkeypatch, capsys):
+    """★半自动协作★ --dry-run 就要说清楚「会不会需要人工」，别等跑完 40 分钟。"""
+    game = tmp_path / "game"
+    game.mkdir()
+    (game / "data.xp3").write_bytes(b"xp3" + b"\x00" * 64)
+    out = tmp_path / "out"
+
+    monkeypatch.setattr(orch.tb, "garbro_list", lambda p: (False, 0, "unknown format"))
+    monkeypatch.setattr(orch, "stage_case_lookup",
+                        lambda c, d: orch.Stage("case-lookup", ok=True, data={}))
+
+    rc = orch.main([str(game), "--out", str(out), "--dry-run"])
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    payload = json.loads(captured.out)          # stdout 必须仍是纯 JSON
+    assert payload["auto_feasible"] is False
+    assert payload["manual"]["code"] == "kirikiri-encrypted"
+    assert "需要人工介入" in captured.err        # 人看的区块走 stderr

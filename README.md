@@ -42,10 +42,38 @@ orchestrator.exe <游戏目录> --out <输出目录> [--overwrite] [--allow-gui]
 - `--reuse-raw DIR`：复用已有 raw 产物，只重跑后处理与验收
 - `--verify-jobs N`：验收并发度（默认 8，`1` = 完全串行；也可用环境变量 `GALUNPACK_VERIFY_WORKERS`）
 - `--strict`：额外要求「有索引地面真相」且「验收真的跑过」，否则判失败
-- `--dry-run` 只做引擎判定 + 案例库命中报告，不动文件
+- `--dry-run` 只做引擎判定 + 案例库命中报告，不动文件；KiriKiri 样本会多做一次
+  `garbro -l` 探针，提前告诉你「正式跑要不要人工」（几秒）
 - 产物：`raw/`（原始）+ `png/`（转码成品）+ `manifest.json`（raw/final/converted 三段计数
   + `verify.status` 单值结论：`ok`/`partial`/`failed`/`skipped`）
   + `_work/*.log`（各阶段日志，失败复盘看这里）
+
+## 半自动协作（解不动时会告诉你该做什么）
+
+工具优先全自动。但有些障碍「自动绕」比「人工做」贵得多——典型是加密 KiriKiri：
+UI 自动化约 40 分钟、依赖真实桌面/DPI/虚拟桌面，而人手把 xp3 拖进 KrkrExtract 只要 3 分钟。
+所以**失败时不只报错**，会给一份可执行的人工方案：要什么工具、几步、产物放哪、做完跑哪条命令。
+
+| 输出位置 | 形式 |
+|---|---|
+| CLI | 结束时打印「需要人工介入」区块，含编号步骤与可直接复制的命令 |
+| GUI | 失败摘要带方案摘要 + 前 3 步（完整步骤看日志） |
+| `manifest.json` | `manual` 块：`code` / `summary` / `why` / `needs` / `steps` / `target` / `then` / `alternatives`（机器可读） |
+| `--dry-run` | KiriKiri 提前探 `garbro -l`，列不出就当场说明要人工，不让你白等 |
+
+覆盖的失败场景：
+
+| code | 场景 | 人工方案 |
+|---|---|---|
+| `kirikiri-encrypted` | xp3 列不出（加密或 Console 假阴性） | 手动用 KrkrExtract 拖 xp3 → 产物拷进 `raw/` → `--reuse-raw` 续跑 |
+| `kirikiri-gui-failed` | `--allow-gui` 跑过但失败 | 同上（附「可能是安全软件拦了」的提示） |
+| `unity-no-assets` | AssetStudio 枚举 0 个资产 | AssetStudio.GUI 手动导出到 `raw/Image_Texture2D` 等目录 |
+| `engine-no-chain` | 引擎判出但没链路 | 用该引擎的专用工具解到 `raw/`，再 `--reuse-raw` |
+| `detect-failed` | 判不出引擎 | 确认游戏根目录，或 `--engine` 强制指定 |
+
+**不做半自动的**（没有「人工能帮上忙」的余量）：磁盘空间不足（换盘即可）、
+输出目录已有产物（已有两个出口）、验收失败（产物已在，人工改不了）。
+没有合适方案时**不硬凑** —— 编出来的指引比一个错误码更害人。
 
 ## 运行环境
 

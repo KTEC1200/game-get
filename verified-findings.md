@@ -1503,3 +1503,72 @@ skipped=8 → PASS**（开工前 626，新增 30 条：Unity 7 / overwrite 5 / m
 
 顺带清理：`_spike_pkg/dist/orchestrator.build1`（357M）、`orchestrator.prev-0.1.1`（357M）、
 `packaging/Output/orchestrator`（357M）三个可重建的旧构建产物已删除。
+
+## 22. 半自动协作（2026-11-04）—— 失败时给可执行的人工方案
+
+### 22.1 为什么改
+
+原来的失败形态是「error code + 一句 detail」。对加密 KiriKiri，detail 写的是
+「加 --allow-gui 重跑」——那等于**逼用户选最贵的路**：UI 自动化约 40 分钟、
+依赖真实桌面 / DPI / 虚拟桌面，还在别的窗口里点鼠标。而同一件事人工做只要 3 分钟
+（打开 KrkrExtract、拖 xp3、等 idle、拷产物）。
+
+「能自动的自动掉，不划算的交给用户」比「为全自动堆复杂度」可靠。所以失败时输出
+一份 `ManualPlan`：需要什么、点哪里、产物放哪、做完跑哪条命令。
+
+### 22.2 实现（`manual.py`，纯数据 + 纯函数）
+
+- `ManualPlan(code, summary, why, needs, steps, target, then, alternatives)`
+- `plan_for(error, engine, game_dir, out_dir, raw_dir, png_dir, prog, tools, stages)`
+  —— 按失败码映射；没有合适方案返回 `None`（不硬凑）
+- `render()` / `render_dict()` —— CLI 区块；`as_dict()` —— manifest 块
+- `dry_run_plan(...)` —— `--dry-run` 的提前预判（KiriKiri 探一次 `garbro -l`）
+
+接入点只有两个：`_finish_failure()`（所有非 0 退出都走它）与 `main()` 的 dry-run 分支。
+`_manual_tools()` 解析随包工具路径，**解析失败不连累失败路径**（给建议的过程本身不许炸）。
+
+### 22.3 实测输出（fixture `krkr_game`，真实 GARbro）
+
+```
+[dry-run] 探针：garbro -l bgimage.xp3（几秒）
+
+需要人工介入 · kirikiri-encrypted
+--------------------------------------------------------------------------
+预判：bgimage.xp3 用 GARbro 列不出目录，正式跑大概率要人工介入。
+原因：GARbro 的 Console 版没有「指定游戏标题/密钥」的参数；KrkrExtract 的自动化要模拟鼠标拖拽，慢且挑环境。
+
+需要准备：
+  · KrkrExtract.Lite.exe（随包路径：D:/K/galgame/krkr/krkr/KrkrExtract.Lite.exe）
+
+按顺序做：
+  1) 打开 D:/K/galgame/krkr/krkr/KrkrExtract.Lite.exe
+  2) 把游戏目录下的所有 .xp3 拖进 KrkrExtract 窗口（先拖 data.xp3），等界面状态回到 idle（有进度条就走完）
+  3) 解出来的东西在 KrkrExtract 目录下的 KrkrExtract_Output\data 与 ...\png
+  4) 把 data\ 里的全部内容拷到：D:/K/deepseek/_work_demo/out/raw
+  5) 如果 ...\png 里有东西，一并拷到：D:/K/deepseek/_work_demo/out/png
+
+产物放到：D:/K/deepseek/_work_demo/out/raw
+
+做完重跑这一条：
+  python orchestrator.py D:/K/deepseek/_fixtures/krkr_game --out D:/K/deepseek/_work_demo/out --reuse-raw D:/K/deepseek/_work_demo/out/raw
+
+备选方案（不推荐，但不用你动手）：
+  · python orchestrator.py ... --allow-gui --overwrite（全自动，约 40 分钟，期间别动鼠标、别切虚拟桌面）
+--------------------------------------------------------------------------
+```
+
+JSON 侧同时给 `"auto_feasible": false` 与 `manual` 块（8 字段），stdout 保持纯 JSON。
+
+### 22.4 覆盖边界（明确不做的）
+
+磁盘空间不足、raw 非空、verify 失败 —— 这三类失败**没有「人工能帮上忙」的余量**
+（换盘/选一个出口/产物已经在了），给指引只会增加噪声。`plan_for` 对它们返回 `None`，
+manifest 不写 `manual` 块。这条边界由 `test_unknown_failure_returns_none` 与
+`test_failure_without_a_usable_hint_does_not_invent_manual_block` 钉住。
+
+### 22.5 验收
+
+- 新增 `tests/test_manual.py` 12 条 + orchestrator 3 条 + GUI 1 条
+- 全量：**672 tests / 0 failures / 0 errors / 9 skipped → PASS**
+- 人工产物走**同一条链路**：`then` 里的 `--reuse-raw` 是既有命令，不新增分支 ——
+  人工解出来的文件照样进 postprocess/verify/manifest，不会变成「人工的就不验了」
