@@ -102,8 +102,16 @@ def _q(p: Path | str) -> str:
 def plan_for(error: str, *, engine: str | None, game_dir: Path, out_dir: Path,
              raw_dir: Path, png_dir: Path, prog: str = "orchestrator.exe",
              tools: Mapping[str, str] | None = None,
-             stages: list[dict] | None = None) -> ManualPlan | None:
-    """按失败码给一份人工方案；没有合适方案返回 None（不要硬凑）。"""
+             stages: list[dict] | None = None,
+             case_hint: str | None = None) -> ManualPlan | None:
+    """按失败码给一份人工方案；没有合适方案返回 None（不要硬凑）。
+
+    `case_hint`：案例库证据提示（P1-① A 案，2026-11-05 用户定）——
+    同签名案例曾用 krkr_auto_extract 全自动成功时，把「加 --allow-gui 可自动跑」
+    摆进 summary。放 summary 而不是 why：GUI 摘要只显示 summary 与前 3 步，
+    放别处 GUI 用户看不见。GUI 自动化**已经跑过但失败**的分支不套用
+    （那条的结论是「这条链路在你机器上没走通」，再推荐它就是误导）。
+    """
     tools = tools or {}
     resume = f"{prog} {_q(game_dir)} --out {_q(out_dir)} --reuse-raw {_q(raw_dir)}"
 
@@ -119,9 +127,12 @@ def plan_for(error: str, *, engine: str | None, game_dir: Path, out_dir: Path,
                if gui_failed else
                "GARbro 的 Console 版没有「指定游戏标题/密钥」的参数；"
                "KrkrExtract 的自动化要模拟鼠标拖拽，慢且挑环境。")
+        summary = "这个游戏的 xp3 自动解不开：GARbro 列不出目录（大概率加密/受保护）。"
+        if case_hint and not gui_failed:
+            summary = f"{summary} {case_hint}"
         return ManualPlan(
             code=code,
-            summary="这个游戏的 xp3 自动解不开：GARbro 列不出目录（大概率加密/受保护）。",
+            summary=summary,
             why=why,
             needs=[
                 f"KrkrExtract.Lite.exe（随包路径：{krkr}）",
@@ -208,7 +219,8 @@ def _stage_detail(stages: list[dict] | None, name: str) -> str:
 def dry_run_plan(engine: str | None, *, game_dir: Path, out_dir: Path,
                  raw_dir: Path, png_dir: Path, xp3_probe: tuple[bool, str] | None,
                  prog: str = "orchestrator.exe",
-                 tools: Mapping[str, str] | None = None) -> ManualPlan | None:
+                 tools: Mapping[str, str] | None = None,
+                 case_hint: str | None = None) -> ManualPlan | None:
     """`--dry-run` 的提前预判：**别让用户跑完 40 分钟才发现要人工**。
 
     `xp3_probe` = (能否列出, 最大 xp3 的名字)；None 表示没探（非 KiriKiri）。
@@ -216,12 +228,15 @@ def dry_run_plan(engine: str | None, *, game_dir: Path, out_dir: Path,
     if engine == "KiriKiri" and xp3_probe is not None and not xp3_probe[0]:
         plan = plan_for("extract-failed", engine=engine, game_dir=game_dir,
                         out_dir=out_dir, raw_dir=raw_dir, png_dir=png_dir,
-                        prog=prog, tools=tools, stages=[])
+                        prog=prog, tools=tools, stages=[], case_hint=case_hint)
         if plan is None:
             return None
+        summary = f"预判：{xp3_probe[1]} 用 GARbro 列不出目录，正式跑大概率要人工介入。"
+        if case_hint:
+            summary = f"{summary} {case_hint}"
         return ManualPlan(
             code=plan.code,
-            summary=f"预判：{xp3_probe[1]} 用 GARbro 列不出目录，正式跑大概率要人工介入。",
+            summary=summary,
             why=plan.why, needs=plan.needs, steps=plan.steps, target=plan.target,
             then=plan.then, alternatives=plan.alternatives,
         )

@@ -22,9 +22,9 @@
 > **2026-11-02 测试反馈**：随包 GARbro 的 .NET 插件加载修复仅适用于可信工具目录；Unity 样本的音频收集未对账通过，KiriKiri 索引兜底已用真实注入新索引和模拟窗口缺失提取 2562 条，自然窗口缺失尚未复现。案例索引已保留旧案例并加入 Toshiue。实测和限制见 `verified-findings.md`。
 
 > **🚀 接手顺序（新会话只做这三步）**
-> ① 读本文档「状态 / 下一步 / ⚠️ 五个坑」；**重点看 ③ 下一步里的两条 P1 缺口**
->    （案例库 extractor 未接线 / 失败时漏包记录为空）——2026-11-05 实测发现，等用户定方案。
-> ② 跑基线：`C:\Python314\python.exe tests\run_all.py`（**不要用裸 `python`**，它没有 pytest；2026-11-04 收尾：**tests=693 / 0 failures / 0 errors / 10 skipped**）
+> ① 读本文档「状态 / 下一步 / ⚠️ 五个坑」；~~两条 P1 缺口~~ **已修完（2026-11-05，v0.4.3，
+>    用户定 A 案）**，见文末「2026-11-05 v0.4.3」与 verified-findings §30；下一步是**速度优化**。
+> ② 跑基线：`C:\Python314\python.exe tests\run_all.py`（**不要用裸 `python`**，它没有 pytest；2026-11-05：**tests=702 / 0 failures / 0 errors / 9 skipped**，skip 均为环境条件）
 >    + `C:\Python314\python.exe tests\make_golden.py --check`（应零漂移）；
 > ③ 按「下一步」当前项开工。**改完先回写本文档 + `verified-findings.md`，再清临时产物，最后提交。**
 
@@ -290,7 +290,7 @@ dry-run 命中 rules+cases（case_path 在包内）、extract in-process **1585/
    Tk 冒烟）。纪律：**GUI 线程只碰 Tk、worker 只塞队列**；`ctx.log` 实例属性遮蔽做日志回流。
 5. ~~README + requirements~~ ✅：`README.md`（安装/用法/引擎表/外部工具配置）随安装包分发。
 
-### ③ 下一步（当前：**v0.4.2 已交付，两条新缺口等决策**）
+### ③ 下一步（当前：**v0.4.3 已交付，两条 P1 缺口已修（2026-11-05，用户定 A 案）；下一项 = 速度优化**）
 
 > ⭐ **实测反馈 #3（2026-11-04 23:37，v0.4.1/v0.4.2 期间）**：`教师催眠2` 全链跑了一次，
 > **失败路径全部正确**（这是重点，不是抱怨）：
@@ -347,7 +347,7 @@ dry-run 命中 rules+cases（case_path 在包内）、extract in-process **1585/
 未验证的只剩「KiriKiri 索引兜底的**自然**窗口缺失场景」（目前只有注入式模拟证据）。
 
 **用户测试时的入口**：源码态 `start-gui.bat`（走 `python.exe`，绕开未签名 exe 的写入拦截）
-或便携 zip `packaging/Output/GalgameUnpacker-0.4.2-portable.zip`（解压即用，不写注册表，
+或便携 zip `packaging/Output/GalgameUnpacker-0.4.3-portable.zip`（解压即用，不写注册表，
 但需要把解压目录加入杀软信任区）；CLI 用法见随包 `README.md`。
 **重跑注意**：输出目录已有产物时默认拒绝（`--overwrite` 清空重跑 / `--reuse-raw` 复用），
 这是 2026-11-04 新加的口径 —— 别把「跑失败」当成 bug，先看 detail 里给的出口。
@@ -871,15 +871,21 @@ tlg2png 必须换掉（GARbro 的 TLG 转换或自研）。详见 verified-findi
 | 级别 | 事项 | 状态 |
 |---|---|---|
 | P0 | 无 | 没有阻塞交付的问题 |
-| **P1** | **案例库 `decision.extractor` 没接线** | 2026-11-05 实锤；**等用户定 A/B（见下节）** |
-| **P1** | **extract 失败时 `source.archives` / `unsupported` 为空** | 纯记录补齐，与 AGENTS 第 697 行的承诺不符 |
-| P1 | **解包速度优化** | 用户 2026-11-04 指定；现在有实测了，可启动（下手点见下） |
-| P2 | `教师催眠2` 人工闭环 | 等用户走完（拖 xp3 → 拷 `raw/` → `--reuse-raw`） |
+| ~~P1~~ | ~~案例库 `decision.extractor` 没接线~~ | ✅ **2026-11-05 修完（v0.4.3，用户定 A 案）**，见文末与 verified-findings §30.2 |
+| ~~P1~~ | ~~extract 失败时 `source.archives` / `unsupported` 为空~~ | ✅ **2026-11-05 修完（v0.4.3，探针升级成逐包普查）**，见 verified-findings §30.1 |
+| **P1** | **解包速度优化** | 用户 2026-11-04 指定；实测反馈已回来，**当前下一项**（下手点见下） |
+| P2 | `教师催眠2` 人工闭环 | 等用户走完（拖 xp3 → 拷 `raw/` → `--reuse-raw`）；或直接对它重跑 v0.4.3 看新提示 |
 | P3 | KiriKiri **自然**窗口缺失验证 | 等样本/时机（现有只有注入式模拟证据） |
 | P4 | 加密 krkr 7 部 / E-mote / AI 兜底 | 用户划走 / 盘面 0 命中 / 最后才考虑 |
 | 舍弃 | 夕凪荘 BGM、安装器、GUI 弹窗确认 | 用户明确 / 建议划走 |
 
-### P1-①：案例库的 `extractor` 不参与决策（实锤）
+### P1-①：案例库的 `extractor` 不参与决策（实锤）—— ✅ 已修（2026-11-05，用户定 A 案，v0.4.3）
+
+> **修法落点**：`Ctx.case_match`（run() 阶段 1.5 回填，不重复查库）+ `_case_krkr_hint()`
+> 把证据拼进 extract 失败 detail 与 manual plan 的 **summary**（GUI 摘要只显示 summary，
+> 放 why 用户看不见）；dry-run 预判同样带上。GUI 已跑过但失败的分支不套用（再推荐就是误导）。
+> 案例的 `expected_total` 只进提示文本，`reconcile` 恒用编排器自己的索引（有测试钉住）。
+> 明细见 verified-findings §30.2。
 
 **现状**：`case_lookup` 把 `decision`（含 `extractor` / `expected_total` / `notes`）
 写进 `manifest.source.case_match` 供人看，**只此而已**。真正决定走哪条链路的是
@@ -903,7 +909,7 @@ extractor=krkr_auto_extract / 5724 成功`，但因为 engine 是 KiriKiri，仍
 即可，不要重新查一遍库。**别把案例的 `expected_total` 拿去当对账地面真相**——
 那是别的游戏的数字，混进来就是伪造对账（本项目最贵的错）。
 
-### P1-②：extract 失败时漏包记录是空的
+### P1-②：extract 失败时漏包记录是空的 —— ✅ 已修（2026-11-05，v0.4.3，比原方案更进一步）
 
 `教师催眠2` 的 manifest 里 `source.archives == []`、`source.unsupported == null`，
 而 `AGENTS.md` 第 697 行承诺「任一 xp3 列不出 → 判失败并进 `manifest.source.unsupported`」。
@@ -911,9 +917,12 @@ extractor=krkr_auto_extract / 5724 成功`，但因为 engine 是 KiriKiri，仍
 **原因**：那条只在 `--reuse-raw` 分支实现了。正常流程在 probe 失败时**直接 return**，
 连 `st.data["archives"]` 都没填。
 
-**修法**：probe 失败时把所有 xp3 的 `{name, entries: null, extracted: null, listable}`
-填进 `st.data["archives"]`，把列不出的放进 `st.data["unsupported"]`（复用分支已有的形状）。
-成本很低，收益是「一眼看出是全军覆没还是个别包」。
+**修法（实际实现）**：原方案是「probe 失败把其余包填成 null 记录」，实际直接把探针
+升级成**逐包普查**——`stage_extract_kirikiri` 逐包 `garbro -l` 全部列完再下结论，
+每个包都有实测记录，null 记录分不清的「整包加密 vs 个别包坏了」现在 manifest 自己能答。
+连带：混合情形先解掉列得出的包再点名失败；GUI 成功后撤掉 `unsupported`（都交付了）；
+GUI 触发条件改成「没有任何包列得出 + `--allow-gui`」。加密失败路径 ~2s → ~15s，
+明文游戏反而省一次重复列表。明细见 verified-findings §30.1。
 
 **速度优化的下手点（先量再改，别猜）**：Unity 音频收集是当前最贵的一段
 （Happiness Double Room 1441 条要 58 次 AssetStudio 调用、十几分钟），
@@ -1146,3 +1155,47 @@ manifest：`source.archives == []`、`source.unsupported == null`。
 
 修法：probe 失败时把 11 个包的 `{name, entries: null, extracted: null, listable}`
 填进 `archives`，列不出的进 `unsupported`。成本极低，收益是「一眼分清全军覆没还是个别包」。
+
+## 2026-11-05 v0.4.3：两条 P1 缺口修复（案例接线 + 失败记录）
+
+§「2026-11-05 实测复盘」的两条缺口当天收口。**用户对 P1-① 定了 A 案（保守）**：
+默认行为不变，只在失败提示里摆证据。证据明细与行为变化全表见 `verified-findings.md` §30，
+这里只留接手要用的结论。
+
+### 改了什么
+
+1. **P1-②（记录缺口）**：`stage_extract_kirikiri` 的探针升级成**逐包普查** ——
+   逐包 `garbro -l` 全部列完再下结论，每个包在 `source.archives` 都有实测记录
+   （`{name, entries, extracted, listable}`），列不出的进 `source.unsupported`。
+   加密失败路径 ~2s → ~15s（11 包量级），**明文游戏反而更快**（旧流程最大包列两遍）。
+2. **P1-①（A 案）**：`Ctx.case_match`（run() 阶段 1.5 回填）+ `_case_krkr_hint()` ——
+   命中「同签名案例曾用 krkr_auto_extract 全自动成功」时，证据进 extract 失败 detail
+   与 manual plan 的 **summary**（GUI 摘要只显示 summary 与前 3 步）；`--dry-run` 预判同带。
+   `extractor=garbro` 的候选不进提示；GUI 已跑过但失败的分支不套用。
+3. **连带语义**：部分包列得出（混合）→ 先静态解掉列得出的，再点名判失败；
+   GUI 自动化只在「没有任何包列得出 + `--allow-gui`」时触发；GUI 成功后撤掉
+   `unsupported`（都进交付了），`archives` 的 listable=false 保留解释「为什么走 GUI」。
+
+### 红线（别回退）
+
+- 案例的 `expected_total` **只能出现在提示文本里**，绝不进 `reconcile`
+  （`test_krkr_case_hint_never_touches_reconciliation` 钉住）。
+- 失败也必须有完整 `source.archives` / `unsupported`（AGENTS 第 697 行的承诺现在
+  在正常流程也成立了，不只 `--reuse-raw`）。
+
+### 基线与交付
+
+- `tests/run_all.py` → **tests=702 failures=0 errors=0 skipped=9 → PASS**（新增 9 条测试）
+- `make_golden.py --check` → 零漂移
+- `APP_VERSION` 0.4.2 → **0.4.3**；交付形态不变：便携 zip
+  （`packaging/Output/GalgameUnpacker-0.4.3-portable.zip`，`python build_exe.py` 重出）
+- 用户入口：源码态 `start-gui.bat` 或解压新 zip
+
+### 下一步（当前）
+
+1. **解包速度优化**（P1，用户 2026-11-04 指定，实测反馈已回）：Unity 音频收集最贵
+   （Happiness Double Room 1441 条 = 58 次 AssetStudio 调用、十几分钟）。下手点：
+   批量 50→100 丢失率对比、按名字分片并行后合并（注意同名冲突）、先确认瓶颈是
+   进程启动还是磁盘 IO。**先量再改，别猜。**
+2. P2：`教师催眠2` 人工闭环等用户走完；或对它重跑 v0.4.3 直接看新提示与完整记录。
+3. P3/P4 不变：KiriKiri 自然窗口缺失验证（等样本）、加密 krkr 7 部 / E-mote / AI 兜底（划走或最后）。

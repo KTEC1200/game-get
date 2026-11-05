@@ -150,6 +150,41 @@ def test_gui_failure_points_at_environment_not_just_retry():
     assert "安全软件" in plan.why and "远程桌面" in plan.why
 
 
+# ---------------------------------------------------------------------------
+# case_hint：案例库证据进 summary（P1-① A 案，2026-11-05）
+# ---------------------------------------------------------------------------
+
+_HINT = ("案例库命中同签名案例（「教师催眠1」（xp3-encrypted-krkrZ） 5724 条目）："
+         "都用 krkr_auto_extract 全自动成功过 —— 加 --allow-gui 可自动走这条已验证的链路。")
+
+
+def test_case_hint_lands_in_summary_not_why():
+    """放 summary 而不是 why：GUI 摘要只显示 summary 与前 3 步，放 why 用户看不见。"""
+    plan = _plan("extract-failed", case_hint=_HINT)
+    assert plan.code == manual.CODE_KIRIKIRI_ENCRYPTED
+    assert _HINT in plan.summary
+    assert "krkr_auto_extract" in plan.summary and "--allow-gui" in plan.summary
+    assert _HINT in plan.render(), "CLI 区块也要显示"
+
+
+def test_case_hint_not_applied_after_gui_already_failed():
+    """GUI 自动化跑过但失败 = 这条链路在本机没走通，再推荐它就是误导。"""
+    plan = _plan("extract-failed", case_hint=_HINT,
+                 stages=[{"stage": "extract",
+                          "detail": "GUI 链路失败或没有产出 KrkrExtract_Output (rc=1)"}])
+    assert plan.code == manual.CODE_KIRIKIRI_GUI_FAILED
+    assert _HINT not in plan.summary
+
+
+def test_dry_run_plan_carries_case_hint():
+    plan = manual.dry_run_plan(
+        "KiriKiri", game_dir=Path(r"D:\HY\G"), out_dir=Path(r"D:\HY\out"),
+        raw_dir=Path(r"D:\HY\out\raw"), png_dir=Path(r"D:\HY\out\png"),
+        xp3_probe=(False, "data.xp3"), tools={"krkr": "x"}, case_hint=_HINT)
+    assert plan is not None
+    assert "预判" in plan.summary and _HINT in plan.summary
+
+
 def test_tyrano_no_chain_names_the_in_repo_asar_tool():
     """无链路引擎不能只说「用专用工具」——本仓库就有 asar_tool.py，直接点名。"""
     plan = _plan("chain-not-implemented", engine="Tyrano/Electron")

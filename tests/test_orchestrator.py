@@ -2315,9 +2315,72 @@ def test_kirikiri_unlistable_archive_fails_instead_of_silent_skip(tmp_path, monk
     assert st.ok is False
     assert "patch.xp3" in st.detail
     assert [u["archive"] for u in st.data["unsupported"]] == ["patch.xp3"]
+    # 列得出的包要真的解掉，记录里 expected/got 都要有数（侦察结果不浪费）
+    good_rec = next(r for r in st.data["archives"] if r["archive"] == "data.xp3")
+    assert good_rec["expected"] == 2 and good_rec["got"] == 2
+    assert good_rec["listable"] is True
     # 「有意排除」必须进 manifest.source，不能只躺在日志里
     man = orch.build_manifest(ctx, [st], "KiriKiri")
     assert man["source"]["unsupported"][0]["archive"] == "patch.xp3"
+
+
+def test_kirikiri_total_probe_failure_fills_archive_records(tmp_path, monkeypatch):
+    """★P1-② 回归（2026-11-05 教师催眠2）★ 全部包都列不出时，manifest 必须留下完整记录。
+
+    旧实现只探最大的一个包就 return：`source.archives == []`、`unsupported == null`，
+    读 manifest 的人分不清「整包加密」还是「个别包坏了」。现在逐包列完再下结论，
+    每个包都要有 {name, entries: null, extracted: null, listable: false} 的记录。
+    """
+    ctx = _ctx(tmp_path)
+    a = _write(ctx.game_dir / "data.xp3", b"XP3")
+    b = _write(ctx.game_dir / "media.xp3", b"XP3")
+    monkeypatch.setattr(orch, "_kirikiri_xp3", lambda _d: [a, b])
+    monkeypatch.setattr(orch.tb, "garbro_list",
+                        lambda _p, **_kw: (False, 0, "unknown format"))
+
+    st = orch.stage_extract_kirikiri(ctx)
+
+    assert st.ok is False
+    assert "全部 2 个包" in st.detail
+    recs = {r["archive"]: r for r in st.data["archives"]}
+    assert set(recs) == {"data.xp3", "media.xp3"}
+    for r in recs.values():
+        assert r["expected"] is None and r["got"] is None and r["listable"] is False
+    assert [u["archive"] for u in st.data["unsupported"]] == ["data.xp3", "media.xp3"]
+    # 落进 manifest.source 才算数（读 manifest 的人不看 stages）
+    man = orch.build_manifest(ctx, [st], "KiriKiri")
+    assert len(man["source"]["archives"]) == 2
+    assert all(a["entries"] is None and a["extracted"] is None
+               for a in man["source"]["archives"])
+    assert len(man["source"]["unsupported"]) == 2
+
+
+def test_kirikiri_gui_success_drops_unsupported(tmp_path, monkeypatch):
+    """★P1-② 一致性★ GUI 链路成功 = 所有包都进交付了，`unsupported` 不再成立。
+
+    `archives` 里 listable=False 是对 GARbro 的事实，留着解释「为什么走了 GUI 链路」；
+    但 unsupported 的语义是「没进交付」，成功后留着它就是自相矛盾的记录。
+    """
+    ctx = _ctx(tmp_path, allow_gui=True)
+    a = _write(ctx.game_dir / "data.xp3")
+    b = _write(ctx.game_dir / "media.xp3")
+    monkeypatch.setattr(orch, "_kirikiri_xp3", lambda _d: [a, b])
+    monkeypatch.setattr(orch.tb, "garbro_list", lambda _p, **_k: (False, 0, "unknown format"))
+
+    def fake_sibling(mod, argv):
+        kout = Path(argv[argv.index("--out") + 1]) / "KrkrExtract_Output"
+        (kout / "data").mkdir(parents=True, exist_ok=True)
+        _write(kout / "data" / "a.ogg")
+        return 0, ""
+
+    monkeypatch.setattr(orch, "_run_sibling", fake_sibling)
+
+    st = orch.stage_extract_kirikiri(ctx)
+
+    assert st.ok is True, st.detail
+    assert st.data["mode"] == "gui"
+    assert "unsupported" not in st.data, "包都交付了，unsupported 却还挂着"
+    assert all(r["listable"] is False for r in st.data["archives"])
 
 
 def test_move_dir_clean_never_nests_when_target_exists(tmp_path):
@@ -3135,6 +3198,119 @@ def test_dry_run_predicts_manual_intervention_for_kirikiri(tmp_path, monkeypatch
     assert payload["auto_feasible"] is False
     assert payload["manual"]["code"] == "kirikiri-encrypted"
     assert "需要人工介入" in captured.err        # 人看的区块走 stderr
+
+
+# --------------------------------------------------------------------------
+# P1-①（2026-11-05 用户定 A 案）：案例库 extractor 接进失败提示
+# --------------------------------------------------------------------------
+
+_FAKE_CASE = {
+    "signature": "6519ddb81f58", "index_present": True,
+    "candidates": [
+        {"case_id": "69c521e192f0", "sample": "教师催眠1",
+         "discriminator": "xp3-encrypted-krkrZ",
+         "decision": {"extractor": "krkr_auto_extract", "expected_total": 5724}},
+        {"case_id": "3f7607cd8585", "sample": "兼职人妻",
+         "discriminator": "xp3-plain",
+         "decision": {"extractor": "garbro", "expected_total": 2562}},
+    ],
+}
+
+
+def test_kirikiri_failure_hint_cites_verified_case_extractor(tmp_path, monkeypatch):
+    """★P1-① A 案★ 命中「同签名案例用 krkr_auto_extract 成功」时，失败提示必须摆出证据。
+
+    教师催眠2 实测：案例库明明记着同族样本全自动成功，代码却仍走 GARbro 全灭，
+    让用户白等一轮再手动拖包。A 案 = 默认行为不变，但把「已验证的解法就在手边」
+    说进 summary —— GUI 摘要只显示 summary 与前 3 步，放别处用户看不见。
+    """
+    ctx = _ctx(tmp_path, engine="KiriKiri")
+    monkeypatch.setattr(orch, "stage_case_lookup",
+                        lambda c, d: orch.Stage("case-lookup", ok=True, data=_FAKE_CASE))
+
+    def fake_extract(c):
+        return orch.Stage("extract", ok=False,
+                          detail="GARbro 列不出目录（可能是加密 xp3）")
+
+    monkeypatch.setattr(orch, "stage_extract_kirikiri", fake_extract)
+
+    rc, res = orch.run(ctx)
+    man = orch._result_manifest(res)
+
+    assert rc == 1
+    assert ctx.case_match == _FAKE_CASE, "run() 必须把查表结果挂到 ctx，extract 阶段要用"
+    plan = man["manual"]
+    assert plan["code"] == "kirikiri-encrypted"
+    assert "krkr_auto_extract" in plan["summary"]
+    assert "教师催眠1" in plan["summary"] and "5724" in plan["summary"]
+    assert "--allow-gui" in plan["summary"]
+    # extractor=garbro 的案例（xp3-plain）不进提示 —— 静态失败时引用它自相矛盾
+    assert "兼职人妻" not in plan["summary"]
+    assert res["manual"] == plan
+    log = (ctx.work_dir / "manual.log").read_text(encoding="utf-8")
+    assert "krkr_auto_extract" in log
+
+
+def test_kirikiri_failure_hint_absent_without_matching_extractor(tmp_path, monkeypatch):
+    """案例里没有 krkr_auto_extract 成功记录时，summary 保持原样（不许硬凑证据）。"""
+    ctx = _ctx(tmp_path, engine="KiriKiri")
+    plain_only = {"signature": "s", "index_present": True,
+                  "candidates": [{"case_id": "x", "sample": "兼职人妻",
+                                  "decision": {"extractor": "garbro",
+                                               "expected_total": 2562}}]}
+    monkeypatch.setattr(orch, "stage_case_lookup",
+                        lambda c, d: orch.Stage("case-lookup", ok=True, data=plain_only))
+    monkeypatch.setattr(orch, "stage_extract_kirikiri",
+                        lambda c: orch.Stage("extract", ok=False, detail="列不出"))
+
+    rc, res = orch.run(ctx)
+    man = orch._result_manifest(res)
+
+    assert rc == 1
+    plan = man["manual"]
+    assert plan["code"] == "kirikiri-encrypted"
+    assert "krkr_auto_extract" not in plan["summary"]
+
+
+def test_dry_run_hint_cites_verified_case_extractor(tmp_path, monkeypatch, capsys):
+    """--dry-run 的预判方案也要带上案例证据：这是用户决定加不加 --allow-gui 的时机。"""
+    game = tmp_path / "game"
+    game.mkdir()
+    (game / "data.xp3").write_bytes(b"xp3" + b"\x00" * 64)
+    out = tmp_path / "out"
+
+    monkeypatch.setattr(orch.tb, "garbro_list", lambda p: (False, 0, "unknown format"))
+    monkeypatch.setattr(orch, "stage_case_lookup",
+                        lambda c, d: orch.Stage("case-lookup", ok=True, data=_FAKE_CASE))
+
+    rc = orch.main([str(game), "--out", str(out), "--dry-run"])
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    payload = json.loads(captured.out)
+    assert payload["auto_feasible"] is False
+    assert "krkr_auto_extract" in payload["manual"]["summary"]
+    assert "5724" in payload["manual"]["summary"]
+
+
+def test_krkr_case_hint_never_touches_reconciliation(tmp_path, monkeypatch):
+    """★诚实边界★ 案例的 expected_total 只进提示，绝不参与本轮对账。
+
+    把「教师催眠1 的 5724」混进本轮对账 = 伪造地面真相（本项目最贵的错）。
+    """
+    ctx = _ctx(tmp_path, engine="KiriKiri", allow_gui=False)
+    ctx.case_match = _FAKE_CASE
+    a = _write(ctx.game_dir / "data.xp3")
+    monkeypatch.setattr(orch, "_kirikiri_xp3", lambda _d: [a])
+    monkeypatch.setattr(orch.tb, "garbro_list", lambda _p, **_k: (False, 0, "unknown format"))
+
+    st = orch.stage_extract_kirikiri(ctx)
+    man = orch.build_manifest(ctx, [st], "KiriKiri")
+
+    assert "案例库命中同签名案例" in st.detail
+    assert "5724" in st.detail
+    assert man["reconcile"]["expected"] is None, "案例的数字不许溜进对账"
+    assert man["reconcile"]["method"] == "no-index-available"
 
 
 def test_ctx_log_degrades_when_work_dir_is_unusable(tmp_path, capsys):

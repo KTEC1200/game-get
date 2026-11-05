@@ -1950,3 +1950,67 @@ manifest：`source.archives == []`、`source.unsupported == null`。
 **收益**：这次 11/11 全灭看不出来，但如果是「3 个加密 + 8 个正常」，
 用户需要知道范围才能决定是否人工补那 3 个。记录缺失会让「部分失败」和「全军覆没」
 长得一模一样。
+
+## 30. 两个记录缺口修复（2026-11-05，v0.4.3）
+
+§29 的两条缺口当天修完。用户对缺口一定了 **A 案（保守）**：默认行为不变，
+只在失败提示里摆证据，让用户自己决定加不加 `--allow-gui`。
+
+### 30.1 缺口二的修法：探针升级成普查（比原方案更进一步）
+
+§29.4 原修法是「probe 失败时把其余包填成 null 记录」。实际实现走得更远一步：
+**`stage_extract_kirikiri` 不再只探最大的一个包，而是逐包 `garbro -l` 全部列完再下结论**。
+
+- 理由：null 记录仍分不清「整包加密」和「个别包坏了」（只有探针是实测，
+  其余是「没测」）；普查让 manifest 自己携带 §29.2 那张表的机器版 ——
+  11/11 `listable=false` 一眼可见，这正是该缺口「一眼看出全军覆没还是个别包」的本意。
+- 成本：加密失败路径从 ~2s 变 ~15s（教师催眠2 实测量级）。正常明文游戏**反而变快** ——
+  旧流程最大包被列两遍（probe 一遍 + 循环一遍），新流程每包恰好一遍。
+- **记录形状**（复用分支同款）：每个包 `{archive, expected, got, listable}`；
+  列不出的 `expected/got = None`。`unsupported` = 全部列不出的包
+  （reason「GARbro 列不出条目（地面真相缺失）」），经 `build_manifest` 落进
+  `source.archives` / `source.unsupported`。
+- **混合情形的新语义**：部分包列得出 → 先静态解掉列得出的（侦察结果直接复用，
+  不重复 `garbro -l`），解不了的点名判失败 —— 与静态分支既有纪律一致
+  （「已导出的包留在 raw，但本轮判失败」）。
+- **GUI 成功时撤掉 `unsupported`**：GUI 链路成功 = 所有包都进交付，
+  `unsupported`（没进交付）不再成立，`st.data.pop("unsupported")`；
+  `archives` 的 `listable=false` 是对 GARbro 的事实，保留以解释「为什么走了 GUI」。
+- GUI 触发条件从「探针失败」变成「**没有任何包列得出** + `--allow-gui`」：
+  混合情形不上 40 分钟的 GUI 自动化，先把能解的解完。
+
+### 30.2 缺口一的修法（A 案）：`_case_krkr_hint`
+
+- `Ctx` 新增 `case_match` 字段：`run()` 在阶段 1.5 后把 `stage_case_lookup` 的
+  data 挂上去（**不重新查库**）。
+- `_case_krkr_hint(case_match)`：筛 `decision.extractor == "krkr_auto_extract"`
+  的候选，拼成一句证据（含样本名、discriminator、expected_total）；
+  `extractor=garbro`（xp3-plain）的候选**不进提示** —— 静态失败时引用
+  「garbro 能解」的案例自相矛盾。
+- 提示落到三处：① extract 阶段 `detail`（失败时随 stages 落 manifest）；
+  ② `manual.plan_for(..., case_hint=...)` 的 **summary**（放 summary 不放 why：
+  GUI 摘要只显示 summary 与前 3 步，放 why GUI 用户看不见）；
+  ③ `dry_run_plan` 的预判 summary —— dry-run 正是用户决定加不加 `--allow-gui` 的时机。
+- **GUI 已跑过但失败（`kirikiri-gui-failed`）不套用提示**：那条的结论是
+  「这条链路在本机没走通」，再推荐它就是误导。
+- **诚实红线（有测试钉住）**：案例的 `expected_total` 只作为「那条链路验证过」的
+  证据出现在提示文本里，`reconcile.expected` 恒为编排器自己的归档索引
+  （`test_krkr_case_hint_never_touches_reconciliation`）。
+
+### 30.3 行为变化清单（升级到 v0.4.3 后用户可感知的）
+
+| 场景 | v0.4.2 | v0.4.3 |
+|---|---|---|
+| 加密 krkr 全灭 | 探 1 个包（~2s），`source.archives=[]` | 逐包普查（~15s），11 条记录 + unsupported 齐全，提示带案例证据 |
+| 加密 krkr + 部分包列得出 | 探针失败且最大包加密 → 直接失败，其余包不动 | 先解掉列得出的包，再点名判失败 |
+| `--allow-gui` + 部分包列得出 | 直接上 GUI 自动化 | 先静态解能解的；只有全军覆没才上 GUI |
+| GUI 成功 | — | `unsupported` 撤掉（都交付了），`archives` 保留 listable 事实 |
+
+### 30.4 测试
+
+新增 9 条：`test_orchestrator.py` 6（全灭记录 / GUI 成功撤 unsupported / 提示进 summary /
+无匹配不硬凑 / dry-run 带提示 / 案例数字不进对账）+ `test_manual.py` 3（hint 进 summary
+与 render / gui-failed 不套用 / dry-run 带提示）；另把 A4 旧测试（混合情形）扩展 2 条断言
+（列得出的包要真的解掉、记录里 expected/got 有数）。
+基线：**tests=702 failures=0 errors=0 skipped=9**（skip 均为环境条件：Tk 显示、
+样本在盘与否）；`make_golden.py --check` 零漂移。

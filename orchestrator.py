@@ -189,6 +189,9 @@ class Ctx:
     #: 默认 False = 遇到残留**直接失败**。理由：残留混进本轮时产物数照样能自洽，
     #: 只是数字全错（上一轮 3500 + 本轮 3500 会报成 7000 且 diff=0）——这是最难查的假绿。
     overwrite: bool = False
+    #: 案例库查表结果（`stage_case_lookup` 的 data）。run() 在阶段 1.5 后回填，
+    #: extract 阶段的失败提示引用它（P1-① A 案）—— 信息已经在手，别再查一遍库。
+    case_match: dict | None = None
 
     @property
     def raw_dir(self) -> Path:
@@ -582,6 +585,36 @@ def _kirikiri_xp3(game_dir: Path) -> list[Path]:
     return sorted(p for p in game_dir.rglob("*.xp3") if p.is_file())
 
 
+def _case_krkr_hint(case_match: dict | None) -> str:
+    """案例库命中「同签名案例曾用 krkr_auto_extract 全自动成功」时，拼一句证据提示。
+
+    P1-①（2026-11-05 用户定 **A 案**）：案例库的 `decision.extractor` 此前是死数据 ——
+    教师催眠2 命中「教师催眠1 用 krkr_auto_extract 5724/5724 成功」却仍走 GARbro 全灭。
+    A 案 = 默认行为不变，只在失败提示里摆证据，让用户自己决定加 `--allow-gui`。
+
+    诚实边界：案例的 `expected_total` 是**别的游戏**的数字，只能作为「那条链路验证过」
+    的证据引用，**绝不参与本轮对账**（对账地面真相始终是编排器自己的归档索引）。
+    `extractor=garbro`（xp3-plain）这类候选不产生提示 —— 静态失败时引用「garbro 能解」
+    的案例只会自相矛盾。
+    """
+    if not case_match:
+        return ""
+    hits: list[str] = []
+    for c in case_match.get("candidates") or []:
+        dec = c.get("decision") or {}
+        if dec.get("extractor") != "krkr_auto_extract":
+            continue
+        name = c.get("sample") or c.get("case_id") or "未知样本"
+        disc = c.get("discriminator")
+        total = dec.get("expected_total")
+        hits.append(f"「{name}」" + (f"（{disc}）" if disc else "") +
+                    (f" {total} 条目" if isinstance(total, int) and total else ""))
+    if not hits:
+        return ""
+    return (f"案例库命中同签名案例（{'、'.join(hits)}）：都用 krkr_auto_extract "
+            f"全自动成功过 —— 加 --allow-gui 可自动走这条已验证的链路。")
+
+
 def stage_extract_kirikiri(ctx: Ctx) -> Stage:
     """KiriKiri 提取。
 
@@ -642,17 +675,45 @@ def stage_extract_kirikiri(ctx: Ctx) -> Stage:
         st.seconds = time.time() - t0
         return st
 
-    # 用最大的 xp3 做探针（最大的那个最可能是 data.xp3）
-    probe = max(xp3s, key=lambda p: p.stat().st_size)
-    ok_probe, n_probe, out_probe = tb.garbro_list(probe)
-    ctx.log("extract", f"probe {probe.name}: ok={ok_probe} lines={n_probe}\n{out_probe[:2000]}")
-    st.data = {"probe": {"archive": probe.name, "listable": ok_probe, "lines": n_probe}}
+    # 侦察：**逐包** garbro -l，全部列完再下结论（2026-11-05 教师催眠2 的缺口二）。
+    # 旧实现只探最大的一个包：探针失败时其余包是黑箱，manifest 分不清
+    # 「整包加密」还是「个别包坏了」，用户只能再手工一个个试。列不出也很快，
+    # 失败路径多花十几秒，换一份「每个包什么状态」的完整记录，值得。
+    per_archive: list[dict] = []
+    unlistable: list[str] = []
+    listable: list[tuple[Path, int, dict]] = []
+    for xp3 in xp3s:
+        ok, entries, out = tb.garbro_list(xp3)
+        if not ok:
+            # 列不出条目 = 这个包的地面真相缺失。绝不能「跳过它、只拿其余包对账」：
+            # 那样 expected 少算了却仍然 0 差，等于把漏导洗成通过（2026-11-03 审计 A4）。
+            unlistable.append(xp3.name)
+            ctx.log("extract", f"$ garbro -l {xp3.name}\n{out[:2000]}")
+            rec = {"archive": xp3.name, "expected": None, "got": None,
+                   "listable": False}
+            per_archive.append(rec)
+            continue
+        rec = {"archive": xp3.name, "expected": entries, "got": None,
+               "listable": True}
+        per_archive.append(rec)
+        listable.append((xp3, entries, rec))
+    st.data = {"archives": per_archive}
+    if unlistable:
+        st.data["unsupported"] = [{"archive": n,
+                                   "reason": "GARbro 列不出条目（地面真相缺失）"}
+                                  for n in unlistable]
 
-    if not ok_probe:
-        # 静态读不出 → 可能加密。坑 1：Console 假阴性存在，所以只说"可能"
+    if not listable:
+        # 全军覆没：逐个都列不出 → 大概率整包加密。坑 1：Console 假阴性存在，
+        # 所以只说"可能"。（部分包列得出的混合情形不上 GUI：先把能解的解掉，
+        # 解不了的点名判失败 —— 与静态分支既有语义一致，见下方 unlistable 出口。）
         if not ctx.allow_gui:
-            st.detail = ("GARbro 列不出目录（可能是加密 xp3，也可能是 Console 假阴性）。"
-                         "加密链路需 GUI 自动化（约 40 分钟），确认后加 --allow-gui 重跑。")
+            hint = _case_krkr_hint(ctx.case_match)
+            st.detail = (f"GARbro 列不出全部 {len(xp3s)} 个包的目录"
+                         f"（可能是整包加密，也可能是 Console 假阴性）。"
+                         f"加密链路需 GUI 自动化（约 40 分钟），确认后加 --allow-gui 重跑。")
+            if hint:
+                st.detail += f"\n{hint}"
             st.seconds = time.time() - t0
             return st
         rc, out = _run_sibling(krkr_auto_extract,
@@ -676,40 +737,30 @@ def stage_extract_kirikiri(ctx: Ctx) -> Stage:
             st.seconds = time.time() - t0
             return st
         st.ok = True
+        # GUI 成功 = 所有包都进交付了，`unsupported`（=没进交付）不再成立，撤掉；
+        # `archives` 的 listable=False 是对 GARbro 的事实，留着解释「为什么走了 GUI 链路」。
+        st.data.pop("unsupported", None)
         st.data.update({"mode": "gui", "raw_total": _count(ctx.raw_dir).total})
         st.detail = f"GUI 链路完成，raw {st.data['raw_total']} 个文件"
         st.seconds = time.time() - t0
         return st
 
-    # 静态可解：逐包 garbro -x，产出落到 raw/<stem>/
-    per_archive = []
+    # 静态段：能解的逐包 garbro -x（地面真相用侦察结果，不再重复 garbro -l）
     expected_total = 0
-    unlistable: list[str] = []
-    for xp3 in xp3s:
-        ok, entries, out = tb.garbro_list(xp3)
-        if not ok:
-            # 列不出条目 = 这个包的地面真相缺失。绝不能「跳过它、只拿其余包对账」：
-            # 那样 expected 少算了却仍然 0 差，等于把漏导洗成通过（2026-11-03 审计 A4）。
-            unlistable.append(xp3.name)
-            ctx.log("extract", f"$ garbro -l {xp3.name}\n{out[:2000]}")
-            per_archive.append({"archive": xp3.name, "expected": None, "got": 0,
-                                "listable": False})
-            continue
+    for xp3, entries, rec in listable:
         expected_total += entries
         dest = ctx.raw_dir / xp3.stem
         res = tb.garbro_extract(xp3, dest)
         ctx.log("extract", f"$ garbro -x {xp3.name}\n{res.summary()}\n{res.stdout[-2000:]}")
         got = _count(dest).total
-        per_archive.append({"archive": xp3.name, "expected": entries, "got": got,
-                            "rc": res.returncode, "ok": res.ok})
+        rec.update({"got": got, "rc": res.returncode, "ok": res.ok})
         if not res.ok:
             st.detail = f"{xp3.name}: GARbro 提取失败 ({res.reason})"
-            st.data["archives"] = per_archive
             st.seconds = time.time() - t0
             return st
 
     actual_total = _count(ctx.raw_dir).total
-    st.data.update({"mode": "static", "archives": per_archive,
+    st.data.update({"mode": "static",
                     "expected_total": expected_total, "actual_total": actual_total,
                     "reconcile_ok": actual_total == expected_total})
     if unlistable:
@@ -2341,7 +2392,8 @@ def _finish_failure(ctx: Ctx, stages: list[Stage], engine: str | None,
     plan = manual.plan_for(error, engine=engine, game_dir=ctx.game_dir,
                            out_dir=ctx.out_dir, raw_dir=ctx.raw_dir,
                            png_dir=ctx.png_dir, prog=_prog_name(),
-                           tools=_manual_tools(), stages=man["stages"])
+                           tools=_manual_tools(), stages=man["stages"],
+                           case_hint=_case_krkr_hint(ctx.case_match))
     if plan is not None:
         man["manual"] = plan.as_dict()
         # 终端区块 GUI 用户看不到（worker 的 stdout 不进日志面板），
@@ -2405,7 +2457,10 @@ def run(ctx: Ctx) -> tuple[int, dict]:
     # 1.5 案例库查表（只读报告层）
     # 放在「引擎是否实现链路」检查**之前**：未接链路的引擎（如 Tyrano-Electron）
     # 也能看到历史案例——SPITE 的 ChaCha20 路径与坑就记在案例里，退出码 2 也值得报出来。
-    stages.append(stage_case_lookup(ctx, st.data))
+    st_case = stage_case_lookup(ctx, st.data)
+    stages.append(st_case)
+    # 结果挂到 ctx：extract 阶段的失败提示要引用案例证据（P1-① A 案），别再查一遍库。
+    ctx.case_match = st_case.data
 
     # 引擎是否已实现链路
     ctx.engine = engine          # 后处理按引擎分派（CatSystem2 走魔数那条），必须回填
@@ -2628,7 +2683,8 @@ def main(argv: list[str] | None = None) -> int:
         plan = None
         if st.ok:
             # dry-run 也把案例库查表带上：这正是「先看有没有现成解法」的场合
-            payload["case_lookup"] = stage_case_lookup(ctx, st.data).as_dict()
+            st_case = stage_case_lookup(ctx, st.data)
+            payload["case_lookup"] = st_case.as_dict()
             # 半自动协作的「提前告知」（2026-11-04）：KiriKiri 先探一次 GARbro 能不能
             # 列目录。列不出 → 正式跑大概率要人工介入，别让用户等 40 分钟才知道。
             # 代价是 dry-run 对 KiriKiri 样本多几秒（一次 garbro -l），值得。
@@ -2645,7 +2701,8 @@ def main(argv: list[str] | None = None) -> int:
             plan = manual.dry_run_plan(engine, game_dir=ctx.game_dir, out_dir=ctx.out_dir,
                                        raw_dir=ctx.raw_dir, png_dir=ctx.png_dir,
                                        xp3_probe=probe, prog=_prog_name(),
-                                       tools=_manual_tools())
+                                       tools=_manual_tools(),
+                                       case_hint=_case_krkr_hint(st_case.data))
             if plan is not None:
                 payload["manual"] = plan.as_dict()
         print(json.dumps(payload, ensure_ascii=False, indent=2))
