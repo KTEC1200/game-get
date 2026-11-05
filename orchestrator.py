@@ -1576,6 +1576,16 @@ def stage_extract_unity(ctx: Ctx) -> Stage:
                      f"（差 {shortfall}，但 Texture2D 缺口只能解释 {texture2d_gap}）")
     else:
         st.ok = True
+        if texture2d_gap > 0:
+            # 向 manifest 级对账声明短缺的出处（2026-11-06 实测：JSON 枚举随机多报 1 个
+            # Texture2D，阶段判「对账 0 差」而 manifest 的裸 diff 判 reconcile-diff，
+            # 同一份输出自相矛盾）。红线不变：缺口**不削减** expected（A3），只是解释差额，
+            # 且数额必须与 diff 恰好相等才被认（build_manifest 里核对）。
+            st.data["explained_shortfall"] = {
+                "amount": texture2d_gap,
+                "reason": (f"Texture2D 引用型资产 Convert 不导出"
+                           f"（{texture2d_actual}/{texture2d_exp}，缺口在阈值内）"),
+            }
         gap_note = (f"，Texture2D 已知缺口 {texture2d_gap} 个"
                     f"（{texture2d_actual}/{texture2d_exp}）" if texture2d_gap > 0 else "")
         st.detail = (f"JSON 枚举 {expected_total} 个资产，Convert 导出 {actual_total} 个文件"
@@ -2260,6 +2270,12 @@ def build_manifest(ctx: Ctx, stages: list[Stage], engine: str | None) -> dict:
     counts_block = manifest.counts(ctx.raw_dir, ctx.png_dir, CONVERTIBLE, ctx.consumed)
     rec = manifest.reconcile(extract_data.get("expected_total"),
                              counts_block["raw"]["total"])
+    explained = extract_data.get("explained_shortfall") or {}
+    if explained.get("amount") and rec.get("diff") == -explained["amount"]:
+        # 裸 diff 会把「阶段级已验证的 Texture2D 引用型缺口」打成 reconcile-diff（与
+        # 阶段结论自相矛盾）。expected 保持原值不动（A3 红线），只是把出处记进去，
+        # run() 的 rc 判定据此放行 —— 数额对不上就不认，照旧判失败。
+        rec["explained_by"] = dict(explained)
 
     # 「有意排除、没进交付」的东西必须出现在 source 里，不能只躺在某个 stage 的 data 里：
     # 读 manifest 的下游（人也好程序也好）看的是 `source.archives`，不会去翻 stages。
@@ -2565,7 +2581,9 @@ def run(ctx: Ctx) -> tuple[int, dict]:
     # （否则就是自我指涉：写入结果要先知道写入结果），但它自身是自洽的。
     man = build_manifest(ctx, stages, engine)
     diff = man["reconcile"]["diff"]
-    rc = 0 if (diff in (0, None)) else 1
+    # explained_by：阶段级对账显式担保、且数额与 diff 恰好相等的短缺（Unity 的
+    # Texture2D 引用型缺口）。这不是「没验出来」，是「验出来且能解释」，不算失败。
+    rc = 0 if (diff in (0, None) or man["reconcile"].get("explained_by")) else 1
     man["ok"] = rc == 0
     if rc != 0:
         man["error"] = "reconcile-diff"
@@ -2777,8 +2795,13 @@ def main(argv: list[str] | None = None) -> int:
         extract_done = bool(ext_stage) and bool(ext_stage.get("ok") or ext_stage.get("skipped"))
         if extract_done or man.get("source", {}).get("archives"):
             r = man.get("reconcile", {})
+            # explained_by 也要亮出来：diff=-1 + 退出码 0 并排出现时，不解释就是
+            # 又一次「同一份输出自相矛盾」（2026-11-06 Happiness 实测的教训）。
+            note = ""
+            if r.get("explained_by"):
+                note = f" —— {r['explained_by'].get('reason', '阶段级已解释')}"
             print(f"对账   : 期望 {r.get('expected')} vs 落盘 {r.get('actual')} "
-                  f"(diff={r.get('diff')})")
+                  f"(diff={r.get('diff')}{note})")
         elif ext_stage is None:
             print("对账   : 未进入提取阶段（本轮没有产物可对账）")
         else:

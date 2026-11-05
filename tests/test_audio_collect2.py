@@ -1,6 +1,7 @@
 import json
 import re
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -221,3 +222,82 @@ def test_main_accepts_names_file(tmp_path, monkeypatch):
     assert collector.main([str(tmp_path), str(dest), '--names-file', str(names_file)]) == 0
     assert sorted(p.name for p in dest.glob('*.wav')) == ['x.0.wav', 'y.0.wav']
     assert len(calls) == 1, '给了名字清单就不该再去 JSON 枚举'
+
+
+# ------------------------------------------------ 并行补齐（2026-11-06 提速，§31）
+
+def test_resolve_workers_param_env_default():
+    """显式参数 > 环境变量 > 默认；非法值退默认不许抛（旋钮不能变成失败路径）。"""
+    with pytest.MonkeyPatch.context() as mp:
+        assert collector.resolve_workers(2) == 2
+        assert collector.resolve_workers(0) == 1, '至少 1（1=串行）'
+        mp.setenv('GALUNPACK_AUDIO_WORKERS', '2')
+        assert collector.resolve_workers() == 2
+        assert collector.resolve_workers(1) == 1, '显式参数压过环境变量'
+        mp.setenv('GALUNPACK_AUDIO_WORKERS', 'junk')
+        assert collector.resolve_workers() == collector.WORKERS
+        mp.setenv('GALUNPACK_AUDIO_WORKERS', '-4')
+        assert collector.resolve_workers() == 1
+
+
+def test_cap_workers_by_memory(monkeypatch):
+    """内存门：余量不足自动降回串行（压死机器比慢更糟），查询失败不动并行度。"""
+    monkeypatch.setattr(collector, '_mem_avail_gib', lambda: 2.0)
+    assert collector.cap_workers_by_memory(3) == 1, \
+        '2.0 GiB 可用扣 1.5 GiB 预留后容不下 1 GiB/个 → 串行'
+    monkeypatch.setattr(collector, '_mem_avail_gib', lambda: 5.5)
+    assert collector.cap_workers_by_memory(3) == 3
+    monkeypatch.setattr(collector, '_mem_avail_gib', lambda: 3.5)
+    assert collector.cap_workers_by_memory(3) == 2
+    monkeypatch.setattr(collector, '_mem_avail_gib', lambda: None)
+    assert collector.cap_workers_by_memory(3) == 3, '查不到内存就不收紧'
+    assert collector.cap_workers_by_memory(1) == 1, '串行请求不受内存影响'
+
+
+def test_collect_runs_chunks_concurrently(tmp_path, monkeypatch):
+    """workers>=2 时分片必须真的并发跑（串行退化会在这里现形）。
+
+    用 Barrier 锁死：两个导出必须**同时**在跑才能都通过；若实现退化成串行，
+    先到的那片等不到同伴就 BrokenBarrierError，测试红。
+    """
+    monkeypatch.setattr(collector, 'cap_workers_by_memory', lambda w, log=print: w)
+    barrier = threading.Barrier(2)
+
+    def export(args, **kwargs):
+        barrier.wait(timeout=30)
+        d = Path(args[2])
+        d.mkdir(parents=True, exist_ok=True)
+        (d / 'placeholder.wav').write_bytes(b'RIFF')   # 名字对不上名单 → 不计入
+        return _completed(args)
+
+    monkeypatch.setattr(collector.subprocess, 'run', export)
+    res = collector.collect(tmp_path / 'data', tmp_path / 'Audio',
+                            ['a', 'b', 'c', 'd'], Path('as.exe'),
+                            batch=1, max_rounds=2, log=lambda *_: None, workers=2)
+    assert res['workers'] == 2
+    assert res['missing'] == ['a', 'b', 'c', 'd'], 'placeholder 不该被当成名单内的名字'
+    assert res['runs'] == 8, '4 片（batch=1）× 2 轮 = 8 次导出'
+
+
+def test_collect_single_chunk_stays_serial(tmp_path, monkeypatch):
+    """单片时不再起线程池（省开销，也让旧语义的调用方行为不变）。"""
+    calls = []
+    orig_thread_pool = collector.ThreadPoolExecutor
+
+    def spy_pool(*a, **kw):
+        calls.append('pool')
+        return orig_thread_pool(*a, **kw)
+
+    monkeypatch.setattr(collector, 'ThreadPoolExecutor', spy_pool)
+
+    def export(args, **kwargs):
+        d = Path(args[2])
+        d.mkdir(parents=True, exist_ok=True)
+        (d / 'a.wav').write_bytes(b'RIFF')
+        return _completed(args)
+
+    monkeypatch.setattr(collector.subprocess, 'run', export)
+    res = collector.collect(tmp_path / 'data', tmp_path / 'Audio', ['a'],
+                            Path('as.exe'), log=lambda *_: None, workers=3)
+    assert res['missing'] == [] and res['collected'] == 1
+    assert calls == [], '1 片就该直接跑，不起线程池'

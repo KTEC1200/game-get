@@ -569,6 +569,58 @@ def test_run_rc1_when_verify_fails(tmp_path, monkeypatch):
     assert res["error"] == "verify-failed"
 
 
+# --------------------------------------------------------------------------
+# 对账口径一致：阶段级担保的 Texture2D 缺口（2026-11-06 Happiness 实测暴露）
+# --------------------------------------------------------------------------
+
+def test_run_explained_texture2d_gap_is_not_reconcile_diff(tmp_path, monkeypatch):
+    """★实测★ 阶段判「对账 0 差」、manifest 却判 reconcile-diff —— 不许再自相矛盾。
+
+    旧实现：Unity 阶段级对账认可 Texture2D 缺口（shortfall==gap 且在阈值内），
+    manifest 的裸 diff 不管这些照样 -1 → rc=1。 Happiness Double Room 在 JSON 枚举
+    随机多报 1 个 Texture2D 的那天，全链交付正确却退出码 1。
+    """
+    ctx = _ctx(tmp_path, engine="Unity")
+
+    def fake_extract(c):
+        _png(c.raw_dir / "a.png")
+        return _fake_stage("extract", expected_total=2, actual_total=1,
+                           texture2d_gap=1,
+                           explained_shortfall={"amount": 1,
+                                                "reason": "Texture2D 引用型资产"},
+                           archives=[{"archive": "Texture2D",
+                                      "expected": 1, "got": 1}])
+
+    monkeypatch.setattr(orch, "stage_extract_unity", fake_extract)
+    monkeypatch.setattr(orch, "stage_postprocess", lambda c: _fake_stage("postprocess"))
+    rc, man = orch.run(ctx)
+    assert rc == 0, man
+    assert man["reconcile"]["diff"] == -1, "expected 不许被削减（A3 红线）"
+    assert man["reconcile"]["explained_by"]["amount"] == 1, "出处必须记进 manifest"
+    assert man["ok"] is True and "error" not in man
+
+
+def test_run_unexplained_diff_still_fails(tmp_path, monkeypatch):
+    """解释的数额与实际差对不上 → 不认，照旧 reconcile-diff（不许被洗绿）。"""
+    ctx = _ctx(tmp_path, engine="Unity")
+
+    def fake_extract(c):
+        _png(c.raw_dir / "a.png")
+        return _fake_stage("extract", expected_total=3, actual_total=1,
+                           texture2d_gap=1,
+                           explained_shortfall={"amount": 1,
+                                                "reason": "Texture2D 引用型资产"},
+                           archives=[{"archive": "Texture2D",
+                                      "expected": 2, "got": 1}])
+
+    monkeypatch.setattr(orch, "stage_extract_unity", fake_extract)
+    monkeypatch.setattr(orch, "stage_postprocess", lambda c: _fake_stage("postprocess"))
+    rc, man = orch.run(ctx)
+    assert rc == 1
+    assert man["error"] == "reconcile-diff"
+    assert "explained_by" not in man["reconcile"]
+
+
 def test_run_forced_engine_skips_detect(tmp_path, monkeypatch):
     """--engine 强制指定时不该再调 detect（省时间、也避开样本缺失）。"""
     ctx = _ctx(tmp_path, engine="Ren'Py")
