@@ -22,8 +22,9 @@
 > **2026-11-02 测试反馈**：随包 GARbro 的 .NET 插件加载修复仅适用于可信工具目录；Unity 样本的音频收集未对账通过，KiriKiri 索引兜底已用真实注入新索引和模拟窗口缺失提取 2562 条，自然窗口缺失尚未复现。案例索引已保留旧案例并加入 Toshiue。实测和限制见 `verified-findings.md`。
 
 > **🚀 接手顺序（新会话只做这三步）**
-> ① 读本文档「状态 / 下一步 / ⚠️ 五个坑」；
-> ② 跑基线：`C:\Python314\python.exe tests\run_all.py`（**不要用裸 `python`**，它没有 pytest；2026-11-04 收尾：**tests=656 / 0 failures / 0 errors / 8 skipped**）
+> ① 读本文档「状态 / 下一步 / ⚠️ 五个坑」；**重点看 ③ 下一步里的两条 P1 缺口**
+>    （案例库 extractor 未接线 / 失败时漏包记录为空）——2026-11-05 实测发现，等用户定方案。
+> ② 跑基线：`C:\Python314\python.exe tests\run_all.py`（**不要用裸 `python`**，它没有 pytest；2026-11-04 收尾：**tests=693 / 0 failures / 0 errors / 10 skipped**）
 >    + `C:\Python314\python.exe tests\make_golden.py --check`（应零漂移）；
 > ③ 按「下一步」当前项开工。**改完先回写本文档 + `verified-findings.md`，再清临时产物，最后提交。**
 
@@ -289,7 +290,25 @@ dry-run 命中 rules+cases（case_path 在包内）、extract in-process **1585/
    Tk 冒烟）。纪律：**GUI 线程只碰 Tk、worker 只塞队列**；`ctx.log` 实例属性遮蔽做日志回流。
 5. ~~README + requirements~~ ✅：`README.md`（安装/用法/引擎表/外部工具配置）随安装包分发。
 
-### ③ 下一步（当前：**等用户实测 v0.2.0**；v0.1.1 的 8 项遗留 + 半自动协作均已交付）
+### ③ 下一步（当前：**v0.4.2 已交付，两条新缺口等决策**）
+
+> ⭐ **实测反馈 #3（2026-11-04 23:37，v0.4.1/v0.4.2 期间）**：`教师催眠2` 全链跑了一次，
+> **失败路径全部正确**（这是重点，不是抱怨）：
+> - 引擎判定 KiriKiri score=90（`.xp3` + 已知包名）
+> - 案例库命中 3 个（签名 `6519ddb81f58`），含 `教师催眠1 / xp3-encrypted-krkrZ`
+> - preflight 磁盘余量 60.57 GB > 需要 3.81 GB
+> - extract 1.74s 失败：`image02.xp3: unknown format`
+> - manifest 完整落盘（`ok=false` / `error=extract-failed` / `verify.status=skipped` /
+>   `manual` 8 字段齐全），`_work/manual.log` 有完整人工方案
+> - **输出目录这次是可写的**（写到 `packaging/Output`），说明 §23/§27 那批修复有效
+>
+> 但暴露两个**真缺口**（见下方「待办优先级」P1 两条）：
+> ① 案例库的 `decision.extractor` 不参与决策；② extract 失败时 `source.archives` / `unsupported` 是空的。
+>
+> **现场补测（2026-11-05）**：逐个 `garbro -l` 该游戏 11 个 xp3，**全部 unknown format**
+> —— 不是「个别包加密」，是整包 krkrZ。目录里有 `katei2.exe` + `Mai@KF.dll` +
+> `katei2.exe.org`（被 patch 过的原 exe），与 `教师催眠1` 同族。所以案例命中的
+> `krkr_auto_extract` 是对症的，只是没被用上。
 
 > 2026-11-02 用户指示：**「不管加密 krkr 了……让我测试完再推进剩余队列」**——
 > 剩余队列全部挂起，先等真实使用反馈。
@@ -327,8 +346,9 @@ dry-run 命中 rules+cases（case_path 在包内）、extract in-process **1585/
 （3500/3500、图片 2059、音频 1441、rc=0）。下一步仍是**等用户实测反馈**；
 未验证的只剩「KiriKiri 索引兜底的**自然**窗口缺失场景」（目前只有注入式模拟证据）。
 
-**用户测试时的入口**：便携 zip `packaging/Output/GalgameUnpacker-0.2.0-portable.zip`
-（解压即用，不写注册表），GUI：`orchestrator.exe --gui`；CLI 用法见随包 `README.md`。
+**用户测试时的入口**：源码态 `start-gui.bat`（走 `python.exe`，绕开未签名 exe 的写入拦截）
+或便携 zip `packaging/Output/GalgameUnpacker-0.4.2-portable.zip`（解压即用，不写注册表，
+但需要把解压目录加入杀软信任区）；CLI 用法见随包 `README.md`。
 **重跑注意**：输出目录已有产物时默认拒绝（`--overwrite` 清空重跑 / `--reuse-raw` 复用），
 这是 2026-11-04 新加的口径 —— 别把「跑失败」当成 bug，先看 detail 里给的出口。
 测试反馈回来后的修法照旧纪律：改逻辑 + 回写文档 + 提交 push。
@@ -846,18 +866,54 @@ tlg2png 必须换掉（GARbro 的 TLG 转换或自研）。详见 verified-findi
    人工产物与自动产物走同一条验收/后处理链路）。
 7. GUI 只显示前 3 步、超出要报「还有 N 步」（`test_summarize_text_includes_manual_plan`）。
 
-### 待办优先级（2026-11-04 重排）
+### 待办优先级（2026-11-05 重排，基于 `教师催眠2` 实测）
 
 | 级别 | 事项 | 状态 |
 |---|---|---|
-| P0 | 无 | 当前没有阻塞交付的事项 |
-| P1 | **解包速度优化** | 用户 2026-11-04 指定：没明确待办就优先做这个（下手点见下） |
-| P1 | 半自动协作打磨 | 第一版已上线；剩余：`--allow-gui` 是否默认禁用以外的默认值/提示措辞迭代 |
-| P2 | 用户实测 v0.2.0 反馈 | 等用户 |
+| P0 | 无 | 没有阻塞交付的问题 |
+| **P1** | **案例库 `decision.extractor` 没接线** | 2026-11-05 实锤；**等用户定 A/B（见下节）** |
+| **P1** | **extract 失败时 `source.archives` / `unsupported` 为空** | 纯记录补齐，与 AGENTS 第 697 行的承诺不符 |
+| P1 | **解包速度优化** | 用户 2026-11-04 指定；现在有实测了，可启动（下手点见下） |
+| P2 | `教师催眠2` 人工闭环 | 等用户走完（拖 xp3 → 拷 `raw/` → `--reuse-raw`） |
 | P3 | KiriKiri **自然**窗口缺失验证 | 等样本/时机（现有只有注入式模拟证据） |
-| P3 | GUI 弹窗确认（GARbro.GUI 选密钥） | 等用户开一次 GUI；建议直接划走 |
 | P4 | 加密 krkr 7 部 / E-mote / AI 兜底 | 用户划走 / 盘面 0 命中 / 最后才考虑 |
-| 舍弃 | 夕凪荘 BGM、安装器 | 用户 2026-11-04 明确 |
+| 舍弃 | 夕凪荘 BGM、安装器、GUI 弹窗确认 | 用户明确 / 建议划走 |
+
+### P1-①：案例库的 `extractor` 不参与决策（实锤）
+
+**现状**：`case_lookup` 把 `decision`（含 `extractor` / `expected_total` / `notes`）
+写进 `manifest.source.case_match` 供人看，**只此而已**。真正决定走哪条链路的是
+`EXTRACTORS.get(engine)` 这张静态表（`orchestrator.py` 约 2461 行）。
+
+**后果（真实发生过）**：`教师催眠2` 命中 `教师催眠1 / xp3-encrypted-krkrZ /
+extractor=krkr_auto_extract / 5724 成功`，但因为 engine 是 KiriKiri，仍然走 GARbro
+→ 11 个包全部 `unknown format` → 失败 → 要用户手动拖 3 分钟。
+**已经验证过的解法就在手边，没接上。**
+
+**两个方案的差别只在一件事：要不要自动接管鼠标。**
+
+- **A（保守，我推荐）**：命中且 `extractor == krkr_auto_extract` 时，只在失败提示里
+  摆出证据 ——「案例库记录同系列用 krkr_auto_extract 全自动成功（5724/5724），
+  加 `--allow-gui` 可自动跑；或按下面的 3 分钟人工方案」。默认行为不变。
+- **B（激进）**：命中就直接走 GUI 自动化，不问。风险是突然接管鼠标约 40 分钟，
+  且远程桌面/多虚拟桌面会让 `SendInput` 失效，失败后还得重来。
+
+**实现要点（两案共用）**：`stage_extract_kirikiri` 需要拿到案例信息，但 `Ctx` 里没有。
+现成的路是 `stage_case_lookup` 已经在 `run()` 里跑过，把结果存进 `ctx`（新增一个字段）
+即可，不要重新查一遍库。**别把案例的 `expected_total` 拿去当对账地面真相**——
+那是别的游戏的数字，混进来就是伪造对账（本项目最贵的错）。
+
+### P1-②：extract 失败时漏包记录是空的
+
+`教师催眠2` 的 manifest 里 `source.archives == []`、`source.unsupported == null`，
+而 `AGENTS.md` 第 697 行承诺「任一 xp3 列不出 → 判失败并进 `manifest.source.unsupported`」。
+
+**原因**：那条只在 `--reuse-raw` 分支实现了。正常流程在 probe 失败时**直接 return**，
+连 `st.data["archives"]` 都没填。
+
+**修法**：probe 失败时把所有 xp3 的 `{name, entries: null, extracted: null, listable}`
+填进 `st.data["archives"]`，把列不出的放进 `st.data["unsupported"]`（复用分支已有的形状）。
+成本很低，收益是「一眼看出是全军覆没还是个别包」。
 
 **速度优化的下手点（先量再改，别猜）**：Unity 音频收集是当前最贵的一段
 （Happiness Double Room 1441 条要 58 次 AssetStudio 调用、十几分钟），
@@ -893,6 +949,7 @@ preflight 的 `_tree_bytes` 在大样本上是几十秒（已有提示）——�
 
 - `APP_VERSION` 0.1.2 → **0.2.0**（半自动协作是新特性，按 minor 升）
 - 交付形态：`packaging/Output/GalgameUnpacker-0.2.0-portable.zip`（便携版，无安装器）
+  ——**已被 v0.4.2 取代**，当前产物见 ③ 下一步与 v0.4.2 章节
 - **速度优化按用户要求暂不启动**：用户明确「等我版本实测，然后再准备速度优化（现在先不做）」。
   下手点与测量计划已记在上方「待办优先级」段，等实测反馈回来再动。
 
@@ -1011,3 +1068,81 @@ preflight 的 `_tree_bytes` 在大样本上是几十秒（已有提示）——�
 
 - 不要指望「补版本信息 + 图标」解决拦截。它只降低误判概率，不改变签名缺失这个事实。
 - 不要为了绕拦截去改 bin、加壳、混淆 —— 那会把「可疑」变成「确定可疑」。
+
+## 2026-11-05 实测复盘：`教师催眠2` 暴露的两个缺口
+
+### 这次跑对了什么（别只盯着失败）
+
+用户 2026-11-04 23:37 在 `D:/HY/教师催眠2` 上跑了一轮，manifest：
+
+```
+engine=KiriKiri  score=90  error=extract-failed  total_seconds=2.0
+counts: raw=0 final=0 converted=null
+reconcile: expected=null actual=0 diff=null method=no-index-available
+verify.status=skipped（不是 failed —— §21.3 的枚举生效了）
+manual: 8 字段齐全，_work/manual.log 有完整方案
+```
+
+**这条链路的每一处修过的地方都对了**：
+
+- 输出目录**可写**（写到 `packaging/Output`）→ §23/§27 的目录修复有效
+- 失败也写 manifest，`ok=false` + `error` + 阶段明细 → §20 的唯一出口有效
+- `verify.status=skipped` 而不是 `failed` → §21.3 的「没验 ≠ 验失败」有效
+- 人工方案三件套齐（工具路径 / 产物落点 / 可复制命令）→ §22 半自动有效
+- 案例库命中并落盘 → 有据可查
+
+**所以这不是「软件坏了」，是「软件说了它解不了，并给了办法」。**
+
+### 现场补测：11 个 xp3 全是加密的
+
+逐个 `garbro -l`：
+
+| 包 | 大小 | 结果 |
+|---|---|---|
+| data.xp3 | 0.3 MB | unknown format |
+| image00~04.xp3 | 15.2 / 61.7 / 1028.9 / 65.9 / 924.5 MB | 全部 unknown format |
+| media.xp3 | 142.9 MB | unknown format |
+| movie.xp3 | 148.6 MB | unknown format |
+| scenario.xp3 | 0.5 MB | unknown format |
+| voice01/02.xp3 | 5.6 / 509.5 MB | 全部 unknown format |
+
+11/11 失败。目录特征：`katei2.exe` + `Mai@KF.dll` + `katei2.exe.org`（原 exe 被 patch）。
+与案例库 `教师催眠1 / xp3-encrypted-krkrZ` 同族。
+
+**结论：不是「个别包加密」，是整包 krkrZ。这种情况下 GARbro 100% 解不了，
+继续探第二个包也没意义 —— 失败是正确结论。**
+
+### 缺口一：案例库的 `extractor` 是死数据
+
+`case_lookup` 把 `decision.extractor` 写进 manifest，但没人读它。选链路的仍是
+`EXTRACTORS.get(engine)` 静态表。于是：
+
+```
+案例说：教师催眠1 用 krkr_auto_extract，5724/5724 零失败
+实际做：KiriKiri → GARbro → 11 包全灭 → 让用户手动拖
+```
+
+**已经验证过的解法没接上，这是设计缺陷，不是 bug。**
+
+决策点（等用户定）：
+
+- **A 保守**：命中且 `extractor=krkr_auto_extract` 时，只在失败提示里摆证据，
+  推荐 `--allow-gui`；默认行为不变。
+- **B 激进**：命中就自动走 GUI 自动化，不问。
+
+我推荐 A：B 会突然接管鼠标 40 分钟，而且远程桌面/多虚拟桌面下 `SendInput` 会失效，
+失败后用户还得重来 —— 不如让他自己选时机。
+
+实现时注意：**案例的 `expected_total` 是别的游戏的数字，绝不能拿来当对账地面真相。**
+只能用于「提示」和「判断该走哪条链路」。
+
+### 缺口二：失败时漏包记录是空的
+
+manifest：`source.archives == []`、`source.unsupported == null`。
+而本文档第 697 行承诺过「任一 xp3 列不出 → 判失败并进 `manifest.source.unsupported`」。
+
+原因：那条只在 `--reuse-raw` 分支实现了；正常流程 probe 失败直接 return，
+连 `st.data["archives"]` 都没填。
+
+修法：probe 失败时把 11 个包的 `{name, entries: null, extracted: null, listable}`
+填进 `archives`，列不出的进 `unsupported`。成本极低，收益是「一眼分清全军覆没还是个别包」。

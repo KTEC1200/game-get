@@ -1881,3 +1881,72 @@ exe 完全不参与，因此绕开了整条信誉判定。实测 `start-gui.bat 
 - 回归：**693 tests / 0 failures / 0 errors / 10 skipped**
 - 冻结包：`--gui-smoke` rc=0
 - 新增测试 5 条（版本字段齐全、四段补零、非法版本串不崩、ICO 合法、无 Pillow 返回 None）
+
+## 29. 教师催眠2 实测：链路全对，两个记录缺口（2026-11-05）
+
+### 29.1 实测数据（2026-11-04 23:37，用户跑）
+
+```
+engine=KiriKiri score=90    error=extract-failed    2.0s
+counts: raw=0 final=0 converted=null
+reconcile: expected=null actual=0 diff=null method=no-index-available
+verify.status=skipped       manual: 8 字段齐全
+```
+
+判定：**这一轮修复全部生效**。输出目录可写（写到 `packaging/Output`）、
+失败也写 manifest、`verify.status` 判 skipped 而非 failed、人工方案完整落 `manual.log`、
+案例库命中并落盘。软件的行为符合设计：说了解不了，并给了办法。
+
+### 29.2 补测：11 个 xp3 全部加密
+
+逐个 `garbro -l`（2026-11-05 现场跑）：
+
+| 包 | 大小 | 结果 |
+|---|---|---|
+| data.xp3 | 0.3 MB | unknown format |
+| image00 / 01 / 02 / 03 / 04 | 15.2 / 61.7 / 1028.9 / 65.9 / 924.5 MB | 全部 unknown format |
+| media / movie | 142.9 / 148.6 MB | unknown format |
+| scenario | 0.5 MB | unknown format |
+| voice01 / 02 | 5.6 / 509.5 MB | unknown format |
+
+11/11。目录特征 `katei2.exe` + `Mai@KF.dll` + `katei2.exe.org`（原 exe 被 patch），
+与案例库 `教师催眠1 / xp3-encrypted-krkrZ` 同族。**整包 krkrZ，GARbro 无解**。
+
+推论：probe 用最大的包（image02，1 GB）是合理的 —— 但整包加密时探哪个都一样，
+所以「探一个就失败」不算误判。
+
+### 29.3 缺口一：案例库 `decision.extractor` 是死数据
+
+`stage_case_lookup` 把它写进 `manifest.source.case_match`，之后无人读取。
+选链路仍是 `EXTRACTORS.get(engine)`（`orchestrator.py` 约 2461 行）。
+
+本次实际发生：案例说 `krkr_auto_extract`（教师催眠1，5724/5724 成功），
+实际走 `GARbro` → 11 包全灭 → 让用户手动拖。
+
+**这不是 bug，是设计缺口：命中案例的价值只体现在「人能看到」，没体现在「机器据此行动」。**
+
+两个方案（等用户定）：
+
+- **A 保守**：失败提示里摆出案例证据，推荐 `--allow-gui`；默认行为不变。
+- **B 激进**：命中即自动走 GUI 自动化。
+
+推荐 A 的理由：B 会突然接管鼠标约 40 分钟，且远程桌面 / 多虚拟桌面下 `SendInput`
+失效，失败后要重来。让用户自己挑时机更稳。
+
+**实现红线**：案例的 `expected_total` 是**别的游戏**的数字，只能用于提示与链路选择，
+绝不能进 `reconcile` —— 混用等于伪造对账。
+
+### 29.4 缺口二：失败时 `archives` / `unsupported` 为空
+
+manifest：`source.archives == []`、`source.unsupported == null`。
+而 `AGENTS.md` 第 697 行承诺「任一 xp3 列不出 → 判失败并进 `manifest.source.unsupported`」。
+
+**原因**：该逻辑只在 `--reuse-raw` 分支实现。正常流程在 probe 失败时直接 `return`，
+`st.data` 里只有 `probe` 一项，没有 `archives` / `unsupported`。
+
+**修法**：probe 失败时把全部 xp3 的 `{name, entries: null, extracted: null, listable}`
+填进 `archives`，列不出的进 `unsupported`（复用分支已有形状）。
+
+**收益**：这次 11/11 全灭看不出来，但如果是「3 个加密 + 8 个正常」，
+用户需要知道范围才能决定是否人工补那 3 个。记录缺失会让「部分失败」和「全军覆没」
+长得一模一样。
