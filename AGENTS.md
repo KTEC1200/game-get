@@ -1305,3 +1305,64 @@ Low 令牌被强制「禁止向上写」，所以 Medium 标签的桌面/文档/
 → **规避：便携包解到 `D:\K` 之外**（如 `D:\GalgameUnpacker\`），别再在这个子树里跑。
 → 未查明：`packaging\Output\orchestrator` 上那两条非标准 ACE（`Everyone:(I)(CI)(DENY)(DC)`、
 `S-1-4-…:(W,D,DC)`）是谁写的；`D:\K` 本身干净。查清之前不要用这棵树当部署位置。
+
+## 2026-11-06 v0.7.0：启动守卫 + 产物按类型归档 + 加密 krkr 三处修复
+
+用户当天定的顺序：A（启动守卫）→ `--allow-gui` 闭环 → B（归档）；krkr 缺失验证与批量样本划走。
+
+### A 启动守卫（`gui.restricted_environment` / `restricted_tip`）
+
+启动时读进程完整性级别：`Low`/`Untrusted` 就在状态栏与日志区写明「只能写程序目录，建议把
+整个 orchestrator 文件夹移到 `D:/GalgameUnpacker` 后重开」，并指向「环境自检」。
+**不弹窗、不阻断** —— 降级路径本身能跑，缺的只是「为什么」。测试 4 条
+（Low/Untrusted 识别、High 与查询失败时不误报、提示里必须给出可执行的去处）。
+
+### B 产物按类型归档（`organize.py`，v0.7.0 新增）
+
+解包的终点就是「图片/音频/视频」三类，但产物只落 `raw/` + `png/`，用户得自己挑。做法：
+
+- **不搬文件**：`counts`/`reconcile` 的地面真相都在 `raw/`，搬走等于拆掉唯一的交付担保。
+  只额外产出 `类目清单.csv`（UTF-8 **BOM**，Excel 双击不乱码）与
+  `分类/<图片|音频|视频|其他>/raw|png/…` 的**硬链接视图**（同盘不复制字节）。
+- **分类规则只写一份**：扩展名优先，认不出才退回路径目录名（坑 5：按目录判会把
+  `images/animations/` 下 282 个 `.jpg` 分进视频）。
+- 链接失败**只计数不复制**（跨卷时偷偷拷 100 GiB 比少几个链接糟得多），失败数进 manifest；
+  视图目录已存在时顺延 `分类-2`，绝不覆盖旧视图。
+- 入口：CLI `--organize`；GUI 复选框「按类型整理」**默认开**；`manifest.organize`
+  记 kinds/linked/failed/view，**不参与 ok/rc 判定**（附加产物，失败不毁整轮）。
+- 测试 9 条；全量 `tests=735 failures=0 errors=0 skipped=11 → PASS`。
+
+### 加密 krkr：`--allow-gui` 闭环暴露的三处缺陷（已修）
+
+`教师催眠2` 第一次跑 23 秒就报 `kirikiri-gui-failed`，逐层挖出三个真问题：
+
+1. **窗口只等 5 秒判一次**（`find_ui_window` 单次调用）→ 把「还没建好」当成「注入失败」。
+   改 `wait_ui_window()` 轮询 40 秒（`KRKR_WINDOW_WAIT` 可覆盖），失败时打印该 pid 的
+   全部窗口标题（区分「没建窗」与「标题不匹配」）。
+2. **模态提示没人关**：注入后游戏自己弹 `Information / 正常に起動できませんでした`，
+   盖住拖拽落点、并让完成判定永远看到「还有对话框」。新增 `dismiss_dialogs()`
+   （只点非主界面的 `#32770`，按 `确定/OK` 关闭；主界面标题以 `KrkrExtract(local` 开头，明确排除）。
+   实测：关掉它，data.xp3 立刻 +57 个文件。
+3. **解包模式从来没设过**：KrkrExtract 的模式是开关式的，默认只开 `Decompile Script`，
+   于是 data.xp3 只出 46 个 `.tjs` + 11 个 `.ks`（一张图都没有），image00 拖进去 57→57
+   **0 新增还判「完成」**。新增 `click_button(pid, "Full Unpack")` 再拖。
+   教师催眠1 当年能出 2009 张图，是因为那个 stage 带着上次手工操作落下的配置 ——
+   **这条链路一直是「碰巧能跑」**，换机器/重建就退化成只解脚本。
+4. 完成判据改成「产物数稳定 40s 且有产物」，不再靠 `FindWindow("#32770","KrkrExtract")`
+   （主界面本身就是 `#32770`，旧写法能work纯属标题恰好不等）。
+
+### 教师催眠2 现状（未完成，等人工）
+
+- 11 个 xp3 全是 krkrZ（`garbro -l` 全 `unknown format`），目录带 `Mai@KF.dll` + `katei2.exe.org`。
+- `--allow-gui` 在本机能跑起来：data.xp3 成功（57 个脚本），随后卡在
+  `assert drop, "no blank spot on KrkrExtract UI"` —— 日志显示
+  `blockers: {'Chrome_RenderWidgetHostHWND': …}`，**KrkrExtract 窗口被别的窗口压住**时
+  找不到空白落点。这类 GUI 链路只适合「人在电脑前、别动鼠标」的场景。
+- ⚠️ 代理会话另有干扰：`_krkr_stage/auto` 有 215 个文件，`drop_tree` 清理时被本会话的
+  删除守卫拦下（`SAFE_DELETE_BULK_CONFIRM_REQUIRED`），表现为「无法清理 stage」。用户自己跑不会遇到。
+- **收尾路径（交用户手动）**：打开 `_krkr_stage/auto/KrkrExtract.Lite.exe` → 把同目录 11 个
+  `.xp3` 逐个拖进窗口（先点 `Full Unpack`）→ 产物在 `KrkrExtract_Output` →
+  `orchestrator … --reuse-raw D:/HY/教师催眠2/output/raw` 走验收与对账。
+
+交付：`packaging/Output/GalgameUnpacker-0.7.0-portable.zip`
+（141.6 MiB，SHA256 `59e76e7b…644b5f190`；解压后 1485 文件 / 354.1 MiB；`--doctor` 报 0.7.0、`--gui-smoke` rc=0）。

@@ -60,6 +60,7 @@ import galgame_dispatch as gd          # noqa: E402
 import case_lib                        # noqa: E402  （案例库查表：签名算法唯一出处）
 from version import APP_VERSION        # noqa: E402  （版本号唯一出处，--doctor 报告要用）
 import manifest                        # noqa: E402
+import organize                        # noqa: E402  （按类型归档：清单 + 硬链接视图，见 organize.py）
 import manual                          # noqa: E402  （人工介入方案：失败时给可执行步骤，见 manual.py）
 import faillog                         # noqa: E402  （失败日志：写软件根目录，与产物解耦）
 import rpa_tool                        # noqa: E402
@@ -193,6 +194,9 @@ class Ctx:
     #: 案例库查表结果（`stage_case_lookup` 的 data）。run() 在阶段 1.5 后回填，
     #: extract 阶段的失败提示引用它（P1-① A 案）—— 信息已经在手，别再查一遍库。
     case_match: dict | None = None
+    #: `--organize`：跑完按媒体类型出一份清单 CSV + 硬链接视图（见 organize.py）。
+    #: **不影响对账**：不搬 raw 里的文件，counts 与 reconcile 的口径一个字都不动。
+    organize: bool = False
 
     @property
     def raw_dir(self) -> Path:
@@ -2234,6 +2238,41 @@ def stage_verify(ctx: Ctx) -> Stage:
 
 # ---------------------------------------------------------------- 阶段 5: manifest
 
+def stage_organize(ctx: Ctx) -> Stage:
+    """按媒体类型归档（v0.7.0）：类目清单 + 硬链接视图，**不动 raw/png**。
+
+    为什么单独一个阶段、又为什么绝不让它把整轮判失败：
+      · 对账与验收的地面真相都在 `raw/` 上（`counts`/`reconcile`），搬文件等于把
+        唯一的交付担保拆掉；这里只加**视图**与**清单**，原有口径一个字不改。
+      · 它是「锦上添花」：链接失败（跨卷/权限）只报数，不能让一次成功解包变成失败。
+    """
+    st = Stage("organize")
+    t0 = time.time()
+    if not ctx.organize:
+        st.detail = "未启用（--organize 才按类型归档）"
+        st.seconds = 0.0
+        return st
+    files = manifest.iter_final_files(ctx.raw_dir, ctx.png_dir, CONVERTIBLE, ctx.consumed)
+    if not files:
+        st.detail = "没有可归档的产物"
+        st.seconds = time.time() - t0
+        return st
+    try:
+        res = organize.organize(files, ctx.out_dir)
+    except OSError as exc:
+        # 归档是附加产物：失败只记录，不影响 rc（manifest.organize.failed 也留着）
+        st.detail = f"归档失败：{type(exc).__name__}: {exc}"
+        st.seconds = time.time() - t0
+        return st
+    kinds = "、".join(f"{k} {v}" for k, v in res["kinds"].items() if v)
+    st.detail = (f"{res['total']} 个文件 → {kinds}；视图 {Path(res['view']).name}/"
+                 f"（硬链接 {res['linked']}，失败 {res['failed']}）")
+    st.data = res
+    st.seconds = time.time() - t0
+    ctx.log("organize", st.detail)
+    return st
+
+
 def build_manifest(ctx: Ctx, stages: list[Stage], engine: str | None) -> dict:
     """按 `manifest.py` 的契约拼 manifest（counts 三段式实现在那边）。"""
     def stage_data(name: str) -> dict:
@@ -2572,6 +2611,10 @@ def run(ctx: Ctx) -> tuple[int, dict]:
             err = "verify-failed"
         return _finish_failure(ctx, stages, engine, 1, err, t_all)
 
+    # 4.5 归档（可选）：只出清单与硬链接视图，不参与对账，也绝不让整轮失败
+    st = _run_stage("organize", stage_organize, ctx)
+    stages.append(st)
+
     # 5. manifest —— **一次写盘**（批次 C2）
     #
     # 旧实现写两次：先写一份还没有 ok/total_seconds 的，补完再整份重写。中间被 Ctrl+C
@@ -2582,6 +2625,10 @@ def run(ctx: Ctx) -> tuple[int, dict]:
     # （否则就是自我指涉：写入结果要先知道写入结果），但它自身是自洽的。
     man = build_manifest(ctx, stages, engine)
     diff = man["reconcile"]["diff"]
+    # 归档结果挂进 manifest（不参与 ok/rc 判定：它是附加产物，见 stage_organize）
+    org = next((s.data for s in stages if s.name == "organize" and s.data), None)
+    if org:
+        man["organize"] = org
     # explained_by：阶段级对账显式担保、且数额与 diff 恰好相等的短缺（Unity 的
     # Texture2D 引用型缺口）。这不是「没验出来」，是「验出来且能解释」，不算失败。
     rc = 0 if (diff in (0, None) or man["reconcile"].get("explained_by")) else 1
@@ -2693,6 +2740,9 @@ def main(argv: list[str] | None = None) -> int:
                          "也算失败（rc=1；manifest.error = strict-no-ground-truth / "
                          "strict-not-verified）")
     ap.add_argument("--json", default=None, help="把完整结果另存一份 JSON")
+    ap.add_argument("--organize", action="store_true",
+                    help="跑完按媒体类型出一份 类目清单.csv + 分类/ 硬链接视图"
+                         "（只加视图与清单，不搬 raw、不影响对账）")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
 
@@ -2710,7 +2760,8 @@ def main(argv: list[str] | None = None) -> int:
     ctx = Ctx(game_dir=game_dir, out_dir=out_dir, work_dir=work_dir,
               manifest_path=manifest_path, reuse_raw=reuse,
               allow_gui=a.allow_gui, do_verify=not a.no_verify, engine=a.engine,
-              verify_jobs=a.verify_jobs, strict=a.strict, overwrite=a.overwrite)
+              verify_jobs=a.verify_jobs, strict=a.strict, overwrite=a.overwrite,
+              organize=a.organize)
 
     if a.dry_run:
         st = stage_detect(ctx)

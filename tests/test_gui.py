@@ -547,3 +547,34 @@ def test_pick_writable_all_fail_returns_none_and_table(tmp_path, monkeypatch):
 
     assert picked is None
     assert len(table) == 2, "全灭时要把整张表交出去，让弹窗能列出探过哪些位置"
+
+
+# ---- 启动环境守卫（2026-11-06：程序被降到 Low 时先提示） ----
+
+def test_restricted_environment_detects_low(monkeypatch):
+    import doctor
+    monkeypatch.setattr(doctor, "integrity_level", lambda: "Low（0x1000）")
+
+    assert gui.restricted_environment(), "Low 必须被识别出来，否则用户看不到任何提示"
+
+
+def test_restricted_environment_detects_untrusted(monkeypatch):
+    import doctor
+    monkeypatch.setattr(doctor, "integrity_level", lambda: "Untrusted（0x0）")
+
+    assert gui.restricted_environment()
+
+
+def test_restricted_environment_silent_when_high_or_unknown(monkeypatch):
+    import doctor
+    monkeypatch.setattr(doctor, "integrity_level", lambda: "High（0x3000）")
+    assert gui.restricted_environment() is None
+
+    monkeypatch.setattr(doctor, "integrity_level", lambda: "打不开进程令牌")
+    assert gui.restricted_environment() is None, "查不到就不提示，别制造假警报"
+
+
+def test_restricted_tip_points_at_move_and_evidence():
+    tip = gui.restricted_tip()
+    assert "GalgameUnpacker" in tip, "必须给出可执行的去处，而不是只说「有风险」"
+    assert "环境自检" in tip

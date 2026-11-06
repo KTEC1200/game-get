@@ -116,6 +116,40 @@ def pick_writable(cands: list[Path]) -> tuple[Path | None, list[tuple[Path, str 
     return None, table
 
 
+def restricted_environment() -> str | None:
+    """当前进程是否被降权运行（Low/Untrusted）。是则返回一句人话原因，否则 None。
+
+    为什么要在**启动时**就查（2026-11-06 实测）：把程序放在 `D:\\K\\…\\packaging\\Output`
+    这类目录下，进程会被系统以 **Low 完整性**创建；而 Low 令牌被 Windows 强制
+    「禁止向上写」，桌面/文档/游戏目录/%TEMP% 全部 `WinError 5`，程序只能缩在
+    「自己的 output」里干活 —— 界面上却一切正常，产物默默换了地方，用户毫不知情。
+    这条提示把「事后翻自检报告」提前到「一打开就知道」。
+
+    只读、不阻断：降级路径本身已经能跑，这里只是把原因说清楚。
+    """
+    try:
+        import doctor                      # 函数内 import：Tk 启动不为它多付成本
+        level = doctor.integrity_level()
+    except Exception:                                        # noqa: BLE001
+        return None
+    if level.startswith(("Low", "Untrusted")):
+        return f"进程完整性级别为 {level}"
+    return None
+
+
+def restricted_tip() -> str:
+    """降权时的完整建议（状态栏放不下，日志区/自检弹窗用）。"""
+    return (
+        "检测到程序被以「低权限」运行：只能写入它自己的目录，"
+        "桌面 / 文档 / 游戏目录 / 临时目录都写不进去。\n"
+        "常见原因是程序放在受管控或带特殊权限的目录里"
+        "（例如仓库的 packaging\\Output 下面）。\n"
+        "建议：把整个 orchestrator 文件夹移到 D:\\GalgameUnpacker 之类的普通目录后重开，"
+        "产物就能直接落到 <游戏目录>\\output。\n"
+        "要证据：点「环境自检」，里面每一项都带完整错误码。"
+    )
+
+
 #: Windows 文件名非法字符。`【PC】… | Ore o Hoshigaru…` 这种目录名在 NTFS 里**能存在**
 #: （从压缩包/别的系统带来的），但**不能在里面创建子目录**：`CreateDirectory` 直接报
 #: 「文件名、目录名或卷标语法不正确」（2026-11-04 实测）。
@@ -235,6 +269,12 @@ def summarize_text(rc: int, man: dict) -> str | None:
         # 失败原因排在对账/验收之前：用户第一眼要知道「为什么红」
         why = {"cancelled": "用户取消"}.get(man.get("error"), man.get("error"))
         lines.append(f"失败原因：{why}（详见日志与 manifest 的 stages）")
+    org = man.get("organize") or {}
+    if org:
+        # 归档是附加产物：用户最想知道「三类各多少、在哪」，一句话带过
+        kinds = "、".join(f"{k} {v}" for k, v in (org.get("kinds") or {}).items() if v)
+        lines.append(f"分类：{kinds}（视图 {Path(str(org.get('view', ''))).name}/，"
+                     f"硬链接 {org.get('linked', '?')} 个，失败 {org.get('failed', 0)}）")
     if rec.get("method") != "no-index-available" and rec.get("diff") is not None:
         lines.append(f"对账：索引 {rec.get('expected')} vs 落盘 {rec.get('actual')} "
                      f"（diff={rec.get('diff')}）")
@@ -301,6 +341,11 @@ class App:
         self.var_gui = tk.BooleanVar(value=False)
         ttk.Checkbutton(opt, text="用于加密的 krkr",
                         variable=self.var_gui).pack(side="left")
+        # 默认开：解包的终点就是「图片/音频/视频」三类，让用户少一步手动挑。
+        # 只加清单与硬链接视图，不动 raw（不占空间、不影响对账）。
+        self.var_organize = tk.BooleanVar(value=True)
+        ttk.Checkbutton(opt, text="按类型整理",
+                        variable=self.var_organize).pack(side="left", padx=(10, 0))
         self.btn_run = ttk.Button(opt, text="开始解包", command=self._start)
         self.btn_run.pack(side="right")
         self.btn_cancel = ttk.Button(opt, text="取消", command=self._cancel,
@@ -339,6 +384,15 @@ class App:
         self._cancel_ev = threading.Event()
         self._close_when_done = False        # 关窗时点了「确定」→ 跑完再 destroy
         self._crashed = False                # 工作线程挂了（状态条别被后续 done 覆盖）
+
+        # 启动守卫：被降权时先把话说清楚（不阻断，降级路径仍能跑）。
+        warn = restricted_environment()
+        if warn:
+            self.var_status.set("受限环境：只能写入程序目录（建议整体移到 D:\\GalgameUnpacker）")
+            self._log(f"[warn] {warn}")
+            for line in restricted_tip().splitlines():
+                self._log(f"[warn] {line}")
+
         root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(100, self._poll)
 
@@ -523,7 +577,7 @@ class App:
         self._log(f"输出目录：{out}")
         threading.Thread(target=self._worker,
                          args=(game, out, bool(self.var_gui.get()), self._cancel_ev,
-                               overwrite),
+                               overwrite, bool(self.var_organize.get())),
                          daemon=True).start()
 
     def _cancel(self) -> None:
@@ -624,7 +678,8 @@ class App:
     # ---- 工作线程（不碰任何 Tk） ----
 
     def _worker(self, game: Path, out: Path, allow_gui: bool,
-                cancel_ev: threading.Event, overwrite: bool = False) -> None:
+                cancel_ev: threading.Event, overwrite: bool = False,
+                organize: bool = False) -> None:
         """跑一次全链，并**保证**最后一定有一条结果入队。
 
         为什么是 `except BaseException` + `finally` 兜一条 `done`（批次 C7，2026-11-03）：
@@ -643,6 +698,7 @@ class App:
                            manifest_path=out / "manifest.json",
                            allow_gui=allow_gui,
                            overwrite=overwrite,
+                           organize=organize,
                            should_stop=cancel_ev.is_set)
             orig_log = ctx.log
 

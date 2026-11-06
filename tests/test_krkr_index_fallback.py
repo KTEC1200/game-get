@@ -33,6 +33,9 @@ def setup_fallback(tmp_path, monkeypatch):
     # 改成按镜像绝对路径匹配 —— 这里假造「stage 里那个 game.exe 正在跑」。
     monkeypatch.setattr(kae, 'pids_by_exe_path', lambda target: [123])
     monkeypatch.setattr(kae, 'find_ui_window', lambda pid: None)
+    # 2026-11-06：等窗口改成了轮询（真实环境 40s），单测里必须归零，
+    # 否则 ``time.sleep`` 被替换成 no-op 时会**空转 40 秒**把整批测试拖死。
+    monkeypatch.setattr(kae, 'WINDOW_WAIT', 0)
     monkeypatch.setattr(kae.subprocess, 'Popen', lambda *a, **kw: None)
     monkeypatch.setattr(kae.subprocess, 'run', lambda *a, **kw: None)
     monkeypatch.setattr(kae.time, 'sleep', lambda *a: None)
@@ -94,3 +97,29 @@ def test_orchestrator_propagates_output_without_claiming_reconciliation(setup_fa
     assert report['reconcile']['expected'] is None
     assert report['reconcile']['diff'] is None
     assert report['reconcile']['actual'] == 1
+
+
+def test_wait_ui_window_returns_as_soon_as_window_appears(monkeypatch):
+    """窗口晚出现也要等到 —— 2026-11-06 教师催眠2：5s 单次判定把「还没建好」当注入失败。"""
+    calls = []
+
+    def fake(pid):
+        calls.append(pid)
+        return 4321 if len(calls) >= 3 else None
+
+    monkeypatch.setattr(kae, 'find_ui_window', fake)
+    monkeypatch.setattr(kae.time, 'sleep', lambda *a: None)
+
+    hwnd, _waited = kae.wait_ui_window(999, timeout=5)
+
+    assert hwnd == 4321
+    assert len(calls) == 3, "应当一直轮询到窗口出现，而不是判一次就放弃"
+
+
+def test_wait_ui_window_gives_up_at_limit(monkeypatch):
+    monkeypatch.setattr(kae, 'find_ui_window', lambda pid: None)
+    monkeypatch.setattr(kae.time, 'sleep', lambda *a: None)
+
+    hwnd, waited = kae.wait_ui_window(999, timeout=0)
+
+    assert hwnd is None and waited == 0.0

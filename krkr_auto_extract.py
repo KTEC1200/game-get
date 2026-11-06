@@ -48,6 +48,10 @@ def krkr_tool_dir() -> str:
 #: 放在项目目录下（2026-10-29 起主目录是 D:\K\deepseek），名字固定为 `_krkr_stage`，已被 .gitignore 排除。
 STAGE_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_krkr_stage")
 
+#: 等 KrkrExtract 建窗的上限（秒）。2026-11-06 实测：`教师催眠2` 注入后窗口不是 5 秒内出现，
+#: 单次判定把「还没建好」当成「注入失败」；环境变量可覆盖（慢机器/大包调大）。
+WINDOW_WAIT = float(os.environ.get("KRKR_WINDOW_WAIT", "40"))
+
 LOG = os.path.join(STAGE_ROOT, "krkr_auto_extract.log")
 def log(msg):
     os.makedirs(STAGE_ROOT, exist_ok=True)
@@ -167,6 +171,48 @@ def find_ui_window(pid):
     user32.EnumWindows(cb, 0)
     return res[0]
 
+
+def window_titles(pid):
+    """该进程的所有可见顶层窗口标题 —— 注入失败时打诊断用。
+
+    能区分两种失败：**根本没建窗**（注入没成功）与**建了但标题不匹配**（注入成功、判定过严）。
+    没有这条，日志里只剩一句「窗口没找到」，排起来全靠猜。
+    """
+    res = []
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+    def cb(h, lp):
+        p = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(h, ctypes.byref(p))
+        if p.value == pid:
+            t = wnd_text(h)
+            if t:
+                res.append(t)
+        return True
+    user32.EnumWindows(cb, 0)
+    return res
+
+
+def wait_ui_window(pid, timeout=None):
+    """轮询等 KrkrExtract 窗口出现，返回 (hwnd 或 None, 实际等待秒数)。
+
+    为什么要轮询（2026-11-06 实测 `教师催眠2`）：注入后窗口**不是 5 秒内就有**，
+    旧代码只判一次，把「还没建好」当成「注入失败」→ 掉进静态 index 兜底 →
+    该游戏有压缩条目、兜底必然抛错 → 整条链路 23 秒退出，还报「GUI 跑过了但没产出」
+    （其实 GUI 一步都没走）。上限可用 `KRKR_WINDOW_WAIT` 覆盖，别写死。
+    """
+    limit = WINDOW_WAIT if timeout is None else timeout
+    if limit <= 0:
+        # 测试/极端场景：不等待，直接判一次（避免把 40s 的等待带进单测）
+        return find_ui_window(pid), 0.0
+    start = time.time()
+    while True:
+        h = find_ui_window(pid)
+        waited = time.time() - start
+        if h or waited >= limit:
+            return h, waited
+        time.sleep(1.0)
+
+
 def all_cabinets(hint=None):
     """枚举资源管理器窗口；给了 hint 就只收标题含它的那些。
 
@@ -266,13 +312,104 @@ def drag(x0, y0, x1, y1):
     mouse(0x0004)               # left up
     time.sleep(1.0)
 
+_OK_LABELS = ("确定", "OK", "はい", "Yes", "是", "关闭", "Close")
+
+
+def pid_of_window(hwnd):
+    p = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(p))
+    return p.value
+
+
+def top_windows(pid):
+    """该进程的顶层窗口 [(hwnd, 类名, 标题)]。"""
+    res = []
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+    def cb(h, lp):
+        if pid_of_window(h) == pid:
+            c = ctypes.create_unicode_buffer(64)
+            user32.GetClassNameW(h, c, 64)
+            t = wnd_text(h)
+            if t:
+                res.append((h, c.value, t))
+        return True
+    user32.EnumWindows(cb, 0)
+    return res
+
+
+def dismiss_dialogs(pid):
+    """点掉注入进程弹的模态提示框，**绝不碰主界面**。返回被关掉的标题列表。
+
+    2026-11-06 实测 `教师催眠2`（krkrZ + Mai@KF.dll）：注入后游戏自己弹
+    `Information / 正常に起動できませんでした`。它不是解包失败——关掉它，
+    data.xp3 立刻 +57 个文件（46 .tjs + 11 .ks）—— 但它会
+    ① 盖住拖拽落点、② 让完成判定一直看到「还有对话框」，整轮卡在 0 files 到超时。
+
+    主界面标题形如 `KrkrExtract(local 5.0.0.2) - built on …`，同属 `#32770`，
+    必须按标题前缀排除，否则会把工具自己的窗口关掉。
+    """
+    closed = []
+    for h, cls, title in top_windows(pid):
+        if cls != "#32770" or title.startswith("KrkrExtract(local"):
+            continue
+        if not any(k.lower() in title.lower() for k in
+                   ("information", "error", "エラー", "警告", "warning", "krkrextract")):
+            continue
+        hit = []
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+        def cb(ch, lp, hit=hit):
+            c = ctypes.create_unicode_buffer(64)
+            user32.GetClassNameW(ch, c, 64)
+            if c.value == "Button" and wnd_text(ch).strip() in _OK_LABELS:
+                hit.append(ch)
+            return True
+        user32.EnumChildWindows(h, cb, 0)
+        for btn in hit:
+            user32.SendMessageW(btn, 0x00F5, 0, 0)      # BM_CLICK
+        closed.append(title)
+    return closed
+
+
+def click_button(pid, label):
+    """按文本点主界面上的按钮，返回是否点到。
+
+    2026-11-06 实测 `教师催眠2` 才发现的坑：KrkrExtract 的解包模式是**开关式**的，
+    而本脚本从来没设过 —— 默认只开了「Decompile Script」。后果：
+      · data.xp3 拖进去 → 46 个 `.tjs` + 11 个 `.ks`（**纯脚本**，一张图都没有）
+      · image00.xp3 拖进去 → 57 → 57，**0 新增**，而且判定为「任务完成」
+    教师催眠1 当年能出 2009 张图，是因为那个 stage 里带着上一次手工操作留下的配置 ——
+    换句话说，这条链路一直是「碰巧能跑」，换台机器/换次重建就退化成只解脚本。
+    """
+    for h, cls, title in top_windows(pid):
+        if cls != "#32770" or not title.startswith("KrkrExtract(local"):
+            continue
+        hit = []
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+        def cb(ch, lp, hit=hit):
+            c = ctypes.create_unicode_buffer(64)
+            user32.GetClassNameW(ch, c, 64)
+            if c.value == "Button" and wnd_text(ch).strip() == label:
+                hit.append(ch)
+            return True
+        user32.EnumChildWindows(h, cb, 0)
+        for btn in hit:
+            user32.SendMessageW(btn, 0x00F5, 0, 0)      # BM_CLICK
+        return bool(hit)
+    return False
+
+
 def wait_task_done(outdir, ui_hwnd, timeout_min=40):
     """产物数稳定且 UI 标题回 idle 即完成；返回 (total, by_ext, size)。"""
     last, stable = -1, 0
     deadline = time.time() + timeout_min * 60
     last_rep = 0.0
+    pid = pid_of_window(ui_hwnd)
     while time.time() < deadline:
         time.sleep(5)
+        # 模态提示先关掉：它挡落点、也挡完成判定（见 dismiss_dialogs 的实测说明）
+        closed = dismiss_dialogs(pid)
+        if closed:
+            log("  dismissed dialog(s): %r" % (closed,))
         total, by_ext, size_total = count_files(outdir) if os.path.isdir(outdir) else (0, {}, 0)
         stable = stable + 1 if (total == last and total > 0) else 0
         last = total
@@ -281,10 +418,10 @@ def wait_task_done(outdir, ui_hwnd, timeout_min=40):
             last_rep = now
             top = sorted(by_ext.items(), key=lambda kv: -kv[1])[:8]
             log("  progress: %d files %.1f MB %s" % (total, size_total / 1048576.0, top))
-        box = user32.FindWindowW("#32770", "KrkrExtract")
-        if box:
-            log("  WARNING: task error dialog (title=KrkrExtract) present")
-        if stable >= 8 and not box:
+        # 完成判据：产物数稳定 40s 且确实有产物。**不再**要求「没有任何 #32770」——
+        # 主界面自己就是 #32770，旧写法只能靠「标题恰好等于 KrkrExtract」这种巧合来区分，
+        # 一旦游戏弹提示就永远判不完成（实测踩过）。
+        if stable >= 8:
             log("  task complete (stable 40s)")
             return total, by_ext, size_total
     return last, {}, 0
@@ -396,8 +533,10 @@ def main(argv: list[str] | None = None) -> int:
         for p in others:
             subprocess.run(["taskkill", "/F", "/PID", str(p)], capture_output=True)
         time.sleep(1.0)
-    ui = find_ui_window(pid)
+    ui, waited = wait_ui_window(pid)
     if not ui:
+        log("KrkrExtract 窗口 %.0fs 内未出现（pid=%d，进程仍在=%s），该 pid 的窗口标题=%r"
+            % (waited, pid, bool(pids_by_exe_path(stage_exe)), window_titles(pid)))
         archives = sorted(Path(stage).glob("*.xp3"))
         if only:
             archives = [p for p in archives if p.name.lower() in only]
@@ -414,7 +553,11 @@ def main(argv: list[str] | None = None) -> int:
                 count = _xp3_carve.extract(archive, index, outdir / archive.stem)
                 log("index carve %s: %d files verified" % (archive.name, count))
         except (ValueError, OSError, KeyError) as exc:
-            raise RuntimeError("XP3 index carve failed: %s" % exc) from exc
+            # 消息要把**两件事**都说清：窗口没出现是主因，兜底不适用是次因。
+            # 旧的「XP3 index carve failed: …」会让人以为 GUI 跑过了、只是兜底坏了。
+            raise RuntimeError(
+                "KrkrExtract 窗口 %.0fs 内未出现，静态 index 兜底也不适用：%s" % (waited, exc)
+            ) from exc
         if dst is not None:
             dst.parent.mkdir(parents=True, exist_ok=True)
             if dst.exists():
@@ -424,6 +567,21 @@ def main(argv: list[str] | None = None) -> int:
     urc = wintypes.RECT()
     user32.GetWindowRect(ui, ctypes.byref(urc))
     log("injected pid=%d ui=0x%X rect=(%d,%d,%d,%d)" % (pid, ui, urc.left, urc.top, urc.right, urc.bottom))
+
+    # 提示框会盖住整块界面（连落点都找不到）：拖之前先清掉，最多三轮
+    for _ in range(3):
+        closed = dismiss_dialogs(pid)
+        if not closed:
+            break
+        log("dismissed dialog(s) after inject: %r" % (closed,))
+        time.sleep(1.0)
+
+    # 开全模式再拖：否则默认只解脚本（data.xp3 只出 .tjs/.ks，图片/音频包 0 新增）
+    if click_button(pid, "Full Unpack"):
+        log("unpack mode: Full Unpack 已开启")
+    else:
+        log("WARNING: 没找到 'Full Unpack' 按钮，沿用当前模式（可能只解脚本）")
+    time.sleep(1.5)
 
     # blank drop point on the dialog (raise the window first; retry; log blockers)
     drop = None
@@ -498,6 +656,7 @@ def main(argv: list[str] | None = None) -> int:
                 rect = r
                 ix, iy = (rect[0] + rect[2]) // 2, (rect[1] + rect[3]) // 2
         assert ok_point, "item point blocked for %s" % fn
+        dismiss_dialogs(pid)          # 每包前再清一次：游戏可能又弹了提示
         log("dragging %s ..." % fn)
         drag(ix, iy, tx, ty)
         total, by_ext, size_total = wait_task_done(outdir, ui)
