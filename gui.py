@@ -359,15 +359,14 @@ _BTN_STYLE = {
 }
 
 
-def _poly(cv: tk.Canvas, x1: float, y1: float, x2: float, y2: float,
-          r: float, color: str, tags=()) -> int:
-    """圆角矩形的填充多边形。
+def _round_pts(x1: float, y1: float, x2: float, y2: float, r: float,
+               n: int = 8) -> list[float]:
+    """圆角矩形的顶点（每角 n 段圆弧）。
 
     **不用 `smooth=True`**：Tk 的平滑是对顶点做样条近似，圆角处会生成疏密不均的
-    短线段，浅色描边/窄边框在截图里直接断成虚线（2026-11-06 实测）。这里按 8 段
-    圆弧显式算顶点，边缘连续、半径也准。
+    短线段，浅色 1px 边框在截图里直接断成虚线（2026-11-06 实测）。显式算圆弧点，
+    边缘连续、半径也准；`create_line` 加 `dash` 时还能画出**真正的虚线圆角**。
     """
-    n = 8
     r = min(r, (x2 - x1) / 2, (y2 - y1) / 2)
     pts: list[float] = []
     for cx, cy, a0 in ((x2 - r, y1 + r, -90), (x2 - r, y2 - r, 0),
@@ -375,7 +374,13 @@ def _poly(cv: tk.Canvas, x1: float, y1: float, x2: float, y2: float,
         for i in range(n + 1):
             a = math.radians(a0 + 90 * i / n)
             pts += [cx + r * math.cos(a), cy + r * math.sin(a)]
-    return cv.create_polygon(pts, smooth=False, fill=color, outline="", tags=tags)
+    return pts
+
+
+def _poly(cv: tk.Canvas, x1: float, y1: float, x2: float, y2: float,
+          r: float, color: str, tags=()) -> int:
+    return cv.create_polygon(_round_pts(x1, y1, x2, y2, r), smooth=False,
+                             fill=color, outline="", tags=tags)
 
 
 def _round_rect(cv: tk.Canvas, x1: float, y1: float, x2: float, y2: float,
@@ -522,6 +527,16 @@ class PillButton(tk.Canvas):
         return super().cget(key)
 
 
+#: 阶段 → 进度位置。粗粒度**故意的**：用户要的是「在动、大概到哪」，
+#: 不是精确百分比 —— 各阶段耗时差几十倍（extract 几分钟、manifest 几十毫秒），
+#: 按真实耗时换算反而会让进度条长时间卡住不动。
+_STAGE_FRACTION = {
+    "detect": 0.08, "case-lookup": 0.13, "preflight": 0.17,
+    "extract": 0.55, "postprocess": 0.78, "verify": 0.93,
+    "organize": 0.97, "manifest": 1.0,
+}
+
+
 class RoundedEntry(tk.Canvas):
     """圆角输入框：Canvas 画 8px 圆角边框，真实 Entry 内嵌并居中。
 
@@ -533,26 +548,49 @@ class RoundedEntry(tk.Canvas):
     def __init__(self, parent: tk.Misc, textvariable: tk.StringVar, bg: str = UI.CARD,
                  height: int = 38, radius: int = 8, font=None) -> None:
         super().__init__(parent, height=height, bg=bg, bd=0, highlightthickness=0)
-        self._r, self._focused = radius, False
+        self._r, self._focused, self._drag = radius, False, False
         self.ent = tk.Entry(self, textvariable=textvariable, bd=0, relief="flat",
                             bg=UI.CARD, fg=UI.TEXT, font=font or UI.F_BODY,
                             highlightthickness=0, insertbackground=UI.SKY)
         self._win = self.create_window(12, height / 2, window=self.ent, anchor="w")
-        self.bind("<Configure>", self._resize)
+        self.bind("<Configure>", lambda e: self._redraw(e.width, e.height))
         self.bind("<Button-1>", lambda _e: self.ent.focus_set())
         self.ent.bind("<FocusIn>", lambda _e: self._set_focus(True))
         self.ent.bind("<FocusOut>", lambda _e: self._set_focus(False))
 
     def _set_focus(self, on: bool) -> None:
         self._focused = on
-        self._resize(type("E", (), {"width": self.winfo_width(),
-                                    "height": self.winfo_height()})())
+        self._redraw()
 
-    def _resize(self, event) -> None:                             # noqa: ANN001
-        w, h = max(1, event.width), max(1, event.height)
+    def set_highlight(self, on: bool) -> None:
+        """拖拽悬停时的「放这儿」提示：浅蓝底 + 天空蓝虚线描边。
+
+        为什么用虚线：实线会跟「聚焦态」撞车 —— 聚焦也是天空蓝 1px 实线，
+        用户分不清「我点的」还是「可以放」。虚线是拖拽语义里最通用的约定。
+        """
+        if self._drag == on:
+            return
+        self._drag = on
+        with contextlib.suppress(tk.TclError):
+            self.ent.configure(bg="#F7FCFF" if on else UI.CARD)
+        self._redraw()
+
+    def _redraw(self, w: int | None = None, h: int | None = None) -> None:
+        w = max(1, w if w is not None else self.winfo_width())
+        h = max(1, h if h is not None else self.winfo_height())
+        if w <= 2 or h <= 2:
+            return
         self.delete("bd")
-        _round_rect(self, 0.5, 0.5, w - 0.5, h - 0.5, self._r, fill=UI.CARD,
-                    outline=UI.SKY if self._focused else UI.LINE, width=1, tags="bd")
+        if self._drag:
+            _poly(self, 0.5, 0.5, w - 0.5, h - 0.5, self._r, "#F7FCFF", tags="bd")
+            pts = _round_pts(1.5, 1.5, w - 1.5, h - 1.5, self._r)
+            self.create_line(pts + [pts[0], pts[1]], fill=UI.SKY, width=2,
+                             dash=(5, 4), capstyle="round", joinstyle="round",
+                             tags="bd")
+        else:
+            _round_rect(self, 0.5, 0.5, w - 0.5, h - 0.5, self._r, fill=UI.CARD,
+                        outline=UI.SKY if self._focused else UI.LINE, width=1,
+                        tags="bd")
         self.tag_lower("bd")
         self.coords(self._win, 12, h / 2)
         self.itemconfigure(self._win, width=max(1, w - 24), height=max(1, h - 16))
@@ -670,9 +708,19 @@ class App:
         tk.Label(top, textvariable=self.var_status, bg=UI.CARD, fg=UI.TEXT_3,
                  font=UI.F_SMALL, anchor="e").pack(side="right")
         self.var_status.trace_add("write", lambda *_: self._sync_dot())
-        tk.Frame(lb, bg=UI.LINE_SOFT, height=1).pack(fill="x", pady=(12, 0))
+        self._divider = tk.Frame(lb, bg=UI.LINE_SOFT, height=1)
+        self._divider.pack(fill="x", pady=(12, 0))
 
-        box = tk.Frame(lb, bg=UI.CARD)
+        # 进度线：4px 细条，默认不占位；运行时插在分隔线下面，跑到 100% 再收起。
+        # 为什么不做成进度条控件：这里只有「在动/大概到哪」这一个语义，
+        # 用 stage 事件驱动一条线足够，不必引进度框架或百分比数字。
+        self._prog_f = self._prog_target = 0.0
+        self._prog_job = None
+        self._prog = tk.Canvas(lb, height=4, bg=UI.CARD, bd=0, highlightthickness=0)
+        self._prog.bind("<Configure>", lambda _e: self._draw_progress())
+
+        self._logbox = tk.Frame(lb, bg=UI.CARD)
+        box = self._logbox
         box.pack(fill="both", expand=True, pady=(12, 0))
         self.txt = tk.Text(box, height=10, wrap="none", state="disabled",
                            font=UI.F_MONO, bg=UI.CARD, fg=UI.TEXT_2, bd=0,
@@ -694,6 +742,11 @@ class App:
             for w in (root, self.ent_game):
                 w.drop_target_register(DND_FILES)           # type: ignore[attr-defined]
                 w.dnd_bind("<<Drop>>", self._on_drop)        # type: ignore[attr-defined]
+            # 拖拽悬停：整个窗口都是投放区，但「放哪儿」要靠输入框自己说
+            root.dnd_bind("<<DropEnter>>",                      # type: ignore[attr-defined]
+                          lambda _e: self._drag_over(True))
+            root.dnd_bind("<<DropLeave>>",                      # type: ignore[attr-defined]
+                          lambda _e: self._drag_over(False))
         if not hasattr(root, "drop_target_register") and not HAS_DND:
             self.var_status.set("就绪（未装 tkinterdnd2，拖拽不可用：浏览或粘贴路径）")
 
@@ -766,6 +819,104 @@ class App:
         elif not fits and not self._sb.winfo_ismapped():
             self._sb.pack(side="right", fill="y", padx=(10, 0))
 
+    # ---- 进度线 / 拖拽悬停 ----
+
+    def _drag_over(self, on: bool) -> None:
+        """拖拽悬停：输入框转虚线高亮，状态条给一句「松开即导入」。"""
+        self.ent_game.set_highlight(on)
+        if self.running:
+            return
+        self.var_status.set("松开鼠标 → 用这个目录开始" if on else "就绪")
+
+    def _prog_ready(self) -> bool:
+        """进度线存在才画：只造了部分属性的测试替身不该被装饰性代码搞崩。"""
+        return getattr(self, "_prog", None) is not None and hasattr(self, "_prog_job")
+
+    def _draw_progress(self) -> None:
+        if not self._prog_ready():
+            return
+        cv = self._prog
+        cv.delete("all")
+        w = cv.winfo_width()
+        if w <= 4:
+            return
+        y = 2.5
+        cv.create_line(2, y, w - 2, y, fill=UI.LINE_SOFT, width=3, capstyle="round")
+        if self._prog_f <= 0:
+            return
+        x = 2 + max(0.0, min(1.0, self._prog_f)) * (w - 4)
+        cv.create_line(2, y, max(3.0, x), y, fill=UI.SKY, width=3, capstyle="round")
+
+    def _progress_show(self) -> None:
+        if not self._prog_ready():
+            return
+        if not self._prog.winfo_ismapped():
+            self._prog.pack(fill="x", pady=(6, 0), before=self._logbox)
+            # 进度线自带轨道，上方那条 1px 分隔线就多余了 —— 并排两条横线显得脏
+            with contextlib.suppress(tk.TclError):
+                self._divider.configure(bg=UI.CARD)
+
+    def _progress_to(self, stage: str) -> None:
+        """按阶段推进；**单调不回退**（事件乱序也不会倒退）。"""
+        if not self._prog_ready():
+            return
+        frac = _STAGE_FRACTION.get(stage)
+        if frac is None or frac <= self._prog_target:
+            return
+        self._prog_target = frac
+        self._progress_show()
+        self._progress_tick()
+
+    def _progress_tick(self) -> None:
+        if not self._prog_ready():
+            return
+        if self._prog_job is not None:
+            with contextlib.suppress(tk.TclError):
+                self.root.after_cancel(self._prog_job)
+            self._prog_job = None
+
+        def step() -> None:
+            delta = self._prog_target - self._prog_f
+            if abs(delta) < 0.004:
+                self._prog_f = self._prog_target
+                self._draw_progress()
+                self._prog_job = None
+                return
+            self._prog_f += delta * 0.3            # 缓动到位，不做匀速跳变
+            self._draw_progress()
+            self._prog_job = self.root.after(24, step)
+
+        step()
+
+    def _progress_finish(self) -> None:
+        if not self._prog_ready():
+            return
+        self._prog_target = 1.0
+        self._progress_tick()
+
+        def hide() -> None:
+            self._prog.pack_forget()
+            self._prog_f = self._prog_target = 0.0
+            self._draw_progress()
+            with contextlib.suppress(tk.TclError):
+                self._divider.configure(bg=UI.LINE_SOFT)
+
+        with contextlib.suppress(tk.TclError):
+            self.root.after(900, hide)
+
+    def _progress_reset(self) -> None:
+        if not self._prog_ready():
+            return
+        if self._prog_job is not None:
+            with contextlib.suppress(tk.TclError):
+                self.root.after_cancel(self._prog_job)
+            self._prog_job = None
+        self._prog_f = self._prog_target = 0.0
+        self._prog.pack_forget()
+        self._draw_progress()
+        with contextlib.suppress(tk.TclError):
+            self._divider.configure(bg=UI.LINE_SOFT)
+
     def _sync_dot(self) -> None:
         """状态点：颜色跟状态文字走，一眼分出「在跑 / 通过 / 出错 / 受限」。"""
         text = self.var_status.get()
@@ -797,6 +948,7 @@ class App:
         self.root.destroy()
 
     def _on_drop(self, event) -> None:                      # noqa: ANN001
+        self._drag_over(False)
         game = pick_game_dir(event.data)
         if game is None:
             messagebox.showwarning("Galgame Unpacker", "拖进来的不是存在的目录")
@@ -956,6 +1108,8 @@ class App:
         self.btn_cancel.configure(state="normal")
         self.btn_open.configure(state="disabled")
         self.var_status.set(f"运行中：{game.name}")
+        self._progress_reset()
+        self._progress_to("detect")      # 立刻给一条线，别等第一个阶段事件
         self._log_clear()
         self._last_out = out
         # 第一行就告诉用户产物落在哪：跑十几分钟的活儿，最常被问的就是这个
@@ -995,6 +1149,7 @@ class App:
                     self._log(item[1])
                 elif kind == "stage":
                     self.var_status.set(f"运行中 · {item[1]}")
+                    self._progress_to(item[1])
                 elif kind == "done":
                     rc, man = item[1], item[2]
                     self.running = False
@@ -1004,6 +1159,7 @@ class App:
                     if not self._crashed:
                         # 崩溃时别再写「完成，退出码 1」——那会把「线程挂了」说成「跑完了」
                         self.var_status.set(f"完成，退出码 {rc}")
+                    self._progress_finish()
                     self._summarize(rc, man)
                     if self._close_when_done:
                         # 关窗请求已经等在这里：manifest 写完、摘要弹过，现在才真关。

@@ -93,7 +93,17 @@ def main() -> int:
     app._log("[OK  ] verify       97.48s  图片 3082/3082、音频 6558/6558、视频 12/12")
     root.update_idletasks()
     root.update()
-    root.after(300, lambda: None)
+    mode = sys.argv[4] if len(sys.argv) > 4 else "idle"
+    if mode == "running":
+        app._progress_show()
+        app._prog_f = app._prog_target = 0.55
+        app.var_status.set("运行中 · extract")
+        root.update()
+        app._draw_progress()
+    elif mode == "drag":
+        app._drag_over(True)
+        app.var_status.set("松开鼠标 → 用这个目录开始")
+        root.update()
     root.update()
 
     hwnd = root.winfo_id()
