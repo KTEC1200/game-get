@@ -21,12 +21,20 @@
 
 > **2026-11-02 测试反馈**：随包 GARbro 的 .NET 插件加载修复仅适用于可信工具目录；Unity 样本的音频收集未对账通过，KiriKiri 索引兜底已用真实注入新索引和模拟窗口缺失提取 2562 条，自然窗口缺失尚未复现。案例索引已保留旧案例并加入 Toshiue。实测和限制见 `verified-findings.md`。
 
-> **📌 当前状态（2026-11-06 21:45，v0.8.2）**
+> **📌 当前状态（2026-11-06 23:20，v0.8.2 + 本地 dropfix1）**
 > - **交付**：`packaging/Output/GalgameUnpacker-0.8.2-portable.zip`（148,528,606 B / 141.7 MiB，
 >   SHA256 `687f4cd3…f26de05e983d`），已发布到 GitHub Release **`v0.8.2`**
 >   <https://github.com/KTEC1200/game-get/releases/tag/v0.8.2>。Release 下**仅 1 个附件**
 >   （asset `717312891`），远端 `digest` 与本地 ZIP、说明里的 SHA256 三方一致；
 >   包内 `orchestrator/README.md` 是精简后的 125 行版本（与仓库同源）。
+> - **本地加固包（⚠️ 未发布，与上面 Release 附件不是同一份）**：
+>   `packaging/Output/GalgameUnpacker-0.8.2-dropfix1-portable.zip`
+>   （151,401,258 B / 144.4 MiB，SHA256 `9bc23bf9…64ba64514078d`），含落点遮挡加固。
+>   版本常量仍是 `0.8.2`（README / `--doctor` 契约不动），靠文件名 + 包内
+>   `orchestrator/BUILD_INFO.txt` 区分。已解压到 `D:\GalgameUnpacker\orchestrator`：
+>   该路径下 `--doctor` **High 完整性、全部位置可写、rc=0**，`--gui-smoke` rc=0；
+>   同一个 exe 放在 `D:\K` 内跑则是 Low 完整性、用户目录全不可写、rc=1
+>   —— 再次实证「路径决定完整性级别」这条规避。
 > - **实测态**：`教师催眠2` 全链 rc=0（9818 文件、三媒体零失败）；界面已按用户两轮反馈收敛
 >   （尺寸/留白/DPI 缩放），当前无未处理的用户反馈。
 > - **能力面**：9 条引擎链路可用；加密 KiriKiri 需 `--allow-gui`（要真实桌面）或人工拖拽 +
@@ -38,8 +46,11 @@
 >    `blockers={'Chrome_RenderWidgetHostHWND':…}`：窗口被别的程序压住就找不到落点。
 >    **2026-11-06 22:20 已做代码加固**（见文末「落点遮挡加固」）：可靠抬窗、每包重算落点、
 >    复核终点、可读报错 + 7 条回归测试；但**加固尚未在真机跑过**，需要一段约 40 分钟、
->    无人切窗口的干净桌面重跑一次才算闭环。⚠️ 加固只在源码仓库里，**0.8.2 便携包未变**：
->    实跑前要重新打包（或把源码态放到普通目录，别放 `D:\K` 以免 Low 完整性）。
+>    无人切窗口的干净桌面重跑一次才算闭环。✅ 2026-11-06 23:17 已重新冻结并打出本地
+>    `0.8.2-dropfix1` 包（见上），解压到普通目录且 High 完整性 / GUI 冒烟均通过；
+>    **从 PYZ 提取模块做过新旧对照**：新 exe 含 5 个加固标识、旧 assert 字符串消失，
+>    旧 0.8.2 exe 正好相反。现在只差真机独占桌面那一跑。
+>    ⚠️ 已发布的 Release `v0.8.2` 附件仍是**未加固**版，别拿它验加固。
 > 2. `Full Unpack` 是否对所有 KrkrExtract 版本/游戏都有效：目前只对 `教师催眠2` 验证过。
 > 3. 案例库仍只有 12 个 case；新变体照旧要从头逆向。
 > 4. `packaging\Output\orchestrator` 上那两条非标准 ACE（`Everyone …(DENY)(DC)`）来源未查明
@@ -1539,5 +1550,28 @@ PATCH 说明里的校验值同步改掉，再删旧 asset `717271806` 准备替�
 
 > **别把「测试绿」当成「闭环完成」**：这些是 Win32 行为的替身测试，真机上的前台锁、
 > DPI、多显示器、杀软注入拦截都没跑过。下一步仍是要一段干净桌面重跑 `--allow-gui`；
-> 实跑前**必须先重新打便携包**（已发布的 0.8.2 包里没有这次改动），
-> 或把源码态放到 `D:\K` 之外的普通目录（放 `D:\K` 会被降成 Low 完整性，写不进去）。
+> 实跑用本地 `GalgameUnpacker-0.8.2-dropfix1-portable.zip`（已发布的 0.8.2 附件里没有
+> 这次改动）。包已解压到 `D:\GalgameUnpacker\orchestrator`，直接双击 exe 即可；
+> 别放 `D:\K`（会被降成 Low 完整性，写不进去）。
+
+### 本地加固包怎么打的（2026-11-06 23:17，用户选「只出本地包、不发布」）
+
+`build_exe.portable()` 的输出名写死 `GalgameUnpacker-<APP_VERSION>-portable.zip`，直接跑会
+**覆盖已发布 0.8.2 的本地副本**。这次保持 `version.py` 的 `0.8.2` 不变（README 有契约测试
+锁着「当前版本」与便携包名），改为：只调 `build_exe.build()` 重新冻结 → 同步精简版 README
+→ 写 `BUILD_INFO.txt` → 用 `shutil.make_archive` 压到带 `-dropfix1` 的新文件名 → 立刻删掉
+dist 里的 BUILD_INFO（别污染下次正式构建）。打包装在一次性脚本 `.build_dropfix_pack.py`
+里，执行后已删除；关键护栏是**压缩前后各断言一次发布包 SHA256 未变**，以及包内 README
+125 行与仓库逐字相同、包内 exe 与 dist 的 SHA 相同、`testzip()` 无损坏条目。
+
+两个坑：① PyInstaller 的 COLLECT 阶段要删旧 `dist/orchestrator`（1502 文件）会被本机
+删除守卫拦，规避办法照旧是**把旧目录改名**（`orchestrator_prev_082`）再重跑，别批量删；
+该旧目录留作新旧对照（非交付物，可自行删除）。② `shutil.make_archive` 自动加 `.zip`，
+`base_name` 里别多写后缀；写 `BUILD_INFO.txt` 要显式 `newline="\n"`，否则 Windows 文本模式
+转成 CRLF，逐字校验会对不上。
+
+加固代码确实进包的实证（比「重新冻结过」硬）：`CArchiveReader(exe)` →
+`open_embedded_archive("PYZ.pyz")` → `extract("krkr_auto_extract")` 返回 code 对象，
+遍历 `co_names` / `co_consts`。新 exe 含 `raise_ui_window`、`scan_drop_point`、
+`find_drop_point`、`ensure_drop_point`、`KRKR_DROP_ATTEMPTS` 且旧断言字符串消失；
+旧的 0.8.2 exe 正好相反（885 个 PYZ 模块数一致，差异只在这一个模块）。

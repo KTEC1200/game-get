@@ -2179,5 +2179,10 @@ organize    图片 3082 / 音频 6558 / 视频 12 / 其他 166；硬链接 9818�
   `tests/test_krkr_drop_point.py` 7 条），逐层说明见 `AGENTS.md` 文末「落点遮挡加固」。
   ⚠️ **加固未经真机验证**：替身测试只建模了 Win32 行为，不等于闭环跑通。仍需一段约
   40 分钟、无人切窗口的干净桌面重跑；换第二个加密 krkr 样本还能顺带验 `Full Unpack`
-  的普适性。实跑前要重新打包 —— 已发布的 0.8.2 便携包不含这次改动。
+  的普适性。实跑用本地 `GalgameUnpacker-0.8.2-dropfix1-portable.zip`（2026-11-06 23:17
+  重新冻结，含加固；**已发布的 0.8.2 附件不含**）。包已解压到 `D:\GalgameUnpacker\orchestrator`
+  并实证：该路径 **High 完整性、`--doctor` 全位置可写 rc=0**；同一 exe 放在 `D:\K` 内则是
+  **Low 完整性、用户数据目录全不可写、rc=1** —— §32「路径决定完整性级别」再次复现。
+  从 PYZ 提取 `krkr_auto_extract` 做过新旧 exe 对照，确认加固代码确实进包（方法见
+  `AGENTS.md` 文末「本地加固包怎么打的」）。**真机 `--allow-gui` 闭环仍未跑过**。
 - `packaging\Output\orchestrator` 那两条非标准 ACE 的来源仍未查明。
