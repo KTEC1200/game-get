@@ -21,13 +21,34 @@
 
 > **2026-11-02 测试反馈**：随包 GARbro 的 .NET 插件加载修复仅适用于可信工具目录；Unity 样本的音频收集未对账通过，KiriKiri 索引兜底已用真实注入新索引和模拟窗口缺失提取 2562 条，自然窗口缺失尚未复现。案例索引已保留旧案例并加入 Toshiue。实测和限制见 `verified-findings.md`。
 
+> **📌 当前状态（2026-11-06 21:45，v0.8.2）**
+> - **交付**：`packaging/Output/GalgameUnpacker-0.8.2-portable.zip`（148,528,606 B / 141.7 MiB，
+>   SHA256 `687f4cd3…f26de05e983d`），已发布到 GitHub Release **`v0.8.2`**
+>   <https://github.com/KTEC1200/game-get/releases/tag/v0.8.2>。Release 下**仅 1 个附件**
+>   （asset `717312891`），远端 `digest` 与本地 ZIP、说明里的 SHA256 三方一致；
+>   包内 `orchestrator/README.md` 是精简后的 125 行版本（与仓库同源）。
+> - **实测态**：`教师催眠2` 全链 rc=0（9818 文件、三媒体零失败）；界面已按用户两轮反馈收敛
+>   （尺寸/留白/DPI 缩放），当前无未处理的用户反馈。
+> - **能力面**：9 条引擎链路可用；加密 KiriKiri 需 `--allow-gui`（要真实桌面）或人工拖拽 +
+>   `--reuse-raw` 收尾。其余引擎判得出但无链路（退出码 2）。
+>
+> **📋 待办（按优先级）**
+> 1. `--allow-gui` 的**全自动闭环没在本机跑到底**：第四轮卡在
+>    `assert drop, "no blank spot on KrkrExtract UI"`，日志
+>    `blockers={'Chrome_RenderWidgetHostHWND':…}` —— 窗口被别的程序压住就找不到落点。
+>    要确认「全自动可用」，得在干净桌面（无人操作）上重跑一次。**这是最大的一处未验证**。
+> 2. `Full Unpack` 是否对所有 KrkrExtract 版本/游戏都有效：目前只对 `教师催眠2` 验证过。
+> 3. 案例库仍只有 12 个 case；新变体照旧要从头逆向。
+> 4. `packaging\Output\orchestrator` 上那两条非标准 ACE（`Everyone …(DENY)(DC)`）来源未查明
+>    —— 已确认不影响规避方式（放普通目录即按 High 运行）。
+> 5. **不要加暗色模式**：用户 2026-11-06 明确说不做；界面 token 也刻意保持单套，别留半成品分支。
+
 > **🚀 接手顺序（新会话只做这三步）**
-> ① 读本文档「状态 / 下一步 / ⚠️ 五个坑」；~~两条 P1 缺口~~ **已修完（2026-11-05，v0.4.3，
->    用户定 A 案）**，见文末「2026-11-05 v0.4.3」与 verified-findings §30；~~速度优化~~
->    **已完成（2026-11-06，v0.5.0）**，见文末与 verified-findings §31；当前是**等用户实测反馈**。
-> ② 跑基线：`C:\Python314\python.exe tests\run_all.py`（**不要用裸 `python`**，它没有 pytest；2026-11-06：**tests=708 / 0 failures / 0 errors / 9 skipped**，skip 均为环境条件）
+> ① 读上面「当前状态 / 待办」+ 文末「⚠️ 五个坑」；
+> ② 跑基线：`C:\Python314\python.exe tests\run_all.py`（**不要用裸 `python`**，它没有 pytest；
+>    2026-11-06 v0.8.2：**tests=749 / 0 failures / 0 errors / 9 skipped**，skip 均为环境条件）
 >    + `C:\Python314\python.exe tests\make_golden.py --check`（应零漂移）；
-> ③ 按「下一步」当前项开工。**改完先回写本文档 + `verified-findings.md`，再清临时产物，最后提交。**
+> ③ 按「待办」当前项开工。**改完先回写本文档 + `verified-findings.md`，再清临时产物，最后提交。**
 
 ## 文件索引（按需读，别全读）
 
@@ -39,6 +60,7 @@
 | `galgame-ai-unpack-workflow-plan.md` | 需要完整方案、Windows 打包、许可证/法律时 |
 | `vn-unpacker-verification.md` | 需要第三方工具核实状态时 |
 | `software-plan.md` | **软件化路线与进度**：四阶段、阶段 3（打包/GUI）完成状态 |
+| `_ui/` | 界面截图与 `shot_app.py`（PrintWindow 渲染，不依赖前台窗口）—— 改 UI 后用它核对 |
 
 ## 工作区布局（2026-11-01 实测：根目录 **70 个文件 + 11 个子目录**，含 C# 解码器与黑盒工具）
 
@@ -1410,40 +1432,82 @@ Low 令牌被强制「禁止向上写」，所以 Medium 标签的桌面/文档/
 交付：`packaging/Output/GalgameUnpacker-0.7.1-portable.zip`
 （141.6 MiB，SHA256 `7e2e72a0…455f654f2`；`--doctor` 报 0.7.1、`--gui-smoke` rc=0）。
 
-## 2026-11-06 教师催眠2 闭环完成（v0.7.1）：手动拖拽 + 复用 raw 走通全链
-
-用户手动把 11 个 xp3 拖进 KrkrExtract（先点 **Full Unpack**），产物 **9818 文件 / 3.0 GB**
-（`data` / `image00~04` / `media` / `movie` / `scenario` / `voice01~02`）。移进
-`output/raw` 后按 `--reuse-raw` 跑完剩余阶段：**rc=0，135.6s**。
-
-| 阶段 | 结果 |
-|---|---|
-| detect | KiriKiri score=90 |
-| case-lookup | 命中 3 个案例（`兼职人妻` / `教师催眠1 xp3-encrypted-krkrZ` / `高慢妻陥落！！`） |
-| postprocess | 2748 个 `.tlg` → 2748 PNG（**复用上一轮，1.4s**） |
-| verify | 图片 3082/3082、音频 6558/6558、视频 12/12，失败 0，媒体 **907.1 分钟** |
-| organize | 图片 3082 / 音频 6558 / 视频 12 / 其他 166；硬链接 9818，失败 0 |
-| 对账 | `diff=None`（`no-index-available`：krkrZ 无索引，这是「没验」不是「验过」） |
-
-### 实跑暴露并修掉的 4 个问题（v0.7.1）
-
-1. **后处理不认已转产物**：`--reuse-raw` 重跑会把 2748 张 tlg 再解一遍（**1229s**）。
-   新增 `_converted_fresh()`（产物非空且 mtime ≥ 源）→ 1.4s，detail 里写「复用 N 个」。
-2. **`Stage.as_dict()` 被 data 盖字段**：`**self.data` 放在规范字段之后，而 postprocess 的
-   data 里也有 `ok`（转换成功数）→ `manifest.stages[].ok` 变成 **2748**。
-   改成「data 先铺、规范字段后盖」。
-3. **`stage_organize` 漏 `st.ok = True`**（`Stage.ok` 默认 False）→「硬链接 9818、失败 0」
-   被判成 `[FAIL]`，交付记录自相矛盾。
-4. **分类数与验收数差 1 个**：`voice01/*.soc` 扩展名认不出、按目录兜底算成音频
-   （音频 6559 vs 验收 6558）。新增 `EXT_OTHER`（ks/tjs/csv/ttf/sli/soc…）优先于目录兜底；
-   **`.dat`/`.at`/`.bin` 明确不能进** —— AdvHD 的视频就是 `.dat`、音频是 `.at`。
-
-顺带两处视图重建的正确性：加 `.galunpack-view` 标记（自己的视图原地重建、别人的同名目录
-顺延 `分类-2` 绝不覆盖）；重建时清理过期链接（分类规则变过会留下旧类目里的链接）；
-已链同一文件时跳过（原先「先 unlink 再 link」是 9818 次删除，本会话里直接被删除守卫拦到整轮失败）。
-
-交付：`packaging/Output/GalgameUnpacker-0.7.1-portable.zip`
-（141.6 MiB，SHA256 `7e2e72a0…455f654f2`；`--doctor` 报 0.7.1、`--gui-smoke` rc=0）。
-
 > 本轮全部实测证据（含「三层假阴性」「代理会话的假复现判据」「同一 exe 三处路径的对照表」）
 > 已归档到 `verified-findings.md` **§32**，排查同类问题时先读那一节。
+
+## 2026-11-06 v0.8.x：界面重做 / 高 DPI 适配 / 首次发布
+
+用户要求「更现代、更有质感，天空蓝只作点缀」，随后给了两轮具体反馈（上半部分挤、勾选框小、
+环境自检字太浅）。最终在 v0.8.2 收敛，并首次发布到 GitHub Release。
+
+### 设计口径（改 UI 前先读这段，别推翻重来）
+
+参考 Linear / Vercel Dashboard / GitHub Desktop / HandBrake：**留白 + 1px 发丝线分区**，
+不用凹陷状态栏、不用 3D 凸起按钮；层级靠**字号与字色**（`#0F172A` / `#475569` / `#94A3B8`）。
+
+- 底色 `#F5F7FA`、卡片纯白、描边 `#E5EAF1`；
+- **天空蓝 `#0EA5E9` 只出现四处**：主按钮、输入框聚焦环、勾选框选中态、状态点，
+  合计 < 3% 窗口面积。大面积铺蓝会让工具显得玩具感，也压掉日志可读性；
+- 圆角 12（卡片）/ 9（按钮）/ 8（输入框），间距 24 / 18 / 12 三档。
+
+### 控件全部自绘（`PillButton` / `RoundedEntry` / `Check` / `Card`）
+
+ttk 在 Windows 上只有系统主题的三维边框，做不出「1px + 圆角 + hover」。
+自绘后**接口仍兼容 ttk**（`configure(state=...)` / `configure(text=...)`），
+所以 `_start` / `_poll` 那些调用点一行没改 —— 这条别破坏。
+
+四个真踩过的坑：
+
+| 坑 | 现象 | 正解 |
+|---|---|---|
+| Card 把 body 塞进 `create_window` 并撑满 | 卡片高度被 canvas 默认高（276px）锁死，内容 100px 下面留 170px 空白 | canvas 只当背景层（`place`），body 用 `pack`，高度由内容决定 |
+| `create_polygon(..., smooth=True)` + 1px 描边 | 圆角断成一格格虚线（放大可见） | 用 `_round_pts()` 显式算 8 段圆弧点；要虚线时 `create_line(pts, dash=(5,4))` |
+| 日志 `Text(height=10)` | 高 DPI 下行高翻倍，请求高度超过卡片可用空间 → `pack` 把日志压成 **0 行**，界面一片空白 | `height=3` + `expand` 撑满；日志卡片内边距单独降到 16 |
+| 自绘尺寸写死像素 | 字体按点自动缩放、框不缩 → 200% 下「字大框小」，这也是「上半部分挤」的真因 | `UI.S` + `UI.px()`，按 `winfo_fpixels('1i')/96` 换算；`GALUNPACK_UI_SCALE` 可强制覆盖 |
+
+### 交互补丁（v0.8.1）
+
+- **进度线**：日志卡片分隔线位置一条 4px 细线，由 stage 事件驱动
+  （`detect` 8% / `extract` 55% / `verify` 93% / `manifest` 100%），单调不回退、0.3 系数缓动、
+  完成 0.9s 收起。位置**刻意粗粒度**：各阶段耗时差几十倍，按真实耗时换算会让线长时间卡住。
+  进度线出现时把上方 1px 分隔线调成卡片色，避免两条横线并排。
+- **拖拽悬停**：`<<DropEnter>>` / `<<DropLeave>>` → 输入框浅蓝底 + 天空蓝**虚线**
+  （实线留给聚焦态，两者语义不能撞车），状态条提示「松开鼠标 → 用这个目录开始」。
+
+### 文档与发布（2026-11-06 晚）
+
+- **README 精简 312 → 125 行**：只留用途 / 安装 / 使用（GUI+CLI 表）/ 产物 / 引擎表 /
+  环境 / 常见问题 / 边界 / 构建 / 文档索引。删掉版本演进长文、界面细节、工具链细节。
+  改完必须跑 `test_docs_contract.py`（锁「当前版本」「包名」「引擎表 = IMPLEMENTED」三件事）。
+- **首次 GitHub Release**：`v0.8.2`，附件 `GalgameUnpacker-0.8.2-portable.zip`。
+  环境里**没有 `gh`**，走的是「从 Git Credential Manager 取 token → REST API：
+  `POST /releases` 建标签和发布、`POST uploads.github.com/.../assets` 传附件」。
+  token 只存在变量里，别 echo、别写进任何文件。
+
+### 发布收尾与最终校验（2026-11-06 21:45，接手先读这段）
+
+首传的包里 README **还是精简前的 312 行版本**，而说明已写「包内 README 为精简版」——
+版本一致但内容不一致。于是重打 ZIP（125 行 README），SHA256 从
+`bcbd5f80…6e6c7899` 变成 **`687f4cd39611cbb714b884beb032c00d6ae7ab89dca534693facf26de05e983d`**，
+PATCH 说明里的校验值同步改掉，再删旧 asset `717271806` 准备替换。
+
+⚠️ **踩到的坑**：删旧附件与传新附件之间会话被中断，结果 Release 说明已是新 SHA、
+**`assets` 却是空数组**（`GET /releases/436536386/assets` 返回 `[]`）——
+页面看着像发布完成，实际一个可下载文件都没有。补传后恢复正常。
+**护栏**：任何「替换附件」操作，先 `GET /releases/{id}/assets` 看数量与 `digest`，
+确认后再动手；删旧附件和传新附件要连着做完，别在中间停；结束后必须再查一次
+`assets[].digest` 是否等于本地 `sha256sum` 与说明里的 SHA256。
+
+最终状态（已三方核对）：
+
+| 项 | 值 |
+|---|---|
+| Release | `v0.8.2` / id `436536386`，公开，含本次更新说明与 CLI 用法 |
+| 附件 | 1 个：`GalgameUnpacker-0.8.2-portable.zip`，asset `717312891`，148,528,606 B |
+| digest | `sha256:687f4cd3…f26de05e983d`（远端 = 本地 ZIP = 说明） |
+| 包内 README | `orchestrator/README.md` 125 行，与仓库同源 |
+
+上传用 `curl -X POST --data-binary @ZIP "https://uploads.github.com/repos/.../releases/{id}/assets?name=..."`
+（`Content-Type: application/zip`），148 MB 约 27s 返回 201。API 响应缓存文件
+（`_ui/assets.json` / `rel.json` / `rel_patch.json` / `upload*.json`）属临时产物，用完即删，
+不要留在工作树里，更不要提交。
