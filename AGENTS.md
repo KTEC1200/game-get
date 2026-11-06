@@ -21,17 +21,25 @@
 
 > **2026-11-02 测试反馈**：随包 GARbro 的 .NET 插件加载修复仅适用于可信工具目录；Unity 样本的音频收集未对账通过，KiriKiri 索引兜底已用真实注入新索引和模拟窗口缺失提取 2562 条，自然窗口缺失尚未复现。案例索引已保留旧案例并加入 Toshiue。实测和限制见 `verified-findings.md`。
 
-> **📌 当前状态（2026-11-07 00:47，BugFix 收口 + 用户数据已恢复 + 新包待打）**
+> **📌 当前状态（2026-11-07 01:02，BugFix 已提交 + 数据已恢复 + bugfix1 包已部署，待真机实跑）**
 > - **交付**：`packaging/Output/GalgameUnpacker-0.8.2-portable.zip`（148,528,606 B / 141.7 MiB，
 >   SHA256 `687f4cd3…f26de05e983d`），已发布到 GitHub Release **`v0.8.2`**
 >   <https://github.com/KTEC1200/game-get/releases/tag/v0.8.2>（仅 1 个附件，asset `717312891`，
 >   远端 digest / 本地 ZIP / 说明三方一致；包内 README 125 行与仓库同源）。
 >   **本轮不改 Release 附件、不动 `version.py` / README。**
-> - **本地加固包 dropfix1**（`GalgameUnpacker-0.8.2-dropfix1-portable.zip`，151,401,258 B，
->   SHA256 `9bc23bf9…64ba64514078d`，版本常量仍 `0.8.2`）：与 Release 附件**不是同一份**，
->   已解压到 `D:\GalgameUnpacker\orchestrator`（High 完整性 / `--doctor` rc=0 / `--gui-smoke` rc=0；
->   同一 exe 放 `D:\K` 内则 Low 完整性、rc=1，实证「路径决定完整性级别」）。
->   ⚠️ 它是**旧代码**，不含本轮 BugFix，必须重新打包才能实跑。
+> - **✅ 新本地包 bugfix1（已打、已部署，待真机实跑）**：
+>   `packaging/Output/GalgameUnpacker-0.8.2-bugfix1-portable.zip`
+>   （148,556,732 B / 141.7 MiB，SHA256 `29f35cf5…006a0ee7c`），包内 `BUILD_INFO.txt`
+>   标 `bugfix1` / 源码提交 `22495fd`；README 125 行与仓库逐字相同、包内 exe 与 dist 同 SHA
+>   `d00b1665…87b5`、`testzip()` 无损坏条目（1514 项）。
+>   **CArchiveReader 比对实证新代码进包**：新 exe 含 `_scan_drop_point` /
+>   `describe_unpack_controls` / `_norm_button_label`，旧 dropfix1 exe 没有；
+>   `manual._gui_error_text` 的平铺读取也在包里。
+>   已解压到 `D:\GalgameUnpacker\orchestrator`（旧部署改名 `orchestrator_prev_dropfix1` **保留未删**）：
+>   `--doctor` **High 完整性、全部位置可写、rc=0**、`--gui-smoke` rc=0、
+>   冻结 exe 对 `教师催眠2` 只读 `--dry-run` rc=0（detect / case-lookup / 随包 garbro 全通）。
+> - **历史包 dropfix1**（151,401,258 B，SHA256 `9bc23bf9…64ba64514078d`）与已发布 0.8.2
+>   **均未改动、未覆盖**，留作新旧对照；`build_exe.py --tag` 现在对同名 zip 一律拒绝覆盖。
 > - **✅ 用户数据已恢复（2026-11-07 00:40）**：`D:\HY\教师催眠2\output` 的 `raw/` 与 `png/`
 >   用 `tools/restore_from_view.py` 从 `分类/` 视图重建：**9818 个交付文件（raw 7070 / png 2748）**，
 >   冲突 0、失败 0；`--check --sample 8` 抽样 8/8 `samefile=True`、大小一致、缺失 0、rc=0。
@@ -40,39 +48,40 @@
 > - **✅ QA 独立验证收口**（详见文末「2026-11-07 接手收口」）：`Stage.as_dict()` 平铺 data 造成
 >   `manual._gui_error_text` 死路径已修、夹具改成真实形状；恢复后 `--reuse-raw --organize`
 >   在**加密包（无索引地面真相）**下 rc=0 已隔离实证，同时锁住「索引可列出时数据不齐必须报错」的边界。
-> - **源码状态**：HEAD `6d96c49`（交接文档提交），工作树 **10 个改动**（5 改 + 5 增，新增
->   `tests/test_reuse_after_restore.py`）。全量 `tests=806 / 0 failures / 0 errors / 9 skipped → PASS`，
->   `make_golden.py --check` 零漂移。**尚未提交**，别 `git add -A`。
-> - **⚠️ 事件本身仍未闭环**：2026-11-06 23:26 真机 `--allow-gui` 失败（60.54s / rc=1 / 交付 0），
->   4 项根因修复只在源码，**未经真机复现**：Full Unpack 能否点中、退化 rect 真实成因、
->   改名备份/回滚在冻结 exe + 中文路径下的表现，都要下一次约 40 分钟独占桌面实跑。
->   事故原始证据与四个真因见文末「2026-11-07 真机实跑失败与 BugFix」及 `verified-findings.md` §33。
+> - **源码状态**：HEAD `22495fd`，本轮 3 次提交均已推送 `game-get/master`
+>   （`9aabbca` 修复与文档 → `3ca1045` 打包护栏 → `22495fd` BUILD_INFO 口径）；工作树干净。
+>   全量 `tests=808 / 0 failures / 0 errors / 10 skipped → PASS`，`make_golden.py --check` 零漂移。
+>   **提交一律显式 add，禁用 `git add -A`。**
+> - **⚠️ 唯一未闭环项：真机 `--allow-gui` 全自动**。2026-11-06 23:26 的失败（60.54s /
+>   rc=1 / 交付 0）已定位并修代码、已打进 bugfix1 包，但**未经真机复现**：Full Unpack
+>   能否点中、退化 rect 真实成因、改名备份/回滚在冻结 exe + 中文路径下的表现，
+>   都要下一次约 40 分钟独占桌面实跑。事故原始证据与四个真因见文末
+>   「2026-11-07 真机实跑失败与 BugFix」及 `verified-findings.md` §33。
 > - **能力面**：9 条引擎链路可用；加密 KiriKiri 需 `--allow-gui`（要真实桌面）或人工拖拽 +
 >   `--reuse-raw` 收尾。其余引擎判得出但无链路（退出码 2）。
 >
-> **📋 待办（按优先级，2026-11-07 00:47 重排）**
-> 1. **显式提交 + 重新打本地包**：数据恢复与 QA 收口均已完成。显式 add 那 10 个改动
->    （**不要 `git add -A`**）提交并推送；打新标识包（别覆盖 dropfix1 与已发布 0.8.2），
->    解压到 `D:\GalgameUnpacker`，`--doctor` / `--gui-smoke` 自检后交给用户实跑。
->    `version.py` 保持 `0.8.2`（README 有契约测试），GitHub Release `v0.8.2` 附件不动。
-> 2. **`--allow-gui` 全自动真机闭环**：约 40 分钟独占桌面（不切窗口、不动鼠标、不锁屏、
->    不用远程桌面）跑 `教师催眠2`；看新日志的四分类统计行 + Full Unpack 诊断，
->    确认 4 项根因修复真生效。**修复未经真机复现，别声称闭环**。
-> 3. `Full Unpack` 是否对所有 KrkrExtract 版本/游戏都有效：目前只对 `教师催眠2` 验证过。
-> 4. 案例库仍只有 12 个 case；新变体照旧要从头逆向。
-> 5. `packaging\Output\orchestrator` 上那两条非标准 ACE（`Everyone …(DENY)(DC)`）来源未查明
+> **📋 待办（按优先级，2026-11-07 01:02 重排）**
+> 1. **`--allow-gui` 全自动真机闭环**（唯一硬骨头）：用 `D:\GalgameUnpacker\orchestrator`
+>    的 bugfix1 包跑 `教师催眠2`，约 40 分钟独占桌面（不切窗口、不动鼠标、不锁屏、
+>    不用远程桌面）；看新日志的四分类统计行 + Full Unpack 诊断，确认 4 项根因修复真生效。
+>    **修复未经真机复现，别声称闭环**。⚠️ 别对 `D:\HY\教师催眠2\output` 直接 `--overwrite`：
+>    恢复产物只此一份，先在副本上试或另指定输出目录。
+> 2. `Full Unpack` 是否对所有 KrkrExtract 版本/游戏都有效：目前只对 `教师催眠2` 验证过。
+> 3. 案例库仍只有 12 个 case；新变体照旧要从头逆向。
+> 4. `packaging\Output\orchestrator` 上那两条非标准 ACE（`Everyone …(DENY)(DC)`）来源未查明
 >    —— 已确认不影响规避方式（放普通目录即按 High 运行）。
-> 6. **不要加暗色模式**：用户 2026-11-06 明确说不做；界面 token 也刻意保持单套，别留半成品分支。
-> 7. 用户数据现场别再动：别删/改名 `D:\HY\教师催眠2\output\分类`，别用 `--overwrite` 重跑
->    覆盖这份恢复产物；真要重跑先在副本上试。
+> 5. **不要加暗色模式**：用户 2026-11-06 明确说不做；界面 token 也刻意保持单套，别留半成品分支。
+> 6. 用户数据现场别再动：别删/改名 `D:\HY\教师催眠2\output\分类`；真要重跑先在副本上试。
+>
+> **已完成（01:02）**：数据恢复、QA 收口与契约修复、3 次提交推送、bugfix1 新包与部署自检。
 
 > **🚀 接手顺序（新会话只做这四步）**
 > ① 读上面「当前状态 / 待办」+ 文末「2026-11-07 真机实跑失败与 BugFix」「接手收口」+「⚠️ 五个坑」；
 >    先跑 `git status` —— **工作树若有未提交改动，先问清是不是修复产物，别当成垃圾清掉**；
 > ② 跑基线：`C:\Python314\python.exe tests\run_all.py`（**不要用裸 `python`**，它没有 pytest；
->    提交后基线 **tests=806 / 0 failures / 0 errors**，skip 9~11 均为环境条件、随环境波动）
+>    提交后基线 **tests=808 / 0 failures / 0 errors**，skip 9~11 均为环境条件、随环境波动）
 >    + `C:\Python314\python.exe tests\make_golden.py --check`（应零漂移）；
-> ③ 用户数据已恢复，别再动 `D:\HY\教师催眠2\output`；优先推进待办 1、2，
+> ③ 用户数据已恢复，别再动 `D:\HY\教师催眠2\output`；直接推进待办 1（真机实跑），
 >    真机全链未复现前别声称「可交付」；
 > ④ **改完先回写本文档 + `verified-findings.md`，再清临时产物，最后显式 add 提交。**
 
@@ -1588,7 +1597,11 @@ dist 里的 BUILD_INFO（别污染下次正式构建）。打包装在一次性�
 `find_drop_point`、`ensure_drop_point`、`KRKR_DROP_ATTEMPTS` 且旧断言字符串消失；
 旧的 0.8.2 exe 正好相反（885 个 PYZ 模块数一致，差异只在这一个模块）。
 
-## 2026-11-07 真机 `--allow-gui` 实跑失败与 BugFix（未完成，待接手）
+## 2026-11-07 真机 `--allow-gui` 实跑失败与 BugFix（事故原始记录；01:02 收口见后一节）
+
+> ⚠️ 本节与下面「源码 / 测试 / QA 状态」「换窗口后的接手清单」是 **00:20 的历史快照**，
+> 其中的「未提交 / QA 未完成 / 待接手」均已过时。当前状态以文件顶部与
+> 「2026-11-07 00:47 接手收口」§4/§5 为准；事故证据与四个真因仍然有效。
 
 **换窗口前后的唯一权威状态。** 用户用 `D:\GalgameUnpacker\orchestrator`（dropfix1 解压目录）
 在 GUI 勾「用于加密的 krkr」+「按类型整理」，游戏 `D:/HY/教师催眠2`，输出
@@ -1713,12 +1726,35 @@ C:\Python314\python.exe tools\restore_from_view.py --out "D:\HY\教师催眠2\ou
   → rc=1 / `extract-failed`。这类样本只能重新解包，不能靠视图恢复后半路复用。
 - `--strict` 下无地面真相仍按既有契约判 rc=1 / `strict-no-ground-truth`。
 
-### 4. 测试与提交口径
+### 4. 测试、提交与打包（01:02 收口）
 
-`tests/run_all.py` → **806 / 0 failures / 0 errors / 9 skipped → PASS**（基线 800 + 新增 6：
-manual 3 + reuse 3）；`make_golden.py --check` 零漂移。工作树 10 个改动（5 改 + 5 增，
-其中 `tests/test_reuse_after_restore.py` 与 `tools/restore_from_view.py` 是本轮/上轮新增），
-**显式 add 提交，禁用 `git add -A`**。
+`tests/run_all.py` → **808 / 0 failures / 0 errors / 10 skipped → PASS**（基线 800 + 新增 8：
+manual 3 + reuse 3 + build_exe 2）；`make_golden.py --check` 零漂移。3 次提交均已推送
+`game-get/master`：`9aabbca`（12 文件：4 项根因修复 + 恢复工具 + QA 契约 + 文档）、
+`3ca1045`（`build_exe.py --tag` 护栏 + 2 测试）、`22495fd`（BUILD_INFO 去掉硬编码测试数）。
+**始终显式 add，没有用 `git add -A`，也没有删任何文件。**
 
-⚠️ 真机 `--allow-gui` 全自动仍未复现：以上全是源码态 + 隔离替身验证，用户手上的
-dropfix1 与 `D:\GalgameUnpacker` 仍是旧代码。重新打包 + 40 分钟独占桌面实跑见待办 1、2。
+### 5. 新包 bugfix1：构建、校验与部署
+
+- **构建**：`build_exe.py` 新增 `--tag`（文件名后缀 + 包内 `BUILD_INFO.txt` 自动生成；
+  `APP_VERSION` / README 契约不动；**同名 zip 一律拒绝覆盖**，tag 限安全字符；2 条护栏测试）。
+  旧 `dist/orchestrator` 与 `build/orchestrator` **改名保留**（`orchestrator_prev_dropfix1`、
+  `build_prev_dropfix1`），没有批量删除——绕开 PyInstaller COLLECT 阶段的删除守卫。
+  重跑冻结 1m36s：1485 文件 / 354.1 MiB，6 个随包工具全部 `[OK]`。
+- **产物**：`packaging/Output/GalgameUnpacker-0.8.2-bugfix1-portable.zip`，
+  148,556,732 B / 141.7 MiB，SHA256 `29f35cf5725074a94023ab92ad10e30f4c2dd1388f20e274f54701e006a0ee7c`。
+  初版包（BUILD_INFO 里误写 806）**改名保留**在
+  `_spike_pkg/dist/GalgameUnpacker-0.8.2-bugfix1-prelim-portable.zip`，未删除；
+  修掉口径后用 `--portable --tag bugfix1` 重出，包内 `源码提交 = 22495fd`。
+- **校验**：`testzip()` 无损坏（1514 项）、README 125 行与仓库逐字相同、包内 exe 与 dist
+  同 SHA `d00b1665…87b5`；`CArchiveReader` 提取 PYZ 模块比对：新 exe 的
+  `krkr_auto_extract` 含 `_scan_drop_point` / `describe_unpack_controls` / `_norm_button_label`
+  （旧 dropfix1 exe 没有），`manual._gui_error_text` 含平铺读取的 `isinstance` —— 修复确实进包。
+- **部署**：旧 `D:\GalgameUnpacker\orchestrator` 改名 `orchestrator_prev_dropfix1` **保留未删**，
+  新包解压到 `D:\GalgameUnpacker\orchestrator`；`--doctor` High 完整性 / 全部位置可写 / rc=0，
+  `--gui-smoke` rc=0，冻结 exe 对 `教师催眠2` 只读 `--dry-run` rc=0
+  （detect / 案例库 / 随包 GARbro 全通）。
+- **已发布 0.8.2 与 dropfix1 的 zip 字节、mtime 均未变**（148,528,606 B / 151,401,258 B）。
+
+⚠️ 真机 `--allow-gui` 全自动仍未复现：以上全是源码态 + 冻结包自检 + 隔离替身验证。
+下一次用 bugfix1 包、约 40 分钟独占桌面跑 `教师催眠2`，见待办 1。

@@ -2291,8 +2291,28 @@ golden 零漂移。当时 **QA 独立验证被中断未完成**，留下已核�
 | 边界 | GARbro 列得出索引时，恢复后 raw 少中间格式 → `复用产物对账失败`、rc=1 / `extract-failed`（这类样本只能重新解包） |
 | strict | 无地面真相按既有契约判 rc=1 / `strict-no-ground-truth` |
 
-**回归**：`tests/run_all.py` → `806 / 0 failures / 0 errors / 9 skipped → PASS`
-（基线 800 + 新增 6）；`make_golden.py --check` 零漂移。
+**回归**：`tests/run_all.py` → `808 / 0 failures / 0 errors / 10 skipped → PASS`
+（基线 800 + 新增 8：manual 3 + reuse 3 + build_exe 2）；`make_golden.py --check` 零漂移。
 
-⚠️ 以上仍是源码态 + 隔离替身。真机 40 分钟 `--allow-gui` 闭环未复现，
-`D:\GalgameUnpacker` 里的旧包未更新，重新打包前别让用户实跑。
+### 33.6 01:02 重新打包与部署（bugfix1，一手证据）
+
+`build_exe.py` 新增 `--tag`：本地加固包用文件名后缀 + 包内 `BUILD_INFO.txt` 区分，
+`APP_VERSION` 仍 `0.8.2`、README 契约不动；**同名 zip 一律拒绝覆盖**（2 条护栏测试），
+避免误覆盖已发布的 0.8.2 与本地 dropfix1 对照样本。BUILD_INFO 不再硬编码用例数
+（初版误写 806，与 808 漂移；该文件已改名保留、未删）。
+
+| 项目 | 实测 |
+|---|---|
+| 旧构建目录 | `dist/orchestrator` → `orchestrator_prev_dropfix1`、`build/orchestrator` → `build_prev_dropfix1`，**只改名不删**，绕开 COLLECT 删除守卫 |
+| 冻结 | 1m36s，1485 文件 / 354.1 MiB；garbro/assetstudio/tlg2png/krkr/krkrz/ffprobe 6 工具全 `[OK]` |
+| 产物 | `GalgameUnpacker-0.8.2-bugfix1-portable.zip`，148,556,732 B / 141.7 MiB，SHA256 `29f35cf5…006a0ee7c`，包内 `源码提交 = 22495fd` |
+| 完整性 | `testzip()` 无损坏（1514 项）；README 125 行与仓库逐字相同；包内 exe 与 dist 同 SHA `d00b1665…87b5` |
+| 新代码进包 | `CArchiveReader` 提取 PYZ：新 exe 的 `krkr_auto_extract` 含 `_scan_drop_point` / `describe_unpack_controls` / `_norm_button_label`，旧 dropfix1 exe 没有；`manual._gui_error_text` 含平铺读取的 `isinstance` |
+| 部署 | 旧 `D:\GalgameUnpacker\orchestrator` 改名 `orchestrator_prev_dropfix1` 保留未删，新包解压到原路径 |
+| 自检 | `--doctor` High 完整性 / 全部位置可写 / rc=0；`--gui-smoke` rc=0；冻结 exe 对 `教师催眠2` 只读 `--dry-run` rc=0（detect / 案例库 / 随包 GARbro 全通） |
+
+已发布 0.8.2（148,528,606 B）与 dropfix1（151,401,258 B）两个 zip 的字节与 mtime 均未变。
+3 次提交已推 `game-get/master`：`9aabbca` / `3ca1045` / `22495fd`。
+
+⚠️ **真机 40 分钟 `--allow-gui` 闭环仍未复现**。以上全是源码态 + 冻结包自检 +
+隔离替身验证；下一次用 bugfix1 包独占桌面跑 `教师催眠2`，才算端到端闭环。
