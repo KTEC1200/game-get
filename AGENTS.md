@@ -21,7 +21,7 @@
 
 > **2026-11-02 测试反馈**：随包 GARbro 的 .NET 插件加载修复仅适用于可信工具目录；Unity 样本的音频收集未对账通过，KiriKiri 索引兜底已用真实注入新索引和模拟窗口缺失提取 2562 条，自然窗口缺失尚未复现。案例索引已保留旧案例并加入 Toshiue。实测和限制见 `verified-findings.md`。
 
-> **📌 当前状态（2026-11-06 23:20，v0.8.2 + 本地 dropfix1）**
+> **📌 当前状态（2026-11-07 00:20，v0.8.2 + 本地 dropfix1 + 未提交的 BugFix）**
 > - **交付**：`packaging/Output/GalgameUnpacker-0.8.2-portable.zip`（148,528,606 B / 141.7 MiB，
 >   SHA256 `687f4cd3…f26de05e983d`），已发布到 GitHub Release **`v0.8.2`**
 >   <https://github.com/KTEC1200/game-get/releases/tag/v0.8.2>。Release 下**仅 1 个附件**
@@ -35,34 +35,60 @@
 >   该路径下 `--doctor` **High 完整性、全部位置可写、rc=0**，`--gui-smoke` rc=0；
 >   同一个 exe 放在 `D:\K` 内跑则是 Low 完整性、用户目录全不可写、rc=1
 >   —— 再次实证「路径决定完整性级别」这条规避。
-> - **实测态**：`教师催眠2` 全链 rc=0（9818 文件、三媒体零失败）；界面已按用户两轮反馈收敛
->   （尺寸/留白/DPI 缩放），当前无未处理的用户反馈。
+> - **⚠️ 2026-11-06 23:26 真机实跑 `--allow-gui` 失败 + 数据清空事件**：
+>   用户用 dropfix1 包跑 `教师催眠2`，`--overwrite` 先清空 `output/raw` 9818 +
+>   `png` 2748 个文件，随后 GUI 链路 60.54s 后 rc=1 → 交付 0 文件、退出码 1、弹「需要人工介入」。
+>   **`raw/`、`png/` 现已不存在，但 `output/分类` 硬链接视图 9818 文件 / 4.4 GiB 完好**，
+>   数据没真丢；`tools/restore_from_view.py --dry-run` 已验 rc=0、冲突 0、不写盘。
+>   详见文末「2026-11-07 真机实跑失败与 BugFix」。
+> - **源码状态**：HEAD `635549c`，工作树有 **9 个未提交改动**（5 改 + 4 增），
+>   是本轮 BugFix 产物：4 项根因修复 + 44 条新测试。工程师自测
+>   `tests=800 / 0 failures / 0 errors → PASS`（工程师自测 9 skipped、主理人复核 10 skipped，
+>   差异只是环境用例波动）、golden 零漂移、`IS_PASS: YES`。
+>   **QA 独立验证未完成**（被中断），有一处已核实的契约疑点（见待办 2）。
+>   ⚠️ 修复**只在源码仓库**：用户手上的 dropfix1 包与 `D:\GalgameUnpacker` 解压目录
+>   仍是旧代码，**必须重新打包才能实跑**；未提交前别 `git add -A`。
+> - **实测态**：`教师催眠2` 人工拖拽 + `--reuse-raw` 全链 rc=0（9818 文件、三媒体零失败，
+>   2026-11-06 16:55）；`--allow-gui` 全自动**真机跑过且失败**，不再是「没试过」。
+>   界面已按用户两轮反馈收敛；本轮截图反馈已转 BugFix，修复尚未交付验证结果。
 > - **能力面**：9 条引擎链路可用；加密 KiriKiri 需 `--allow-gui`（要真实桌面）或人工拖拽 +
 >   `--reuse-raw` 收尾。其余引擎判得出但无链路（退出码 2）。
 >
-> **📋 待办（按优先级）**
-> 1. `--allow-gui` 的**全自动闭环没在本机跑到底**（仍是最大未验证项）。第四轮卡在
->    `assert drop, "no blank spot on KrkrExtract UI"`，日志
->    `blockers={'Chrome_RenderWidgetHostHWND':…}`：窗口被别的程序压住就找不到落点。
->    **2026-11-06 22:20 已做代码加固**（见文末「落点遮挡加固」）：可靠抬窗、每包重算落点、
->    复核终点、可读报错 + 7 条回归测试；但**加固尚未在真机跑过**，需要一段约 40 分钟、
->    无人切窗口的干净桌面重跑一次才算闭环。✅ 2026-11-06 23:17 已重新冻结并打出本地
->    `0.8.2-dropfix1` 包（见上），解压到普通目录且 High 完整性 / GUI 冒烟均通过；
->    **从 PYZ 提取模块做过新旧对照**：新 exe 含 5 个加固标识、旧 assert 字符串消失，
->    旧 0.8.2 exe 正好相反。现在只差真机独占桌面那一跑。
->    ⚠️ 已发布的 Release `v0.8.2` 附件仍是**未加固**版，别拿它验加固。
-> 2. `Full Unpack` 是否对所有 KrkrExtract 版本/游戏都有效：目前只对 `教师催眠2` 验证过。
-> 3. 案例库仍只有 12 个 case；新变体照旧要从头逆向。
-> 4. `packaging\Output\orchestrator` 上那两条非标准 ACE（`Everyone …(DENY)(DC)`）来源未查明
+> **📋 待办（按优先级，2026-11-07 00:20 重排）**
+> 1. **恢复 `D:\HY\教师催眠2\output` 的 `raw/` 与 `png/`**（用户数据，最急）：
+>    `C:\Python314\python.exe tools\restore_from_view.py --out "D:\HY\教师催眠2\output" --dry-run`
+>    → 确认无误后去掉 `--dry-run` 实跑 → 再 `--check --sample 8` 验收。
+>    ⚠️ `output/分类` 是**唯一完整副本**，实跑前别删、别改名、别再点「开始解包」。
+>    口径：还原的是 **9818 个交付文件 = raw 7070 + png 2748**；原 `raw/` 里那 2748 个
+>    `.tlg`/`.pna` 中间格式不在视图内、无法还原（PNG 成品已完整回来）。
+>    「恢复后直接 `--reuse-raw --organize` 是否 rc=0」待 QA 结论（源 tlg 缺失会不会触发
+>    `_converted_fresh()` 重转 / verify 计数 / `manifest.stages[].ok` 被写成异常值）。
+> 2. **QA 独立验证收口**：唤醒 `software-qa-engineer` 出最终报告。它停在已核实的疑点：
+>    `orchestrator.Stage.as_dict()`（160 行）把 `data` **平铺**到顶层，而
+>    `manual._gui_error_text`（`manual.py:291`）只读 `s.get("data").get("gui_error")`，
+>    生产路径永远取空，靠 detail 里「真实报错：」的兜底分支（295 行）才工作；
+>    `tests/test_overwrite_backup.py` 的 `_GUI_STAGES` 夹具用了非真实的嵌套 `data` 形状，
+>    把这条死路径测绿了。最小修法：同时读顶层 `s.get("gui_error")` + 把夹具改成平铺形状。
+> 3. **提交 + 重新打本地包**：QA 通过后显式 add 那 9 个文件（**不要 `git add -A`**）提交并推送；
+>    打新标识包（别覆盖 dropfix1 与已发布 0.8.2），解压到 `D:\GalgameUnpacker` 再让用户实跑。
+>    `version.py` 保持 `0.8.2`（README 有契约测试），GitHub Release `v0.8.2` 附件不动。
+> 4. **`--allow-gui` 全自动闭环仍未跑到底**：dropfix1 那次失败已定位并修代码（退化 rect
+>    落点诊断 / Full Unpack 硬失败 / 文案 / 改名备份回滚），但**修复未经真机复现**。
+>    下一次仍需约 40 分钟独占桌面：不切窗口、不动鼠标、不锁屏、不用远程桌面。
+> 5. `Full Unpack` 是否对所有 KrkrExtract 版本/游戏都有效：目前只对 `教师催眠2` 验证过。
+> 6. 案例库仍只有 12 个 case；新变体照旧要从头逆向。
+> 7. `packaging\Output\orchestrator` 上那两条非标准 ACE（`Everyone …(DENY)(DC)`）来源未查明
 >    —— 已确认不影响规避方式（放普通目录即按 High 运行）。
-> 5. **不要加暗色模式**：用户 2026-11-06 明确说不做；界面 token 也刻意保持单套，别留半成品分支。
+> 8. **不要加暗色模式**：用户 2026-11-06 明确说不做；界面 token 也刻意保持单套，别留半成品分支。
 
-> **🚀 接手顺序（新会话只做这三步）**
-> ① 读上面「当前状态 / 待办」+ 文末「⚠️ 五个坑」；
+> **🚀 接手顺序（新会话只做这四步）**
+> ① 读上面「当前状态 / 待办」+ 文末「2026-11-07 真机实跑失败与 BugFix」+「⚠️ 五个坑」；
+>    先跑 `git status` —— **工作树有 9 个未提交改动是本轮修复，别当成垃圾清掉**；
 > ② 跑基线：`C:\Python314\python.exe tests\run_all.py`（**不要用裸 `python`**，它没有 pytest；
->    2026-11-06 晚：**tests=756 / 0 failures / 0 errors**，skip 均为环境条件）
+>    当前未提交态 **tests=800 / 0 failures / 0 errors**，skip 9~10 均为环境条件、随环境波动）
 >    + `C:\Python314\python.exe tests\make_golden.py --check`（应零漂移）；
-> ③ 按「待办」当前项开工。**改完先回写本文档 + `verified-findings.md`，再清临时产物，最后提交。**
+> ③ 按「待办」从第 1 项（恢复用户数据）开工；QA 未收口前别声称「可交付」；
+> ④ **改完先回写本文档 + `verified-findings.md`，再清临时产物，最后显式 add 提交。**
 
 ## 文件索引（按需读，别全读）
 
@@ -1575,3 +1601,83 @@ dist 里的 BUILD_INFO（别污染下次正式构建）。打包装在一次性�
 遍历 `co_names` / `co_consts`。新 exe 含 `raise_ui_window`、`scan_drop_point`、
 `find_drop_point`、`ensure_drop_point`、`KRKR_DROP_ATTEMPTS` 且旧断言字符串消失；
 旧的 0.8.2 exe 正好相反（885 个 PYZ 模块数一致，差异只在这一个模块）。
+
+## 2026-11-07 真机 `--allow-gui` 实跑失败与 BugFix（未完成，待接手）
+
+**换窗口前后的唯一权威状态。** 用户用 `D:\GalgameUnpacker\orchestrator`（dropfix1 解压目录）
+在 GUI 勾「用于加密的 krkr」+「按类型整理」，游戏 `D:/HY/教师催眠2`，输出
+`D:\HY\教师催眠2\output`（已有上一轮人工拖拽成果），点开始后弹「需要人工介入」：
+退出码 1、交付 0 文件、失败原因 `extract-failed`。
+
+### 现场（只读证据，路径 `D:\HY\教师催眠2\output`）
+
+| 位置 | 内容 |
+|---|---|
+| `manifest.json` | detect OK(KiriKiri score=90) / case-lookup 命中 3 案例 / preflight OK / **reset OK「`--overwrite` 已清空 raw/ 9818 个文件、png/ 2748 个文件」** / extract FAIL 60.54s「GUI 链路失败或没有产出 KrkrExtract_Output (rc=1)」；`manual.code = kirikiri-gui-failed` |
+| `_work/extract.log` | 11 个 xp3 全部 `garbro -l … unknown format`；`krkr_auto_extract.py rc=1`；`injected pid=34888 ui=0x9A0F28 rect=(812,282,2068,1422)`；`dismissed dialog(s): ['Information']`；`WARNING: ??? 'Full Unpack' ?????`；`RuntimeError: 拖拽落点被遮挡：重试 6 轮仍未… - (无可见遮挡窗口)` |
+| 弹窗 / `_work/manual.log` | 摘要「这个游戏的 xp3 自动解不开：GARbro 列不出目录」+ 备选「加 `--allow-gui --overwrite`」，与「用户已经勾了 --allow-gui」自相矛盾 |
+
+**结论：`allow_gui` 确实生效、GUI 链路真跑了 60.54s**，不是「没走全自动」。上一轮加固也生效了
+（从裸 `assert` 变成带处置建议的 `RuntimeError`），但暴露 4 个新问题：
+
+| # | 真因 | 修法（已在源码、未提交） |
+|---|---|---|
+| 1 | `--overwrite` 在 extract **之前**直接 `drop_tree(raw/)` + `drop_tree(png/)`，删除不可逆、失败不回滚；`gui.has_stale_products` 只数 raw/png，raw 被清空后「分类」视图还在却判成空目录 → **跳过二次确认** | `orchestrator.py`：同盘**改名备份**到 `<out>/_overwrite_backup_<时间戳>/{raw,png}`（零拷贝、不删）；`_finish_failure` 自动回滚（无新产物 rename 回来；有新产物绝不覆盖、备份保留）；reset/rollback stage 写进 manifest；GUI 把带 `.galunpack-view` 标记的视图也算残留 |
+| 2 | 落点扫描 `range(rc.top+6, rc.bottom-6, 40)` 在 `GetWindowRect` 返回**退化矩形**（最小化 -32000 附近 / 句柄失效全 0）时循环体执行 **0 次**，blockers 空 → 把「窗口不可见」误报成「(无可见遮挡窗口)」；旧实现命中首点即 return，统计只覆盖前几点 | `krkr_auto_extract.py`：新增 `_rect_valid` / `_is_window_alive` / `_is_window_visible` / `_classify_point` / `_rebind_ui_window` / `_scan_drop_point` 四分类统计（hit/no_window/child/other）/ `_drop_failure_message` / `find_drop_point_ex`（每轮自检 → 必要时重绑主窗口 → 抬窗 → 刷新 rect → 扫描，新 hwnd 回写 `main.ui`）。**口径未放宽**：仍只接受 `WindowFromPoint == 主窗口`，子控件不作落点 |
+| 3 | `click_button` 在**第一个**主窗口就 return、标签只做 `== "Full Unpack"` 精确比较（`&`/大小写/空格全漏）；**旧 main 只 log 一句 WARNING 就继续拖 11 个包**，KrkrExtract 默认只 `Decompile Script` → 无声的半份交付；`log()` 用 `msg.encode("ascii","replace")` 把中文打成 `?`，被 `_run_sibling` 收进 extract.log 后完全不可读 | 遍历全部主窗口 + `_norm_button_label` 归一化 + 只读诊断 `describe_unpack_controls`（区分枚举失败 / BM_CLICK 没生效，按 pid 找不到时按标题兜底）；**没点上 Full Unpack 在拖包之前硬失败**（`RuntimeError`，仅 `KRKR_ALLOW_NO_FULL_UNPACK=1` 降级且写明风险）；`_print_log` 保住中文 |
+| 4 | `manual.plan_for` 的 gui_failed 分支只换 code/why，summary 与 alternatives 复用加密分支；`stage_extract_kirikiri` 失败 detail 没带 krkr stdout 真实报错；`gui.summarize_text` 只显示错误码 | `manual.py` gui_failed 独立可操作文案（引用真实报错、日志路径、`KRKR_DROP_ATTEMPTS` / `KRKR_WINDOW_WAIT`、独占桌面、备份路径）；`allow_gui=True` 时 `alternatives=()`；`orchestrator._gui_error_from_output` 写入 `extract.data.gui_error` 与 detail「真实报错：…」；GUI 摘要显示错误码 + 真实原因 |
+
+### 数据现场与恢复（最急）
+
+`output/raw`、`output/png` **目录已不存在**；`output/分类` 硬链接视图 **9818 文件 / 4.4 GiB 完好**
+（含 `.galunpack-view` 标记）。数据没真丢，只是少了一个目录项。
+
+新增 `tools/restore_from_view.py`（纯标准库、零项目依赖、可单独拷走）：只读视图、要求
+`.galunpack-view` 标记、目标冲突默认拒绝覆盖、链接失败**不退化成复制**、只建硬链接不复制字节。
+只读 dry-run 已实测：`视图条目 9818（raw 7070 / png 2748）／新建硬链接 9818，冲突 0，失败 0（未写盘）rc=0`。
+
+```
+C:\Python314\python.exe tools\restore_from_view.py --out "D:\HY\教师催眠2\output" --dry-run
+C:\Python314\python.exe tools\restore_from_view.py --out "D:\HY\教师催眠2\output"
+C:\Python314\python.exe tools\restore_from_view.py --out "D:\HY\教师催眠2\output" --check --sample 8
+```
+
+**口径别写错**：还原的是 9818 个**交付文件**（raw 7070 + png 2748），不是「raw 9818 全恢复」；
+原 raw 里 2748 个 `.tlg`/`.pna` 中间格式不在视图内、无法还原（PNG 成品完整）。若确实需要中间
+格式原件只能重新解包 —— 这次**没有** `_overwrite_backup_` 目录，因为旧代码根本没备份。
+
+### 源码 / 测试 / QA 状态
+
+- HEAD `635549c`；工作树 **9 个未提交改动**：改 `gui.py`、`krkr_auto_extract.py`、`manual.py`、
+  `orchestrator.py`、`tests/test_krkr_drop_point.py`；增 `tools/restore_from_view.py`、
+  `tests/test_krkr_full_unpack.py`(14)、`tests/test_overwrite_backup.py`(14)、
+  `tests/test_restore_from_view.py`(10)。已跟踪部分 diff `+807/-93`。
+- 工程师自测：`tests=800 / 0 failures / 0 errors / 9 skipped → PASS`（791 passed / 9 skipped）；
+  主理人 00:20 复核 `790 passed / 10 skipped`、`0 failures / 0 errors`（skip 差异只是环境用例
+  波动；基线 756 + 新增 44，新增用例无一被跳过）；`make_golden.py --check` 零漂移；
+  `IS_PASS: YES`。定向 krkr 60 passed、backup+restore 24 passed。
+- **QA 独立验证未完成**：跑到一半被中断，只留下不完整的 `_qa_junit.xml`（已删）。它发现、
+  我已核实的疑点：`Stage.as_dict()`（`orchestrator.py:160`）把 data **平铺**到顶层，
+  `manual._gui_error_text`（`manual.py:291`）只读 `s.get("data").get("gui_error")` →
+  生产路径永远取空，靠 detail 里「真实报错：」的兜底分支（295 行）才工作；
+  `tests/test_overwrite_backup.py` 的 `_GUI_STAGES` 夹具用了非真实的嵌套 `data` 形状，把死路径测绿了。
+  **最小修法**：`_gui_error_text` 同时读顶层 `s.get("gui_error")`，并把夹具改成平铺形状。
+- 另一未决问题：恢复后（raw 7070 + png 2748）直接 `--reuse-raw --organize` 能否 rc=0？
+  要查 `stage_postprocess._converted_fresh()` 在源 `.tlg` 缺失时是跳过 / 重转 / 报错，
+  以及 `verify` 图片计数、`manifest.stages[].ok` 会不会被 `data["ok"]` 覆盖成异常值（v0.7.1 踩过）。
+
+### 换窗口后的接手清单
+
+1. `git status` 确认 9 个未提交改动还在；`C:\Python314\python.exe tests\run_all.py` 复现 800/0/0。
+2. 若团队上下文仍在，唤醒 `software-qa-engineer` 出最终报告（含上面两个未决点），按判定决定
+   是否把 `_gui_error_text` 交回工程师；否则自己按这两点做独立验证，别只复述工程师结论。
+3. **先恢复用户数据**（三条命令，先 dry-run）；`output/分类` 目录别删、别改名、别再点「开始解包」。
+4. 显式 add 那 9 个文件提交并推送（网络已恢复）；别改 `version.py` / README / Release `v0.8.2` 附件。
+5. 重新打本地包（新标识，不覆盖 dropfix1 与 0.8.2），解压到 `D:\GalgameUnpacker`，再让用户
+   独占桌面约 40 分钟实跑；**修复未经真机复现，不能声称闭环**。
+
+仍需真机验证：click_button 能否在真实 KrkrExtract 上枚举并点到 Full Unpack（现场日志是问号，
+分不清枚举失败还是点击失败）、退化 rect 的真实成因（看新日志的四分类统计行）、
+`IsWindow`/`GetAncestor` 在 200% DPI 与真实 Z 序下的行为、`raise_ui_window` 连招在具体桌面
+能否恢复可见性、改名备份/自动回滚在冻结 exe + 中文路径 + 删除守卫下的表现，
+以及整条链路端到端能否产出含图/音频的完整产物。

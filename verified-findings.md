@@ -2186,3 +2186,69 @@ organize    图片 3082 / 音频 6558 / 视频 12 / 其他 166；硬链接 9818�
   从 PYZ 提取 `krkr_auto_extract` 做过新旧 exe 对照，确认加固代码确实进包（方法见
   `AGENTS.md` 文末「本地加固包怎么打的」）。**真机 `--allow-gui` 闭环仍未跑过**。
 - `packaging\Output\orchestrator` 那两条非标准 ACE 的来源仍未查明。
+
+## 33. 2026-11-06 23:26 真机 `--allow-gui` 首次实跑：加固生效但暴露 4 个新缺陷（含一次数据清空）
+
+### 33.1 事实与证据链
+
+用户用 `GalgameUnpacker-0.8.2-dropfix1-portable.zip` 的解压目录
+`D:\GalgameUnpacker\orchestrator`（High 完整性），在 GUI 勾「用于加密的 krkr」+「按类型整理」，
+游戏 `D:\HY\教师催眠2`，输出 `D:\HY\教师催眠2\output`（已有上一轮人工拖拽成果）。
+
+`manifest.json` 与 `_work/*.log`：
+- `allow_gui` **确实生效**：extract stage 真调了 `krkr_auto_extract.py`，60.54s 后 rc=1；
+  不是「没走全自动」，也不是「退回 GARbro 建议」。
+- 注入成功：`injected pid=34888 ui=0x9A0F28 rect=(812,282,2068,1422)`，
+  `dismissed dialog(s) after inject: ['Information']`。
+- 11 个 xp3 全部 `garbro -l … unknown format`（与历史一致，krkrZ 加密包无索引）。
+- `WARNING: ??? 'Full Unpack' ?????` → Full Unpack 没点上；中文变问号是 `log()` 里
+  `msg.encode("ascii","replace")` 造成的，经 `_run_sibling` 收进 `_work/extract.log`。
+- `RuntimeError: 拖拽落点被遮挡：重试 6 轮仍未在 KrkrExtract 窗口内找到可见空白点。
+  - (无可见遮挡窗口)` —— **上一轮加固确实生效**（裸 `assert` → 带处置建议的 `RuntimeError`）。
+- reset stage：`--overwrite 已清空 raw/ 9818 个文件、png/ 2748 个文件`，**发生在 extract 之前**；
+  失败后无回滚 → 交付 0 文件、退出码 1、弹「需要人工介入」。
+
+### 33.2 四个真因
+
+1. **退化 rect → 采样 0 次**：`scan_drop_point` 的 `range(rc.top+6, rc.bottom-6, 40)`
+   在 `GetWindowRect` 返回退化矩形（最小化 -32000 附近 / 句柄失效全 0）时循环体不执行，
+   blockers 保持空 dict → 渲染成「(无可见遮挡窗口)」。**不是 blocker 统计漏记，是一次都没采样**，
+   把「窗口不可见/已关闭」误报成「没人挡」。放大因素：旧实现命中首点即 return；
+   `describe_window(0)` 一律返回 "(none)"；`find_drop_point` 每轮只抬窗+扫，不校验句柄/rect、
+   不重新枚举主窗口。
+2. **Full Unpack 的无声半份交付**：`click_button` 在第一个主窗口即 return、标签只做精确
+   `== "Full Unpack"`（`&` 助记符/大小写/尾随空格全漏）；旧 main 只 log 一句 WARNING 就继续拖
+   11 个包。KrkrExtract 默认只 `Decompile Script`，而 `wait_task_done` 只看文件数稳定
+   → 会产出缺图/缺音频的「半份交付」并判成功。
+3. **失败文案与真实根因脱节**：`manual.code=kirikiri-gui-failed`，但 summary 仍是
+   「GARbro 列不出目录（大概率加密/受保护）」，alternatives 仍推荐 `--allow-gui --overwrite`，
+   而用户已经用了 `--allow-gui`；`stage_extract_kirikiri` 的 detail 也没带 krkr stdout 真实报错。
+4. **`--overwrite` 删除不可逆**：清场在 extract 之前、无备份/无回滚；
+   `gui.has_stale_products` 只数 raw/png，raw 被清空但「分类」视图还在时判成空目录，
+   **跳过二次确认**。
+
+### 33.3 数据安全结论：没丢，但只剩一份
+
+`output/raw`、`output/png` 目录已不存在；`output/分类` 硬链接视图 **9818 文件 / 4.4 GiB 完好**
+（`.galunpack-view` 标记在）。硬链接特性：删掉一个目录项只是少一个名字，数据仍由视图里的链接持有。
+`tools/restore_from_view.py --dry-run` 实测 rc=0：
+`视图条目 9818（raw 7070 / png 2748）／新建硬链接 9818，冲突 0，失败 0（未写盘）`。
+
+**口径**：视图是 organize 的 final 交付口径，9818 = raw 7070 + png 2748；reset 清的是
+raw 9818 + png 2748，差的 2748 个正是被后处理消费掉的 `.tlg`/`.pna` 中间格式。还原后拿回的是
+**全部 9818 个交付文件**，中间格式原件无法从视图恢复（PNG 成品完整）。
+「恢复后直接 `--reuse-raw --organize` 能否 rc=0」尚未验证（源 tlg 缺失时
+`_converted_fresh()` 是跳过/重转/报错待查）。
+
+### 33.4 修复与状态（截至 2026-11-07 00:20）
+
+源码仓库 `D:\K\deepseek` 有 9 个未提交改动（HEAD `635549c`）：改名备份 + 失败自动回滚、
+四分类落点诊断 + 句柄重绑、Full Unpack 硬失败前置 + 日志编码、gui_failed 独立文案、
+恢复工具，以及 44 条新替身测试。工程师自测 `800 / 0 failures / 0 errors / 9 skipped → PASS`；
+主理人 00:20 复核 `790 passed / 10 skipped`、`0 failures / 0 errors`（skip 差异为环境用例波动），
+golden 零漂移。**QA 独立验证未完成**；已核实的契约疑点（`Stage.as_dict()` 平铺 data vs
+`manual._gui_error_text` 读 `s.get("data")`）见 `AGENTS.md` 文末章节。
+
+⚠️ **这些修复全是源码态 + 替身测试，未真机复现**：用户手上的 dropfix1 包与
+`D:\GalgameUnpacker` 解压目录仍是旧代码，必须重新打包后再跑。`--allow-gui` 全自动闭环
+**仍未跑到底**，待办 #1 从「没试过」变成「试过、失败、代码已修、待真机复验」。
