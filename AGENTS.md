@@ -48,9 +48,10 @@
 > - **✅ QA 独立验证收口**（详见文末「2026-11-07 接手收口」）：`Stage.as_dict()` 平铺 data 造成
 >   `manual._gui_error_text` 死路径已修、夹具改成真实形状；恢复后 `--reuse-raw --organize`
 >   在**加密包（无索引地面真相）**下 rc=0 已隔离实证，同时锁住「索引可列出时数据不齐必须报错」的边界。
-> - **源码状态**：HEAD `22495fd`，本轮 3 次提交均已推送 `game-get/master`
->   （`9aabbca` 修复与文档 → `3ca1045` 打包护栏 → `22495fd` BUILD_INFO 口径）；工作树干净。
->   全量 `tests=808 / 0 failures / 0 errors / 10 skipped → PASS`，`make_golden.py --check` 零漂移。
+> - **源码状态**：本轮代码提交 3 次（`9aabbca` 修复与文档 → `3ca1045` 打包护栏 →
+>   `22495fd` BUILD_INFO 口径）+ 文档回写提交，全部已推送 `game-get/master`；
+>   最新提交号以 `git log -1` 为准。包内 BUILD_INFO 记的 `22495fd` 是**打包那一刻**的 HEAD。
+>   工作树干净。全量 `tests=808 / 0 failures / 0 errors / 10 skipped → PASS`，`make_golden.py --check` 零漂移。
 >   **提交一律显式 add，禁用 `git add -A`。**
 > - **⚠️ 唯一未闭环项：真机 `--allow-gui` 全自动**。2026-11-06 23:26 的失败（60.54s /
 >   rc=1 / 交付 0）已定位并修代码、已打进 bugfix1 包，但**未经真机复现**：Full Unpack
@@ -1731,7 +1732,8 @@ C:\Python314\python.exe tools\restore_from_view.py --out "D:\HY\教师催眠2\ou
 `tests/run_all.py` → **808 / 0 failures / 0 errors / 10 skipped → PASS**（基线 800 + 新增 8：
 manual 3 + reuse 3 + build_exe 2）；`make_golden.py --check` 零漂移。3 次提交均已推送
 `game-get/master`：`9aabbca`（12 文件：4 项根因修复 + 恢复工具 + QA 契约 + 文档）、
-`3ca1045`（`build_exe.py --tag` 护栏 + 2 测试）、`22495fd`（BUILD_INFO 去掉硬编码测试数）。
+`3ca1045`（`build_exe.py --tag` 护栏 + 2 测试）、`22495fd`（BUILD_INFO 去掉硬编码测试数），
+其后是文档回写提交（见 `git log`）。
 **始终显式 add，没有用 `git add -A`，也没有删任何文件。**
 
 ### 5. 新包 bugfix1：构建、校验与部署

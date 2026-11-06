@@ -2312,7 +2312,8 @@ golden 零漂移。当时 **QA 独立验证被中断未完成**，留下已核�
 | 自检 | `--doctor` High 完整性 / 全部位置可写 / rc=0；`--gui-smoke` rc=0；冻结 exe 对 `教师催眠2` 只读 `--dry-run` rc=0（detect / 案例库 / 随包 GARbro 全通） |
 
 已发布 0.8.2（148,528,606 B）与 dropfix1（151,401,258 B）两个 zip 的字节与 mtime 均未变。
-3 次提交已推 `game-get/master`：`9aabbca` / `3ca1045` / `22495fd`。
+代码提交 3 次已推 `game-get/master`：`9aabbca` / `3ca1045` / `22495fd`，随后是文档回写提交；
+包内 BUILD_INFO 记的 `22495fd` 是打包那一刻的 HEAD，不是文档提交号。
 
 ⚠️ **真机 40 分钟 `--allow-gui` 闭环仍未复现**。以上全是源码态 + 冻结包自检 +
 隔离替身验证；下一次用 bugfix1 包独占桌面跑 `教师催眠2`，才算端到端闭环。
