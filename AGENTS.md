@@ -1287,7 +1287,8 @@ manifest：`source.archives == []`、`source.unsupported == null`。
    全量 `tests=720 failures=0 errors=0 skipped=12 → PASS`。
 
 交付：`packaging/Output/GalgameUnpacker-0.6.0-portable.zip`
-（SHA256 `8b903f02…b36257`，141.6 MiB，1485 文件 / 354.1 MiB 解压后）。
+（141.6 MiB；2026-11-06 15:23 重打，SHA256 `3c5e9798…f43453db`；解压后 1485 文件 / 354.1 MiB）。
+重打后已实测：解压到 `%TEMP%` 跑 `--doctor` 版本 0.6.0、`--gui-smoke` rc=0。
 
 #### 结案（2026-11-06 15:2x）：根因是**路径**，不是 ACL/杀软/提权
 
