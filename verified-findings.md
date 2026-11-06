@@ -2170,7 +2170,14 @@ organize    图片 3082 / 音频 6558 / 视频 12 / 其他 166；硬链接 9818�
 ### 32.7 遗留
 
 - **`--allow-gui` 在本机没跑到底**：第四轮卡在 `assert drop, "no blank spot on KrkrExtract UI"`，
-  日志 `blockers={'Chrome_RenderWidgetHostHWND':…}` —— KrkrExtract 窗口被别的窗口压住时
-  找不到空白落点。这类链路只适合「人在电脑前、别切窗口」。要确认全自动可用，需在
-  另一个人加密 krkr 样本上重跑一次。
+  日志 `blockers={'Chrome_RenderWidgetHostHWND':…}` —— 真因是**前台锁**让
+  `SetForegroundWindow` 静默失败，KrkrExtract 没被抬到最前，整块窗口矩形扫不到可见空白点；
+  另有 `SetWindowPos` 未声明 `argtypes`（64 位句柄截断）、落点只算一次、
+  Explorer 前置后不复核终点、裸 assert 这四层叠加。
+  **2026-11-06 22:20 已按五层真因做源码加固**（`raise_ui_window` 的 TOPMOST→NOTOPMOST 连招、
+  `argtypes` 修复、每包重算落点、`ensure_drop_point` 复核终点、`RuntimeError` 带遮挡窗口明细；
+  `tests/test_krkr_drop_point.py` 7 条），逐层说明见 `AGENTS.md` 文末「落点遮挡加固」。
+  ⚠️ **加固未经真机验证**：替身测试只建模了 Win32 行为，不等于闭环跑通。仍需一段约
+  40 分钟、无人切窗口的干净桌面重跑；换第二个加密 krkr 样本还能顺带验 `Full Unpack`
+  的普适性。实跑前要重新打包 —— 已发布的 0.8.2 便携包不含这次改动。
 - `packaging\Output\orchestrator` 那两条非标准 ACE 的来源仍未查明。

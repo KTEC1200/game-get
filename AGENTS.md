@@ -33,10 +33,13 @@
 >   `--reuse-raw` 收尾。其余引擎判得出但无链路（退出码 2）。
 >
 > **📋 待办（按优先级）**
-> 1. `--allow-gui` 的**全自动闭环没在本机跑到底**：第四轮卡在
+> 1. `--allow-gui` 的**全自动闭环没在本机跑到底**（仍是最大未验证项）。第四轮卡在
 >    `assert drop, "no blank spot on KrkrExtract UI"`，日志
->    `blockers={'Chrome_RenderWidgetHostHWND':…}` —— 窗口被别的程序压住就找不到落点。
->    要确认「全自动可用」，得在干净桌面（无人操作）上重跑一次。**这是最大的一处未验证**。
+>    `blockers={'Chrome_RenderWidgetHostHWND':…}`：窗口被别的程序压住就找不到落点。
+>    **2026-11-06 22:20 已做代码加固**（见文末「落点遮挡加固」）：可靠抬窗、每包重算落点、
+>    复核终点、可读报错 + 7 条回归测试；但**加固尚未在真机跑过**，需要一段约 40 分钟、
+>    无人切窗口的干净桌面重跑一次才算闭环。⚠️ 加固只在源码仓库里，**0.8.2 便携包未变**：
+>    实跑前要重新打包（或把源码态放到普通目录，别放 `D:\K` 以免 Low 完整性）。
 > 2. `Full Unpack` 是否对所有 KrkrExtract 版本/游戏都有效：目前只对 `教师催眠2` 验证过。
 > 3. 案例库仍只有 12 个 case；新变体照旧要从头逆向。
 > 4. `packaging\Output\orchestrator` 上那两条非标准 ACE（`Everyone …(DENY)(DC)`）来源未查明
@@ -46,7 +49,7 @@
 > **🚀 接手顺序（新会话只做这三步）**
 > ① 读上面「当前状态 / 待办」+ 文末「⚠️ 五个坑」；
 > ② 跑基线：`C:\Python314\python.exe tests\run_all.py`（**不要用裸 `python`**，它没有 pytest；
->    2026-11-06 v0.8.2：**tests=749 / 0 failures / 0 errors / 9 skipped**，skip 均为环境条件）
+>    2026-11-06 晚：**tests=756 / 0 failures / 0 errors**，skip 均为环境条件）
 >    + `C:\Python314\python.exe tests\make_golden.py --check`（应零漂移）；
 > ③ 按「待办」当前项开工。**改完先回写本文档 + `verified-findings.md`，再清临时产物，最后提交。**
 
@@ -1511,3 +1514,30 @@ PATCH 说明里的校验值同步改掉，再删旧 asset `717271806` 准备替�
 （`Content-Type: application/zip`），148 MB 约 27s 返回 201。API 响应缓存文件
 （`_ui/assets.json` / `rel.json` / `rel_patch.json` / `upload*.json`）属临时产物，用完即删，
 不要留在工作树里，更不要提交。
+
+### 落点遮挡加固（2026-11-06 22:20，源码态，**尚未真机验证**）
+
+用户定「先加固，再实跑」。第四轮那句 `no blank spot` 拆开是**五层**问题，不是「窗口被挡」一句话：
+
+| # | 真因 | 修法 |
+|---|---|---|
+| 1 | **前台锁**：Windows 只允许前台进程调 `SetForegroundWindow`；本脚本是 orchestrator 拉起的子进程，注入后前台常是游戏/浏览器，调用静默返回 0，窗口根本没被抬起来 | `raise_ui_window()` 用 **TOPMOST → NOTOPMOST** 连招：先临时置顶越过所有普通窗口，立刻退回普通组顶部（Z 序仍在最前），**不需要前台权限**，也不会把窗口永久置顶留给用户 |
+| 2 | 64 位下 `SetWindowPos` 未声明 `argtypes`，`(HWND)-1` 被按 `c_int` 截成 `0xFFFFFFFF`，置顶静默失效 | 显式声明 `argtypes/restype`；另验证 `wintypes.HWND(-1) == 0xffffffffffffffff` |
+| 3 | 落点**只算一次**，11 个 xp3 共用一个坐标；两包之间约 40s，任何一次切窗都会让后续全错 | 循环内每包 `find_drop_point(ui)` 重新抬窗 + 重扫；循环外保留一次早失败检查 |
+| 4 | 打开 Explorer 并 `SetForegroundWindow(exp)` 后又把终点盖住 —— 旧代码从不复核终点，包可能被拖到 Explorer 上**静默丢掉** | 拖拽前 `ensure_drop_point()` 复核；失效就在当前 Z 序里换一个仍可见的空白点，**刻意不重新抬窗**（否则起点 xp3 图标会被压到后面，起点终点必须同时可见） |
+| 5 | 裸 `assert drop`：`python -O` 下整行被优化掉，报错只有一句字符串，看不出谁挡着 | 抛 `RuntimeError`，列出遮挡窗口的类名 / pid / 标题与出现次数，并给「关闭或缩小窗口、别切窗口」的处置建议 |
+
+新增 `DROP_ATTEMPTS`（`KRKR_DROP_ATTEMPTS` 可覆盖，默认 6）、`DROP_GRID=40`。
+`scan_drop_point` **仍只接受 `WindowFromPoint == 主窗口` 的点**：子控件不收 `WM_DROPFILES`，
+落到上面会丢包，这条口径别「顺手放宽」。
+
+回归：`tests/test_krkr_drop_point.py` 7 条，用 `FakeUser32` 把 Z 序抽象成
+`WindowFromPoint` 返回值，锁住前台锁下仍能抬窗、Chrome 遮挡恢复、全遮挡报错可操作、
+子控件不作落点、Explorer 盖住时刷新且**不重新抬窗**、以及 main 里
+`find=3 / ensure=2`（2 个包 → 循环外 1 + 每包 1 / 每包 1）。全量回归
+`tests=756 / 0 failures / 0 errors → PASS`，`make_golden.py --check` 零漂移。
+
+> **别把「测试绿」当成「闭环完成」**：这些是 Win32 行为的替身测试，真机上的前台锁、
+> DPI、多显示器、杀软注入拦截都没跑过。下一步仍是要一段干净桌面重跑 `--allow-gui`；
+> 实跑前**必须先重新打便携包**（已发布的 0.8.2 包里没有这次改动），
+> 或把源码态放到 `D:\K` 之外的普通目录（放 `D:\K` 会被降成 Low 完整性，写不进去）。

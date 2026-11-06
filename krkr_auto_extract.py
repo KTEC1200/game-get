@@ -30,6 +30,18 @@ user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
 user32.SetProcessDPIAware()  # 本机 200% 缩放：此后全部坐标为物理像素
 
+# --- 前台 / 置顶（2026-11-06 加固：窗口被别的程序压住时找不到拖拽落点）---
+SW_RESTORE = 9
+HWND_TOPMOST = -1
+HWND_NOTOPMOST = -2
+SWP_NOSIZE, SWP_NOMOVE, SWP_SHOWWINDOW = 0x0001, 0x0002, 0x0040
+# SetWindowPos 的第二个参数是 HWND。不声明 argtypes 时 ctypes 按 c_int 传参，
+# 64 位下 (HWND)-1 会被截成 0xFFFFFFFF，TOPMOST 静默失效 —— 这条必须显式声明。
+user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND,
+                                ctypes.c_int, ctypes.c_int,
+                                ctypes.c_int, ctypes.c_int, wintypes.UINT]
+user32.SetWindowPos.restype = wintypes.BOOL
+
 KRKR_TOOL = r"D:\K\galgame\krkr\krkr"
 
 
@@ -51,6 +63,12 @@ STAGE_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_krkr_sta
 #: 等 KrkrExtract 建窗的上限（秒）。2026-11-06 实测：`教师催眠2` 注入后窗口不是 5 秒内出现，
 #: 单次判定把「还没建好」当成「注入失败」；环境变量可覆盖（慢机器/大包调大）。
 WINDOW_WAIT = float(os.environ.get("KRKR_WINDOW_WAIT", "40"))
+
+#: 找空白落点的重试轮数（每轮重新把 KrkrExtract 抬到最前）。2026-11-06 教师催眠2
+#: 第四轮卡在 `assert drop, "no blank spot"`，日志 blockers={'Chrome_RenderWidgetHostHWND':…}。
+DROP_ATTEMPTS = int(os.environ.get("KRKR_DROP_ATTEMPTS", "6"))
+#: 落点扫描网格步长（物理像素）；只取主窗口空白背景，不取子控件。
+DROP_GRID = 40
 
 LOG = os.path.join(STAGE_ROOT, "krkr_auto_extract.log")
 def log(msg):
@@ -398,6 +416,109 @@ def click_button(pid, label):
     return False
 
 
+# ---------------------------------------------------------------- 落点 / 遮挡（2026-11-06 加固）
+
+def describe_window(hwnd):
+    """遮挡窗口的可读描述 —— 报错要能直接告诉用户「该关哪个窗口」。"""
+    if not hwnd:
+        return "(none)"
+    c = ctypes.create_unicode_buffer(128)
+    user32.GetClassNameW(hwnd, c, 128)
+    return "%s pid=%s title=%r" % (c.value or "?", pid_of_window(hwnd), wnd_text(hwnd)[:60])
+
+
+def _window_rect(hwnd):
+    rc = wintypes.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(rc))
+    return rc
+
+
+def raise_ui_window(hwnd):
+    """把 KrkrExtract 主窗口可靠抬到所有普通窗口之上；返回是否拿到前台焦点。
+
+    **前台锁**：Windows 只允许当前前台进程调 ``SetForegroundWindow``，本脚本是被
+    orchestrator 拉起的子进程，注入后前台往往还是游戏/浏览器，这个调用会静默返回 0。
+    实测 `教师催眠2` 第四轮就是 Chrome 压在 KrkrExtract 上，整块窗口矩形扫不到
+    一个可见空白点 → ``no blank spot on KrkrExtract UI``。
+
+    TOPMOST→NOTOPMOST 连招不需要前台权限：先临时置顶越过所有普通窗口，立刻退回
+    普通组顶部（Z 序仍在最前），既拿到可见性，也不会把窗口永久置顶留给用户。
+    """
+    user32.ShowWindow(hwnd, SW_RESTORE)
+    flags = SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
+    user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags)
+    user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, flags)
+    user32.BringWindowToTop(hwnd)
+    user32.SetForegroundWindow(hwnd)
+    return user32.GetForegroundWindow() == hwnd
+
+
+def scan_drop_point(hwnd, rc):
+    """扫一遍窗口矩形，返回 ``((x, y), blockers)``；找不到返回 ``(None, blockers)``。
+
+    只接受 ``WindowFromPoint == 主窗口句柄`` 的点：那是父窗口的空白背景，
+    ``WM_DROPFILES`` 才会落到注册了拖拽接收的对话框上。按钮 / Static 等子控件
+    不一定接受 drop，落到上面会静默丢包，所以不作落点。
+    """
+    blockers = {}
+    for fy in range(rc.top + 6, rc.bottom - 6, DROP_GRID):
+        for fx in range(rc.left + 6, rc.right - 6, DROP_GRID):
+            under = user32.WindowFromPoint(wintypes.POINT(fx, fy))
+            if under == hwnd:
+                return (fx, fy), blockers
+            key = describe_window(under)
+            blockers[key] = blockers.get(key, 0) + 1
+    return None, blockers
+
+
+def _blockers_detail(blockers, limit=5):
+    top = sorted(blockers.items(), key=lambda kv: -kv[1])[:limit]
+    return "\n".join("  - %s × %d" % (k, v) for k, v in top) or "  - (无可见遮挡窗口)"
+
+
+def find_drop_point(hwnd, attempts=None):
+    """找落点：每轮先抬窗再扫。全轮失败抛带处置建议的 RuntimeError（不再裸 assert）。
+
+    裸 ``assert drop`` 有两个问题：``python -O`` 下会被整行优化掉，且报错只有一个
+    字符串，看不到到底是谁盖住了窗口。
+    """
+    n = DROP_ATTEMPTS if attempts is None else attempts
+    merged = {}
+    for attempt in range(n):
+        raise_ui_window(hwnd)
+        point, blockers = scan_drop_point(hwnd, _window_rect(hwnd))
+        if point:
+            return point
+        for k, v in blockers.items():
+            merged[k] = merged.get(k, 0) + v
+        if attempt + 1 < n:
+            time.sleep(1.0)
+    raise RuntimeError(
+        "拖拽落点被遮挡：重试 %d 轮仍未在 KrkrExtract 窗口内找到可见空白点。\n%s\n"
+        "请关闭/最小化上述窗口，确认桌面未锁定、未使用远程桌面；运行期间不要切换窗口。"
+        % (n, _blockers_detail(merged))
+    )
+
+
+def ensure_drop_point(hwnd, point):
+    """拖拽前复核终点：Explorer 被前置后可能又把落点盖住了。
+
+    失效时**只重新扫描、不重新抬窗** —— 抬窗会把 Explorer 压到后面，
+    起点（xp3 图标）就点不到了。起点与终点必须同时可见。
+    """
+    x, y = point
+    if user32.WindowFromPoint(wintypes.POINT(x, y)) == hwnd:
+        return point
+    fresh, blockers = scan_drop_point(hwnd, _window_rect(hwnd))
+    if fresh:
+        return fresh
+    raise RuntimeError(
+        "资源管理器窗口盖住了 KrkrExtract 的全部落点区域，起点与终点无法同时可见。\n%s\n"
+        "请把资源管理器窗口缩小或拖到屏幕另一侧后重试；运行期间不要切换窗口。"
+        % _blockers_detail(blockers)
+    )
+
+
 def wait_task_done(outdir, ui_hwnd, timeout_min=40):
     """产物数稳定且 UI 标题回 idle 即完成；返回 (total, by_ext, size)。"""
     last, stable = -1, 0
@@ -583,32 +704,12 @@ def main(argv: list[str] | None = None) -> int:
         log("WARNING: 没找到 'Full Unpack' 按钮，沿用当前模式（可能只解脚本）")
     time.sleep(1.5)
 
-    # blank drop point on the dialog (raise the window first; retry; log blockers)
-    drop = None
-    blocker = {}
-    for attempt in range(4):
-        user32.SetForegroundWindow(ui)
-        time.sleep(1.0)
-        for fx in range(urc.left + 6, urc.right - 6, 40):
-            for fy in range(urc.top + 6, urc.bottom - 6, 40):
-                under = user32.WindowFromPoint(wintypes.POINT(fx, fy))
-                if under == ui:
-                    drop = (fx, fy)
-                    break
-                if under:
-                    c = ctypes.create_unicode_buffer(64)
-                    user32.GetClassNameW(under, c, 64)
-                    blocker[c.value] = blocker.get(c.value, 0) + 1
-            if drop:
-                break
-        if drop:
-            break
-        time.sleep(2.0)
-    if not drop:
-        log("blockers on dialog: %r" % blocker)
-    assert drop, "no blank spot on KrkrExtract UI"
-    tx, ty = drop
-    log("drop point=(%d,%d)" % drop)
+    # 早失败检查：整块窗口被压住时，别等 stage 里开完 Explorer 才发现。
+    # 真正的落点在**每个包拖拽前**重新算（find_drop_point + ensure_drop_point）：
+    # 中途 Z 序会变 —— Explorer 会被前置、游戏可能弹提示，旧代码 11 个包共用一个
+    # 坐标，任何一次遮挡都会让后续全部拖错或卡死。
+    tx, ty = find_drop_point(ui)
+    log("initial drop point=(%d,%d)" % (tx, ty))
 
     outdir = os.path.join(stage, "KrkrExtract_Output")
     before = count_files(outdir)[0] if os.path.isdir(outdir) else 0
@@ -619,6 +720,8 @@ def main(argv: list[str] | None = None) -> int:
     if only:
         xp3s = [f for f in xp3s if f.lower() in only]
     for fn in xp3s:
+        # 每包重新抬窗 + 重扫：两包之间约 40s，期间窗口被切走也能自恢复。
+        tx, ty = find_drop_point(ui)
         close_all_explorers(os.path.basename(stage))
         subprocess.Popen(["explorer.exe", "/select," + os.path.join(stage, fn)])
         time.sleep(3.5)
@@ -657,7 +760,9 @@ def main(argv: list[str] | None = None) -> int:
                 ix, iy = (rect[0] + rect[2]) // 2, (rect[1] + rect[3]) // 2
         assert ok_point, "item point blocked for %s" % fn
         dismiss_dialogs(pid)          # 每包前再清一次：游戏可能又弹了提示
-        log("dragging %s ..." % fn)
+        # Explorer 前置后复核终点：盖住了就在当前 Z 序里换个仍可见的空白点。
+        tx, ty = ensure_drop_point(ui, (tx, ty))
+        log("dragging %s -> (%d,%d) ..." % (fn, tx, ty))
         drag(ix, iy, tx, ty)
         total, by_ext, size_total = wait_task_done(outdir, ui)
         log("%s done: +%d files (total %d)" % (fn, total - before, total))
