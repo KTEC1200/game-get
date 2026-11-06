@@ -116,3 +116,85 @@ def test_organize_suffixes_when_view_exists(tmp_path):
 
     assert Path(res["view"]).name == f"{organize.VIEW_NAME}-2"
     assert (out / organize.VIEW_NAME / "旧" / "keep.txt").exists(), "旧视图不能被覆盖"
+
+
+def test_organize_rebuilds_own_view_in_place(tmp_path):
+    """重跑同一输出目录必须原地重建，不能长出 `分类-2`（视图是我们生成的）。"""
+    out = tmp_path / "out"
+    out.mkdir()
+    src = tmp_path / "d.png"
+    src.write_bytes(b"1")
+
+    first = organize.organize([(src, "png/d.png")], out)
+    second = organize.organize([(src, "png/d.png")], out)
+
+    assert Path(first["view"]).name == organize.VIEW_NAME
+    assert Path(second["view"]).name == organize.VIEW_NAME, "自己的视图应当原地重建"
+    assert (out / organize.VIEW_NAME / organize.VIEW_MARK).is_file()
+
+
+def test_organize_rebuilds_own_view_in_place(tmp_path):
+    """重跑同一输出目录必须原地重建，不能长出 `分类-2`（视图是我们生成的）。"""
+    out = tmp_path / "out"
+    out.mkdir()
+    src = tmp_path / "d.png"
+    src.write_bytes(b"1")
+
+    first = organize.organize([(src, "png/d.png")], out)
+    second = organize.organize([(src, "png/d.png")], out)
+
+    assert Path(first["view"]).name == organize.VIEW_NAME
+    assert Path(second["view"]).name == organize.VIEW_NAME, "自己的视图应当原地重建"
+    assert (out / organize.VIEW_NAME / organize.VIEW_MARK).is_file()
+
+
+def test_known_non_media_beats_dir_hint():
+    """★实测踩过★ `voice01/x.soc` 按目录兜底会算成音频，导致分类数与验收数打架。
+
+    扩展名明确是「非媒体」时，不该再拿目录名去猜。
+    """
+    assert organize.kind_of("raw/voice01/order.soc") == organize.OTHER
+    assert organize.kind_of("raw/media/list.sli") == organize.OTHER
+    assert organize.kind_of("raw/data/sys/a.tjs") == organize.OTHER
+
+
+def test_rebuild_prunes_stale_links_on_reclassification(tmp_path):
+    """★实测踩过★ 分类规则变化后重跑：旧类目里的链接必须被清掉，否则两个数字打架。"""
+    out = tmp_path / "out"
+    out.mkdir()
+    src = tmp_path / "x.soc"
+    src.write_bytes(b"1")
+
+    # 第一轮：假装被算成音频（目录兜底）
+    organize.build_view([{"kind": organize.AUDIO, "label": "raw/voice01/x.soc",
+                          "ext": "soc", "size": 1, "src": src}], out / organize.VIEW_NAME)
+    assert (out / organize.VIEW_NAME / organize.AUDIO / "raw/voice01/x.soc").exists()
+
+    # 第二轮：改成「其他」，旧链接应被清掉
+    organize.build_view([{"kind": organize.OTHER, "label": "raw/voice01/x.soc",
+                          "ext": "soc", "size": 1, "src": src}], out / organize.VIEW_NAME)
+
+    assert (out / organize.VIEW_NAME / organize.OTHER / "raw/voice01/x.soc").exists()
+    assert not (out / organize.VIEW_NAME / organize.AUDIO / "raw/voice01/x.soc").exists(), \
+        "旧类目里的过期链接必须删掉，否则视图与清单对不上"
+
+
+def test_rebuild_prunes_stale_links_on_reclassification(tmp_path):
+    """★实测踩过★ 分类规则变化后重跑：旧类目里的链接必须被清掉，否则两个数字打架。"""
+    out = tmp_path / "out"
+    out.mkdir()
+    src = tmp_path / "x.soc"
+    src.write_bytes(b"1")
+
+    # 第一轮：假装被算成音频（目录兜底）
+    organize.build_view([{"kind": organize.AUDIO, "label": "raw/voice01/x.soc",
+                          "ext": "soc", "size": 1, "src": src}], out / organize.VIEW_NAME)
+    assert (out / organize.VIEW_NAME / organize.AUDIO / "raw/voice01/x.soc").exists()
+
+    # 第二轮：改成「其他」，旧链接应被清掉
+    organize.build_view([{"kind": organize.OTHER, "label": "raw/voice01/x.soc",
+                          "ext": "soc", "size": 1, "src": src}], out / organize.VIEW_NAME)
+
+    assert (out / organize.VIEW_NAME / organize.OTHER / "raw/voice01/x.soc").exists()
+    assert not (out / organize.VIEW_NAME / organize.AUDIO / "raw/voice01/x.soc").exists(), \
+        "旧类目里的过期链接必须删掉，否则视图与清单对不上"

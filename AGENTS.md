@@ -1374,3 +1374,73 @@ Low 令牌被强制「禁止向上写」，所以 Medium 标签的桌面/文档/
 > 改成 §8 的实测结论。
 > 新护栏：`tests/test_docs_contract.py::test_readme_shows_current_version`
 > 比对 README 的「当前版本 vX.Y.Z」与包名是否等于 `version.APP_VERSION`，再漂移即红。
+
+## 2026-11-06 教师催眠2 闭环完成（v0.7.1）：手动拖拽 + 复用 raw 走通全链
+
+用户手动把 11 个 xp3 拖进 KrkrExtract（先点 **Full Unpack**），产物 **9818 文件 / 3.0 GB**
+（`data` / `image00~04` / `media` / `movie` / `scenario` / `voice01~02`）。移进
+`output/raw` 后按 `--reuse-raw` 跑完剩余阶段：**rc=0，135.6s**。
+
+| 阶段 | 结果 |
+|---|---|
+| detect | KiriKiri score=90 |
+| case-lookup | 命中 3 个案例（`兼职人妻` / `教师催眠1 xp3-encrypted-krkrZ` / `高慢妻陥落！！`） |
+| postprocess | 2748 个 `.tlg` → 2748 PNG（**复用上一轮，1.4s**） |
+| verify | 图片 3082/3082、音频 6558/6558、视频 12/12，失败 0，媒体 **907.1 分钟** |
+| organize | 图片 3082 / 音频 6558 / 视频 12 / 其他 166；硬链接 9818，失败 0 |
+| 对账 | `diff=None`（`no-index-available`：krkrZ 无索引，这是「没验」不是「验过」） |
+
+### 实跑暴露并修掉的 4 个问题（v0.7.1）
+
+1. **后处理不认已转产物**：`--reuse-raw` 重跑会把 2748 张 tlg 再解一遍（**1229s**）。
+   新增 `_converted_fresh()`（产物非空且 mtime ≥ 源）→ 1.4s，detail 里写「复用 N 个」。
+2. **`Stage.as_dict()` 被 data 盖字段**：`**self.data` 放在规范字段之后，而 postprocess 的
+   data 里也有 `ok`（转换成功数）→ `manifest.stages[].ok` 变成 **2748**。
+   改成「data 先铺、规范字段后盖」。
+3. **`stage_organize` 漏 `st.ok = True`**（`Stage.ok` 默认 False）→「硬链接 9818、失败 0」
+   被判成 `[FAIL]`，交付记录自相矛盾。
+4. **分类数与验收数差 1 个**：`voice01/*.soc` 扩展名认不出、按目录兜底算成音频
+   （音频 6559 vs 验收 6558）。新增 `EXT_OTHER`（ks/tjs/csv/ttf/sli/soc…）优先于目录兜底；
+   **`.dat`/`.at`/`.bin` 明确不能进** —— AdvHD 的视频就是 `.dat`、音频是 `.at`。
+
+顺带两处视图重建的正确性：加 `.galunpack-view` 标记（自己的视图原地重建、别人的同名目录
+顺延 `分类-2` 绝不覆盖）；重建时清理过期链接（分类规则变过会留下旧类目里的链接）；
+已链同一文件时跳过（原先「先 unlink 再 link」是 9818 次删除，本会话里直接被删除守卫拦到整轮失败）。
+
+交付：`packaging/Output/GalgameUnpacker-0.7.1-portable.zip`
+（141.6 MiB，SHA256 `7e2e72a0…455f654f2`；`--doctor` 报 0.7.1、`--gui-smoke` rc=0）。
+
+## 2026-11-06 教师催眠2 闭环完成（v0.7.1）：手动拖拽 + 复用 raw 走通全链
+
+用户手动把 11 个 xp3 拖进 KrkrExtract（先点 **Full Unpack**），产物 **9818 文件 / 3.0 GB**
+（`data` / `image00~04` / `media` / `movie` / `scenario` / `voice01~02`）。移进
+`output/raw` 后按 `--reuse-raw` 跑完剩余阶段：**rc=0，135.6s**。
+
+| 阶段 | 结果 |
+|---|---|
+| detect | KiriKiri score=90 |
+| case-lookup | 命中 3 个案例（`兼职人妻` / `教师催眠1 xp3-encrypted-krkrZ` / `高慢妻陥落！！`） |
+| postprocess | 2748 个 `.tlg` → 2748 PNG（**复用上一轮，1.4s**） |
+| verify | 图片 3082/3082、音频 6558/6558、视频 12/12，失败 0，媒体 **907.1 分钟** |
+| organize | 图片 3082 / 音频 6558 / 视频 12 / 其他 166；硬链接 9818，失败 0 |
+| 对账 | `diff=None`（`no-index-available`：krkrZ 无索引，这是「没验」不是「验过」） |
+
+### 实跑暴露并修掉的 4 个问题（v0.7.1）
+
+1. **后处理不认已转产物**：`--reuse-raw` 重跑会把 2748 张 tlg 再解一遍（**1229s**）。
+   新增 `_converted_fresh()`（产物非空且 mtime ≥ 源）→ 1.4s，detail 里写「复用 N 个」。
+2. **`Stage.as_dict()` 被 data 盖字段**：`**self.data` 放在规范字段之后，而 postprocess 的
+   data 里也有 `ok`（转换成功数）→ `manifest.stages[].ok` 变成 **2748**。
+   改成「data 先铺、规范字段后盖」。
+3. **`stage_organize` 漏 `st.ok = True`**（`Stage.ok` 默认 False）→「硬链接 9818、失败 0」
+   被判成 `[FAIL]`，交付记录自相矛盾。
+4. **分类数与验收数差 1 个**：`voice01/*.soc` 扩展名认不出、按目录兜底算成音频
+   （音频 6559 vs 验收 6558）。新增 `EXT_OTHER`（ks/tjs/csv/ttf/sli/soc…）优先于目录兜底；
+   **`.dat`/`.at`/`.bin` 明确不能进** —— AdvHD 的视频就是 `.dat`、音频是 `.at`。
+
+顺带两处视图重建的正确性：加 `.galunpack-view` 标记（自己的视图原地重建、别人的同名目录
+顺延 `分类-2` 绝不覆盖）；重建时清理过期链接（分类规则变过会留下旧类目里的链接）；
+已链同一文件时跳过（原先「先 unlink 再 link」是 9818 次删除，本会话里直接被删除守卫拦到整轮失败）。
+
+交付：`packaging/Output/GalgameUnpacker-0.7.1-portable.zip`
+（141.6 MiB，SHA256 `7e2e72a0…455f654f2`；`--doctor` 报 0.7.1、`--gui-smoke` rc=0）。

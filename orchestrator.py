@@ -158,8 +158,12 @@ class Stage:
     skipped: bool = False
 
     def as_dict(self) -> dict:
-        return {"stage": self.name, "ok": self.ok, "skipped": self.skipped,
-                "seconds": round(self.seconds, 2), "detail": self.detail, **self.data}
+        # 顺序要紧：**data 先铺、规范字段后盖**。
+        # 阶段 data 里也有 `ok` 这种同名键（后处理的「转换成功数」），反过来的话
+        # `manifest.stages[].ok` 会变成 2748 这种数字 —— 读的人以为「ok 不是布尔」。
+        # 2026-11-06 实跑 教师催眠2 时踩到：交付记录里 postprocess.ok = 2748。
+        return {**self.data, "stage": self.name, "ok": self.ok, "skipped": self.skipped,
+                "seconds": round(self.seconds, 2), "detail": self.detail}
 
 
 @dataclass
@@ -1889,6 +1893,19 @@ def _cs2_postprocess(ctx: Ctx) -> Stage:
     return st
 
 
+def _converted_fresh(dst: Path, src: Path) -> bool:
+    """产物已存在、非空、且不比源文件旧 → 可以复用，不必重转。
+
+    为什么只看 mtime：转换器换了、源文件重解包过，mtime 一定会变；
+    「大小一样但内容不同」在同一份未改动的源文件上不存在。
+    """
+    try:
+        st_dst, st_src = dst.stat(), src.stat()
+    except OSError:
+        return False
+    return st_dst.st_size > 0 and st_dst.st_mtime >= st_src.st_mtime
+
+
 def stage_postprocess(ctx: Ctx) -> Stage:
     """把 raw/ 里的中间格式转成 png/ 下的成品。
 
@@ -1925,6 +1942,7 @@ def stage_postprocess(ctx: Ctx) -> Stage:
 
     ctx.png_dir.mkdir(parents=True, exist_ok=True)
     ok_n = fail_n = 0
+    reused = 0
     frames_out = 0
     kinds: dict[str, int] = {}
     fails: list[str] = []
@@ -1934,6 +1952,15 @@ def stage_postprocess(ctx: Ctx) -> Stage:
         kinds[kind] = kinds.get(kind, 0) + 1
         if kind == ".tlg":
             dst = ctx.png_dir / rel.with_suffix(".png")
+            # 上一轮已经转好、且不比源文件旧 → 直接复用。
+            # 2026-11-06 实测：2748 张 tlg 转一轮要 **20 分钟**；而验收/manifest 阶段失败后
+            # 重跑（`--reuse-raw`）会把同样的活儿再干一遍 —— 纯浪费，且让「修个显示 bug」
+            # 的成本变成半小时。判定用 mtime 而不是「存在」：源文件更新过就必须重转。
+            if _converted_fresh(dst, src):
+                reused += 1
+                ok_n += 1
+                frames_out += 1
+                continue
             dst.parent.mkdir(parents=True, exist_ok=True)
             res = tb.tlg2png(src, dst)
             if res.ok:
@@ -1968,7 +1995,7 @@ def stage_postprocess(ctx: Ctx) -> Stage:
 
     st.data = {"tool": "tlg2png/_pna_carve", "in": len(targets), "ok": ok_n,
                "fail": fail_n, "frames_out": frames_out, "kinds": kinds,
-               "fail_examples": fails[:10]}
+               "reused": reused, "fail_examples": fails[:10]}
     st.seconds = time.time() - t0
     if fail_n:
         st.detail = f"{fail_n}/{len(targets)} 个待转文件转换失败"
@@ -1976,6 +2003,8 @@ def stage_postprocess(ctx: Ctx) -> Stage:
     st.ok = True
     by_kind = "、".join(f"{n} 个 {k}" for k, n in sorted(kinds.items()))
     st.detail = f"{by_kind} → png/ 共 {frames_out} 个成品"
+    if reused:
+        st.detail += f"（其中 {reused} 个复用上一轮产物，未重复解码）"
     return st
 
 
@@ -2249,11 +2278,14 @@ def stage_organize(ctx: Ctx) -> Stage:
     st = Stage("organize")
     t0 = time.time()
     if not ctx.organize:
+        st.ok = True
+        st.skipped = True
         st.detail = "未启用（--organize 才按类型归档）"
         st.seconds = 0.0
         return st
     files = manifest.iter_final_files(ctx.raw_dir, ctx.png_dir, CONVERTIBLE, ctx.consumed)
     if not files:
+        st.ok = True
         st.detail = "没有可归档的产物"
         st.seconds = time.time() - t0
         return st
@@ -2269,6 +2301,10 @@ def stage_organize(ctx: Ctx) -> Stage:
                  f"（硬链接 {res['linked']}，失败 {res['failed']}）")
     st.data = res
     st.seconds = time.time() - t0
+    # **ok 恒为 True**：阶段本身跑完了（清单写了、视图建了），个别链接失败已经记在
+    # `failed` 与 detail 里。2026-11-06 踩过：`Stage.ok` 默认 False，我漏了赋值，
+    # 于是「硬链接 9818、失败 0」的阶段被判成 [FAIL]，交付记录自相矛盾。
+    st.ok = True
     ctx.log("organize", st.detail)
     return st
 
