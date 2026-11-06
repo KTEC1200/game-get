@@ -40,9 +40,10 @@ SPEC = REPO / "_spike_pkg"
 EXE = DIST / "orchestrator" / "orchestrator.exe"
 PACKAGING = REPO / "packaging"
 
-#: 应用版本号 —— 便携包文件名与收尾摘要都从这里来（软件还没有 GUI/关于页，
-#: 等要展示版本的地方多了再挪进独立 VERSION 文件）。
-APP_VERSION = "0.5.0"
+#: 应用版本号 —— 便携包文件名与收尾摘要都从这里来。
+#: 2026-11-06 起**不再写在这里**：挪到 `version.py`（唯一出处），运行时
+#: `--doctor` 报告与 GUI 也要用同一个数，两处各写一份必然漂移。
+from version import APP_VERSION  # noqa: E402  （放这里是因为下面 APP_* 要用它）
 
 #: exe 的文件属性（Windows「详细信息」页，也是安全软件弹窗里显示的名字）。
 #: 为什么必须填（2026-11-04 实测）：PyInstaller 默认产物**这些字段全是空**，

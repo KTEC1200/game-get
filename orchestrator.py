@@ -58,6 +58,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import galgame_dispatch as gd          # noqa: E402
 import case_lib                        # noqa: E402  （案例库查表：签名算法唯一出处）
+from version import APP_VERSION        # noqa: E402  （版本号唯一出处，--doctor 报告要用）
 import manifest                        # noqa: E402
 import manual                          # noqa: E402  （人工介入方案：失败时给可执行步骤，见 manual.py）
 import faillog                         # noqa: E402  （失败日志：写软件根目录，与产物解耦）
@@ -2645,8 +2646,25 @@ def _launch_gui(argv: list[str]) -> int:
     return gui.main(argv)
 
 
+def _launch_doctor(rest: list[str]) -> int:
+    """`--doctor [游戏目录]`：打印环境自检报告后退出。
+
+    退出码给脚本用（0=所探位置全可写 / 1=存在不可写），人看的是报告正文。
+    函数内 import：与 `_launch_gui` 同一条纪律，CLI 主路径不为它多付启动成本。
+    """
+    import doctor
+    game = next((Path(a).expanduser() for a in rest if not a.startswith("-")), None)
+    report = doctor.doctor_report(game, version=APP_VERSION)
+    print(report)
+    return 0 if "不可写" not in report else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    # 自检分流同样放在 argparse 之前：它不需要 game_dir/--out，
+    # 也不该被「缺参数」挡在门外 —— 恰恰是「程序跑不起来」的用户最需要它。
+    if any(a == "--doctor" for a in argv):
+        return _launch_doctor([a for a in argv if a != "--doctor"])
     # GUI 分流在 argparse 之前：--gui/--gui-smoke 显式进 GUI；**无参数（双击 exe）也进 GUI**
     # ——桌面工具的第一眼体验不该是「argparse 报缺参数」闪退（2026-11-02 用户实测踩到）。
     if "--gui" in argv or "--gui-smoke" in argv or not argv:
@@ -2733,8 +2751,23 @@ def main(argv: list[str] | None = None) -> int:
                                 out_dir=out_dir, stages=[st.as_dict()], rc=3)
         return 0 if st.ok else 3
 
-    out_dir.mkdir(parents=True, exist_ok=True)
-    work_dir.mkdir(parents=True, exist_ok=True)
+    # 建目录必须兜住：GUI 走 ensure_writable 会弹人话，CLI 这里原先直接抛 traceback
+    # （2026-11-06 用户实测：`[PYI-…:ERROR] Failed to execute script 'orchestrator'`，
+    # 看到的是一屏栈，不知道下一步干什么）。判据与 GUI 一致，出口也一致。
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        work_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"[错误] 输出目录不可写：{out_dir}\n"
+              f"  {type(exc).__name__}: {exc}\n"
+              f"  换个 --out 目录，或把程序目录加入杀软白名单后重试。\n"
+              f"  想看清是哪一层拦的：orchestrator.exe --doctor\n"
+              f"  （GUI 模式会自动改用「程序目录\\output」，CLI 不做隐式改路径）",
+              file=sys.stderr)
+        faillog.log_failure(error="output-not-writable", game_dir=game_dir, out_dir=out_dir,
+                            rc=1, extra={"detail": f"{type(exc).__name__}: {exc}",
+                                         "stage": "cli-pre-start-mkdir"})
+        return 1
     for f in work_dir.glob("*.log"):
         f.unlink()
 

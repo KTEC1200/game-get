@@ -47,6 +47,15 @@ FROZEN = bool(getattr(sys, "frozen", False))
 APP_ROOT = Path(sys.executable).parent if FROZEN else Path(__file__).resolve().parent
 
 
+def app_version() -> str:
+    """版本号：取 `version.py`（唯一出处）。取不到也不该影响界面启动。"""
+    try:
+        from version import APP_VERSION
+        return str(APP_VERSION)
+    except Exception:                                        # noqa: BLE001
+        return "未知"
+
+
 def ensure_writable(path: Path) -> str | None:
     """目录能不能写：None = 可以，否则返回原因（给弹窗用）。
 
@@ -63,6 +72,48 @@ def ensure_writable(path: Path) -> str | None:
     except OSError as exc:
         return f"{type(exc).__name__}: {exc}"
     return None
+
+
+def fallback_out_dirs(app_root: Path | None = None) -> list[Path]:
+    """默认输出目录写不进去时，按顺序自动试的位置。
+
+    **口径改过（2026-11-06）**：早前一律弹框让用户自己挑，理由是「自动跳到程序目录
+    用户找不到」。实测推翻了这个假设 —— 用户机器上**除程序自身目录外，桌面、文档、
+    游戏目录全被拦**（见 `antivirus-false-positives.md` §8），让用户挑等于让他反复撞墙。
+    程序目录是他自己解压/构建出来的位置，产物落在 `<程序目录>\\output` 既找得到，
+    删程序时也一起删干净。
+
+    顺序：程序目录 → LOCALAPPDATA → 临时目录。第一个可写就用它，**不再中断运行**。
+    """
+    root = Path(app_root) if app_root else APP_ROOT
+    cands = [root / "output"]
+    for env in ("LOCALAPPDATA", "TEMP", "TMP"):
+        base = os.environ.get(env)
+        if base:
+            cands.append(Path(base) / "GalgameUnpacker" / "output")
+    uniq: list[Path] = []
+    seen: set[str] = set()
+    for c in cands:
+        key = str(c).lower()
+        if key not in seen:
+            seen.add(key)
+            uniq.append(c)
+    return uniq
+
+
+def pick_writable(cands: list[Path]) -> tuple[Path | None, list[tuple[Path, str | None]]]:
+    """依次试，返回（第一个可写的；没有则 None，以及每个候选的探测结果）。
+
+    探测结果要给用户看：一张「哪能写、哪不能写、报什么错」的表，比「请换个目录」
+    有用得多 —— 它同时也是 `--doctor` 报告里最关键的那一段。
+    """
+    table: list[tuple[Path, str | None]] = []
+    for c in cands:
+        why = ensure_writable(c)
+        table.append((c, why))
+        if why is None:
+            return c, table
+    return None, table
 
 
 #: Windows 文件名非法字符。`【PC】… | Ore o Hoshigaru…` 这种目录名在 NTFS 里**能存在**
@@ -84,9 +135,9 @@ def default_out_dir(game_dir: Path) -> Path:
     这时退到**父目录**下一个清洗过名字的目录，形如 `<父目录>/【PC】…_…-output`。
     父目录名通常合法（它是由资源管理器正常创建的）。
 
-    游戏目录不可写（只读安装、光盘、受保护目录）时由 `_start` 的预检接管：
-    弹目录选择框让用户自己挑，**不再自动跳到某个猜出来的位置**（实测会跳到程序目录，
-    用户根本找不到）。
+    游戏目录不可写（只读安装、光盘、受保护目录、被终端防护拦）时由 `_start` 接管：
+    先按 `fallback_out_dirs()` 依次试可写位置，**试到就继续跑**（2026-11-06 起）；
+    全都不可写才弹窗 —— 那时说明是进程级拦截，换目录没用，让用户跑「环境自检」。
     """
     name = game_dir.name
     if any(ch in _ILLEGAL for ch in name):
@@ -258,6 +309,9 @@ class App:
         self.btn_open = ttk.Button(opt, text="打开输出目录", command=self._open_out,
                                    state="disabled")
         self.btn_open.pack(side="right", padx=(0, 6))
+        # 自检放在左边、与「用于加密的 krkr」同一排：它是**出问题时**才点的按钮，
+        # 不该占据主操作位；但必须一眼看得到（此前只能靠命令行 --doctor）。
+        ttk.Button(opt, text="环境自检", command=self._doctor).pack(side="left", padx=(10, 0))
 
         self.var_status = tk.StringVar(value="就绪")
         ttk.Label(frm, textvariable=self.var_status, relief="sunken",
@@ -355,6 +409,38 @@ class App:
         if note:
             messagebox.showinfo("输出目录尚未创建", note)
 
+    def _doctor(self) -> None:
+        """只读自检（不跑解包、不改配置）：把「为什么写不进去」摊开，并可一键复制发回。"""
+        game = Path(self.var_game.get().strip().strip('"')).expanduser()
+        try:
+            import doctor
+            report = doctor.doctor_report(game if game.is_dir() else None,
+                                          version=app_version())
+        except Exception:                                    # noqa: BLE001
+            # 自检自己崩了也要给东西看 —— 否则用户只能描述「点了一下没反应」
+            report = "环境自检运行出错：\n\n" + traceback.format_exc()
+
+        win = tk.Toplevel(self.root)
+        win.title("环境自检")
+        win.geometry("780x560")
+        txt = tk.Text(win, wrap="none", font=("Consolas", 9))
+        txt.insert("1.0", report)
+        txt.configure(state="disabled")
+        sb = ttk.Scrollbar(win, command=txt.yview)
+        txt.configure(yscrollcommand=sb.set)
+        txt.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        bar = ttk.Frame(win, padding=6)
+        bar.pack(fill="x", side="bottom")
+
+        def _copy() -> None:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(report)
+            self.var_status.set("自检报告已复制到剪贴板")
+
+        ttk.Button(bar, text="关闭", command=win.destroy).pack(side="right")
+        ttk.Button(bar, text="复制到剪贴板", command=_copy).pack(side="right", padx=(0, 6))
+
     def _start(self) -> None:
         # 一律 resolve 成绝对路径：相对路径会让 `is_dir()` / `os.startfile`
         # 依赖当前工作目录 —— 「解包完打开输出目录没反应」就是这么来的。
@@ -375,30 +461,41 @@ class App:
             faillog.log_failure(error="output-not-writable", game_dir=game, out_dir=out,
                                 extra={"detail": why, "stage": "pre-start-write-probe"},
                                 rc=1)
-            # 不再自动猜一个"能写的位置"：实测会跳到程序目录（用户找不到，删程序还丢产物）。
-            # 直接让用户选，默认从游戏目录的父目录开始。
-            messagebox.showwarning(
-                "输出目录不可写",
-                f"{out}\n\n{why}\n\n"
-                "接下来打开目录选择框，请选一个你自己找得到、并且能写的位置。\n\n"
-                "如果换位置仍然不行，说明是安全软件在拦这个程序的写入 ——\n"
-                "把解压目录加入火绒「信任区」（或让 IT 放行 EDR），别继续换目录。")
-            picked = filedialog.askdirectory(
-                title="选择输出目录（默认位置不可写）",
-                initialdir=str(game.parent if game.parent.is_dir() else game))
-            if not picked:
-                return
-            out = Path(picked).expanduser().resolve()
-            why2 = ensure_writable(out)
-            if why2:
-                faillog.log_failure(error="output-not-writable", game_dir=game, out_dir=out,
-                                    extra={"detail": why2, "stage": "user-picked"}, rc=1)
+            # 先自己找一条能走的路：实测「桌面/文档/游戏目录全被拦、程序目录能写」，
+            # 所以把程序目录排第一。找到就继续跑，别为了「路径好看」把活儿停掉。
+            alt, table = pick_writable(fallback_out_dirs())
+            if alt is not None:
+                self._log(f"[warn] 原输出目录不可写：{out} —— {why}")
+                self._log(f"[warn] 已自动改用：{alt}")
+                messagebox.showwarning(
+                    "已自动改用可写目录",
+                    f"这个位置写不进去：\n{out}\n\n{why}\n\n"
+                    f"已自动改用：\n{alt}\n\n"
+                    "产物会落在这里（「打开输出目录」指向的就是它）。\n"
+                    "想固定用别的位置，可以在上面的「输出目录」里手动填。")
+                out = alt
+            else:
+                # 连程序目录都写不进去 = 进程级拦截，让用户继续挑目录是浪费时间。
+                detail = "\n".join(f"  {p}\n      {'可写' if w is None else w}"
+                                   for p, w in table)
+                faillog.log_failure(error="no-writable-location", game_dir=game,
+                                    out_dir=out,
+                                    extra={"detail": detail, "stage": "fallback-exhausted"},
+                                    rc=1)
                 messagebox.showerror(
-                    "这个位置也写不进去",
-                    f"{out}\n{why2}\n\n"
-                    "这不是目录选错了，是安全软件在拦这个程序的写入。\n"
-                    "请把解压目录加入信任区后再试，或换一台没有管控的机器。")
-                return
+                    "找不到任何可写的位置",
+                    f"{out}\n\n{why}\n\n"
+                    "按 程序目录 → 本地应用数据 → 临时目录 依次试过，全部不可写：\n\n"
+                    f"{detail}\n\n"
+                    "这不是目录选错了，是拦截发生在进程级。\n"
+                    "请点「环境自检」把报告发回；或退出全部安全软件后重试。")
+                # 探针本身也可能误报（守卫只拦「这个形状的写入」）。给一条「我知道
+                # 有风险，但先跑跑看」的路 —— 比把人堵死在这里强；真失败会进 failures.log。
+                if not messagebox.askyesno(
+                        "仍然尝试运行？",
+                        "自检可能是误报（拦的是探针形状，不一定是真实写入）。\n\n"
+                        "仍然要按上面这个目录跑一次吗？失败会写进 failures.log。"):
+                    return
             self.var_out.set(str(out))
         # 已有产物必须先问：默认 auto 会静默叠跑（产物数虚高但对账自洽），
         # 拒绝则让用户换个目录 —— 两条路都比「跑完给一个假数字」强。

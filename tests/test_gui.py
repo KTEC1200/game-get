@@ -518,3 +518,32 @@ def test_open_out_falls_back_to_existing_parent(tmp_path, monkeypatch):
 
     assert opened and opened[0] == tmp_path
     assert notes, "退到上级必须说明，否则用户会以为打开的是产物目录"
+
+
+# ---- 输出目录自动降级（2026-11-06：用户机器上只有程序目录可写） ----
+
+def test_fallback_out_dirs_starts_with_app_dir(tmp_path):
+    """程序目录排第一：实测「桌面/文档/游戏目录全被拦、程序目录能写」。"""
+    cands = gui.fallback_out_dirs(tmp_path)
+    assert cands[0] == tmp_path / "output"
+    assert len({str(c).lower() for c in cands}) == len(cands), "候选必须去重"
+
+
+def test_pick_writable_skips_unwritable(tmp_path, monkeypatch):
+    def fake(p):
+        return None if p.name == "good" else "PermissionError: 拒绝访问"
+    monkeypatch.setattr(gui, "ensure_writable", fake)
+
+    picked, table = gui.pick_writable([tmp_path / "bad", tmp_path / "good"])
+
+    assert picked == tmp_path / "good"
+    assert [w is None for _p, w in table] == [False, True], "失败过的也要留痕给用户看"
+
+
+def test_pick_writable_all_fail_returns_none_and_table(tmp_path, monkeypatch):
+    monkeypatch.setattr(gui, "ensure_writable", lambda p: "PermissionError: 拒绝访问")
+
+    picked, table = gui.pick_writable([tmp_path / "a", tmp_path / "b"])
+
+    assert picked is None
+    assert len(table) == 2, "全灭时要把整张表交出去，让弹窗能列出探过哪些位置"

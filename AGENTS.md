@@ -1237,3 +1237,70 @@ manifest：`source.archives == []`、`source.unsupported == null`。
 1. **等用户实测反馈**（速度优化的实际体感、以及 v0.4.3 两条缺口的现场表现）。
 2. P2：`教师催眠2` 人工闭环（拖 xp3 → `--reuse-raw`），或用 v0.4.3 的新提示选 `--allow-gui`。
 3. P3/P4 不变：KiriKiri 自然窗口缺失验证（等样本）、加密 krkr 7 部 / E-mote / AI 兜底。
+
+### ⭐ 实测反馈 #3（2026-11-06）：写入拦截与信任区无关
+
+`D:\HY\我与老师的私人课程2`（Artemis/iMel，`iarsys64.dll` + `bokukano2.pfs/.000/.001`）
+启动即弹「输出目录不可写」。排查结论（完整证据见 `antivirus-false-positives.md` §8）：
+
+- **警告：信任区不是解药。** 用户把**整个 D 盘**加进火绒 6.0.12.3 信任区仍全灭，随后清空。
+  `wlfile.db` 的 `TrustRegion_60` 为 0 行是**清空**的结果，别误读成「加白没落盘」。
+- **已排除**：目录 ACL（`Authenticated Users:(M)`）、非法字符（是 WinError 5 不是 123）、
+  Defender（RTP/AM 均 False）、SAC=0、AppLocker。
+- **决定性对照**：`runas /trustlevel:0x20000` 下 `cmd` 能写桌面、`orchestrator.exe` 连
+  `%TEMP%` 都建不了目录；同一 exe 在提权会话里写 `<游戏>\output` 与桌面均成功。
+  → 是「按进程 + 按目录」放行，差异在**进程身份 / 是否提权**，换目录无意义。
+- **修正**：本机 `Sangfor\SSL\…` 是 **EasyConnect SSL VPN**（ECAgent/PWEx/Promote/UDProtect），
+  **不是深信服 EDR**。`ECAgent` 于 13:25 启动、13:35 起连续失败，时间吻合，尚未排除。
+- **给用户的通道**：① `start-gui.bat`（python 通道）；② 停掉**服务/驱动**级防护再试
+  （不是关界面，见 §8.6）；③ 让程序自己出证据：`--doctor` 或 GUI「环境自检」。
+  ⚠️ 「右键以管理员身份运行」在本机**无效**（UAC 已关闭，等于双击），别再当排查步骤。
+- **待修**：`main()` 的 `out_dir.mkdir` 无兜底，非提权 CLI 直接吐 traceback（GUI 有友好提示）。
+
+#### v0.6.0（2026-11-06 下午）：把「猜原因」改成「让程序交证据」
+
+用户回报「管理员 / 退出火绒 / 卸载 EasyConnect **都不行**」——查完现场发现
+**三条都没真正改变变量**（详见 `antivirus-false-positives.md` §8.6）：
+`EnableLUA=0` 让「右键管理员」等于双击；托盘退出只停 `HipsTray`，`HipsDaemon`
+（PID 4216）全程在跑；Sangfor 的 `PWEx`/`UDProtectEx` 是服务，卸载后仍在运行。
+**结论：一个变量都没排除，根因仍未锁定。**
+
+⚠️ **另一个必须记住的教训（§8.7）**：本次两次「复现」（`runas /trustlevel` 与一次
+低完整性会话）都稳定报 `WinError 5`，但同一 exe 在正常会话里写程序目录/桌面/游戏目录
+**全部成功**。受限令牌造出来的「只有程序目录可写」与用户故障**现象同、成因不同**——
+只有「在正常会话也能写的位置上失败」才算复现。
+
+因此本轮改的是**能力**，不是猜测：
+
+1. **`doctor.py` + `--doctor` + GUI「环境自检」按钮**：一次打印版本、打包态、用户、
+   完整性级别、**`EnableLUA`**、在跑的安全类进程、已注册驱动，以及六个位置的
+   **写探针表**（每条带完整 `Errno/WinError` 原文）。用户点一下、复制、发回即可。
+2. **输出目录自动降级**（`gui.fallback_out_dirs` / `pick_writable`）：默认不可写时
+   依次试 程序目录 → LOCALAPPDATA → TEMP，第一个能写就**继续跑**并弹窗说明改到哪；
+   全灭才报错，错误框里直接列探测表 + 给「仍然尝试」出口（探针可能误报）。
+   ⚠️ 这条**推翻了** v0.4.1「不自动跳位置」的口径 —— 实测让用户挑目录等于让他反复撞墙。
+3. **CLI 兜底**：`main()` 的 `mkdir` 包住，记 `failures.log`（`error=output-not-writable`，
+   `stage=cli-pre-start-mkdir`）+ 人话 + 指向 `--doctor`。
+4. **版本号挪进 `version.py`**（唯一出处）：`build_exe` / `--doctor` / GUI 共用，
+   免得「包叫 0.6.0、报告写 0.5.0」。
+5. 测试：`tests/test_doctor.py` 9 条 + `tests/test_gui.py` 3 条（降级/全灭/去重）；
+   全量 `tests=720 failures=0 errors=0 skipped=12 → PASS`。
+
+交付：`packaging/Output/GalgameUnpacker-0.6.0-portable.zip`
+（SHA256 `8b903f02…b36257`，141.6 MiB，1485 文件 / 354.1 MiB 解压后）。
+
+#### 结案（2026-11-06 15:2x）：根因是**路径**，不是 ACL/杀软/提权
+
+用户用 0.6.0 跑通了 `D:\HY\我与老师的私人课程2`：**Artemis，rc=0，7361/7361 零差，
+图片 1348/0 失败、音频 4857/0 失败、视频 0、511.4 分钟**——产物落在
+`packaging\Output\orchestrator\output`（自动降级挑的位置）。
+
+随后定位到真因（完整对照表见 `antivirus-false-positives.md` §8.8）：
+**同一份 exe，放在 `D:\K\deepseek\packaging\Output\orchestrator` 下进程是 Low 完整性，
+复制到 `%TEMP%` 或 `D:\gtool` 下就是 High**；同一 shell 内 `python.exe` 恒为 High。
+Low 令牌被强制「禁止向上写」，所以 Medium 标签的桌面/文档/游戏目录/%TEMP% 全部
+`WinError 5`，只有那个子树里未打标的目录能写。
+
+→ **规避：便携包解到 `D:\K` 之外**（如 `D:\GalgameUnpacker\`），别再在这个子树里跑。
+→ 未查明：`packaging\Output\orchestrator` 上那两条非标准 ACE（`Everyone:(I)(CI)(DENY)(DC)`、
+`S-1-4-…:(W,D,DC)`）是谁写的；`D:\K` 本身干净。查清之前不要用这棵树当部署位置。
