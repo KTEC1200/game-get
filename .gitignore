@@ -44,3 +44,4 @@ packaging/Output/
 
 # 会话/工作区元数据（非代码）
 .workbuddy/
+_ui/*.png

@@ -578,3 +578,37 @@ def test_restricted_tip_points_at_move_and_evidence():
     tip = gui.restricted_tip()
     assert "GalgameUnpacker" in tip, "必须给出可执行的去处，而不是只说「有风险」"
     assert "环境自检" in tip
+
+
+# ---- 自绘控件（2026-11-06 改版）：接口必须与 ttk 兼容 ----
+
+def test_pill_button_state_and_palette(tk_root):
+    """`_start` / `_poll` 里都是 `btn.configure(state=...)` —— 自绘按钮必须接得住。"""
+    btn = gui.PillButton(tk_root, "取消", kind="secondary")
+    normal = btn._colors()
+
+    btn.configure(state="disabled")
+    assert btn.cget("state") == "disabled"
+    assert btn._colors() != normal, "禁用态必须换色，否则看不出不可点"
+
+    btn.configure(state="normal", text="打开输出目录")
+    assert btn.cget("text") == "打开输出目录"
+
+
+def test_check_toggles_variable(tk_root):
+    var = tk.BooleanVar(value=False)
+    box = gui.Check(tk_root, "按类型整理", var)
+
+    box._toggle()
+    assert var.get() is True
+    box._toggle()
+    assert var.get() is False
+
+
+def test_rounded_entry_exposes_inner_entry(tk_root):
+    """`.ent` 才是键盘入口：Return 绑定与拖拽都挂在它身上。"""
+    var = tk.StringVar(value=r"D:/HY/x")
+    ent = gui.RoundedEntry(tk_root, var)
+
+    assert ent.ent.get() == r"D:/HY/x"
+    assert isinstance(ent.ent, tk.Entry)

@@ -22,7 +22,8 @@ CLI 路径不为此多付启动成本）。不造第二个 exe：GUI 与 CLI 共
 """
 from __future__ import annotations
 
-import os
+import contextlib
+import math
 import os
 import queue
 import sys
@@ -31,7 +32,7 @@ import traceback
 from pathlib import Path
 
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 import faillog                    # 失败日志：无依赖，可安全在模块级导入（也便于测试替换）
 
@@ -309,6 +310,291 @@ def summarize_text(rc: int, man: dict) -> str | None:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------- 外观（design tokens）
+#
+# 设计口径（2026-11-06 改版，参考 Linear / Vercel Dashboard / GitHub Desktop / HandBrake）：
+#   1. **用留白和 1px 发丝线分区**，不用 3D 凸起按钮、不用凹陷状态栏 —— 那两样是
+#      Windows 7 时代的视觉语言，会让界面看着比实际功能旧十年。
+#   2. **天空蓝只做点缀**：全窗口只有三处出现 —— 主按钮、输入框聚焦环、状态点。
+#      面积占比 < 3%，其余全是冷中性灰（#F5F7FA 背景 / 纯白卡片 / 灰阶文字）。
+#      大面积铺蓝会让工具类软件显得「玩具感」，也压掉日志的可读性。
+#   3. **层级靠字号与字色**，不靠加粗和边框：标题 #0F172A、正文 #475569、辅助 #94A3B8。
+#   4. 圆角 12（卡片）/ 9（按钮），间距 24/16/10 三档，视觉节奏统一。
+class UI:
+    BG = "#F5F7FA"          # 页面底色：微冷中性灰，不偏蓝
+    CARD = "#FFFFFF"
+    LINE = "#E5EAF1"        # 卡片描边
+    LINE_SOFT = "#EEF2F7"   # 卡片内分隔线
+    TEXT = "#0F172A"
+    TEXT_2 = "#475569"
+    TEXT_3 = "#94A3B8"
+    SKY = "#0EA5E9"         # 点缀色（sky-500）
+    SKY_D = "#0284C7"       # hover
+    SKY_L = "#E0F2FE"       # 选中/浅底
+    OK = "#10B981"
+    WARN = "#F59E0B"
+    ERR = "#EF4444"
+    DOT_IDLE = "#CBD5E1"
+
+    FONT = "Microsoft YaHei UI"
+    F_TITLE = (FONT, 13, "bold")
+    F_BOLD = (FONT, 10, "bold")
+    F_BODY = (FONT, 10)
+    F_LABEL = (FONT, 9)
+    F_SMALL = (FONT, 8)
+    F_MONO = ("Consolas", 9)
+
+
+#: 按钮三态色板：常态 / hover / 禁用。（主按钮是唯一实心色块）
+_BTN_STYLE = {
+    "primary": dict(bg=UI.SKY, bd=UI.SKY, fg="#FFFFFF",
+                    hbg=UI.SKY_D, hbd=UI.SKY_D,
+                    dbg="#E2E8F0", dbd="#E2E8F0", dfg="#94A3B8"),
+    "secondary": dict(bg=UI.CARD, bd=UI.LINE, fg=UI.TEXT_2,
+                      hbg="#F1F5F9", hbd="#CBD5E1",
+                      dbg="#FBFCFE", dbd="#EDF1F6", dfg="#A6B1C2"),
+    "ghost": dict(bg=None, bd=None, fg=UI.TEXT_3,
+                  hbg="#EDF2F7", hbd="#EDF2F7",
+                  dbg=None, dbd=None, dfg="#94A3B8"),
+}
+
+
+def _poly(cv: tk.Canvas, x1: float, y1: float, x2: float, y2: float,
+          r: float, color: str, tags=()) -> int:
+    """圆角矩形的填充多边形。
+
+    **不用 `smooth=True`**：Tk 的平滑是对顶点做样条近似，圆角处会生成疏密不均的
+    短线段，浅色描边/窄边框在截图里直接断成虚线（2026-11-06 实测）。这里按 8 段
+    圆弧显式算顶点，边缘连续、半径也准。
+    """
+    n = 8
+    r = min(r, (x2 - x1) / 2, (y2 - y1) / 2)
+    pts: list[float] = []
+    for cx, cy, a0 in ((x2 - r, y1 + r, -90), (x2 - r, y2 - r, 0),
+                       (x1 + r, y2 - r, 90), (x1 + r, y1 + r, 180)):
+        for i in range(n + 1):
+            a = math.radians(a0 + 90 * i / n)
+            pts += [cx + r * math.cos(a), cy + r * math.sin(a)]
+    return cv.create_polygon(pts, smooth=False, fill=color, outline="", tags=tags)
+
+
+def _round_rect(cv: tk.Canvas, x1: float, y1: float, x2: float, y2: float,
+                r: float, fill: str, outline: str | None = None,
+                width: float = 1, tags=()) -> None:
+    """圆角矩形 —— **用两层填充多边形画边框，不用 outline 描边**。
+
+    为什么（2026-11-06 实测）：`smooth=True` 的多边形本质是一串短线段，
+    给它加 `outline` 时圆角处会断成虚线（放大看是虚线弧），浅色描边尤其明显。
+    改成「先填边框色、再内缩 fill 色填一层」，边缘连续，颜色也准。
+    """
+    if outline:
+        _poly(cv, x1, y1, x2, y2, r, outline, tags)
+        _poly(cv, x1 + width, y1 + width, x2 - width, y2 - width,
+              max(1, r - width), fill, tags)
+    else:
+        _poly(cv, x1, y1, x2, y2, r, fill, tags)
+
+
+class Card(tk.Frame):
+    """白卡片：Canvas 只当**背景层**（place 铺满），内容用 pack 放 normal Frame。
+
+    踩过的坑（第一版）：把 body 塞进 canvas 的 `create_window` 并让它撑满 → 卡片的
+    高度被 canvas 的默认高（≈276px）锁死，内容只有 100px 高却在下面留一大片空白。
+    现在 body 走 pack，卡片高度由内容决定；canvas 用 place 跟随，纯做圆角背景。
+    """
+
+    def __init__(self, parent: tk.Misc, pad: int = 18, radius: int = 12,
+                 bg: str = UI.BG, fill: str = UI.CARD) -> None:
+        super().__init__(parent, bg=bg, bd=0, highlightthickness=0)
+        self._fill, self._r = fill, radius
+        self.cv = tk.Canvas(self, bg=bg, bd=0, highlightthickness=0)
+        self.cv.place(x=0, y=0, relwidth=1, relheight=1)
+        self.body = tk.Frame(self, bg=fill)
+        self.body.pack(fill="both", expand=True, padx=pad, pady=pad)
+        self.cv.bind("<Configure>", self._resize)
+
+    def _resize(self, event) -> None:                             # noqa: ANN001
+        self.cv.delete("card")
+        _round_rect(self.cv, 0.5, 0.5, event.width - 0.5, event.height - 0.5,
+                    self._r, fill=self._fill, outline=UI.LINE, width=1, tags="card")
+        self.cv.tag_lower("card")
+
+
+class PillButton(tk.Canvas):
+    """圆角按钮，接口刻意兼容 ttk：`.configure(state=...)` / `.configure(text=...)`。
+
+    为什么不用 ttk.Button：ttk 在 Windows 上画的仍是系统主题的三维边框，
+    换成 clam 也只是变平、做不出圆角和 hover 变色；主按钮要「一个实心色块」的质感，
+    只能自己画。代价是要自己实现 state/text/hover，且必须兼容既有调用点
+    （`_start` / `_poll` 里都是 `btn.configure(state="disabled")`）。
+    """
+
+    def __init__(self, parent: tk.Misc, text: str, command=None, kind: str = "secondary",
+                 bg: str = UI.CARD, height: int = 34, padx: int = 16, radius: int = 9,
+                 font=None, state: str = "normal") -> None:
+        self._kind, self._bg, self._h, self._padx, self._r = kind, bg, height, padx, radius
+        self._font = font or UI.F_BODY
+        self._text, self._cmd, self._state = text, command, state
+        self._hover = False
+        width = tkfont.Font(font=self._font).measure(text) + padx * 2
+        super().__init__(parent, width=width, height=height, bg=bg, bd=0,
+                         highlightthickness=0, cursor="hand2")
+        self.bind("<Configure>", lambda _e: self._draw())
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+        self.bind("<Button-1>", self._on_press)
+        self.bind("<ButtonRelease-1>", self._on_release)
+        self._draw()
+
+    # -- 状态色 --
+    def _colors(self) -> tuple[str, str, str]:
+        st = dict(_BTN_STYLE[self._kind])
+        if st["bg"] is None:                       # ghost：底色跟随父容器
+            st["bg"] = st["dbg"] = self._bg
+            st["bd"] = st["dbd"] = self._bg
+        if self._state == "disabled":
+            return st["dbg"], st["dbd"], st["dfg"]
+        if self._hover:
+            return st["hbg"], st["hbd"], st["fg"]
+        return st["bg"], st["bd"], st["fg"]
+
+    def _draw(self) -> None:
+        self.delete("all")
+        w = int(self.winfo_width() or self.winfo_reqwidth())
+        h = int(self.winfo_height() or self._h)
+        fill, border, fg = self._colors()
+        _round_rect(self, 0.5, 0.5, w - 0.5, h - 0.5, self._r,
+                    fill=fill, outline=border, width=1)
+        self.create_text(w / 2, h / 2, text=self._text, fill=fg, font=self._font)
+
+    # -- 事件 --
+    def _on_enter(self, _e=None) -> None:
+        if self._state != "disabled":
+            self._hover = True
+            self._draw()
+
+    def _on_leave(self, _e=None) -> None:
+        self._hover = False
+        self._draw()
+
+    def _on_press(self, _e=None) -> None:
+        if self._state != "disabled":
+            self.move("all", 0, 1)                 # 1px 下沉，给一点物理反馈
+
+    def _on_release(self, e=None) -> None:                       # noqa: ANN001
+        if self._state == "disabled":
+            return
+        self._hover = True
+        self._draw()
+        inside = 0 <= getattr(e, "x", 0) <= self.winfo_width() and \
+            0 <= getattr(e, "y", 0) <= self.winfo_height()
+        if inside and self._cmd:
+            self._cmd()
+
+    # -- 兼容 ttk 接口 --
+    def configure(self, cnf=None, **kw):                          # noqa: ANN001
+        for key in ("state", "text", "command"):
+            if key in kw:
+                val = kw.pop(key)
+                if key == "state":
+                    self._state = val
+                    self.configure_cursor()
+                elif key == "text":
+                    self._text = val
+                else:
+                    self._cmd = val
+        if kw or cnf:
+            super().configure(cnf, **kw)
+        self._draw()
+        return None
+
+    config = configure
+
+    def configure_cursor(self) -> None:
+        with contextlib.suppress(tk.TclError):
+            self.configure(cursor="hand2" if self._state != "disabled" else "arrow")
+
+    def cget(self, key: str):
+        if key == "state":
+            return self._state
+        if key == "text":
+            return self._text
+        return super().cget(key)
+
+
+class RoundedEntry(tk.Canvas):
+    """圆角输入框：Canvas 画 8px 圆角边框，真实 Entry 内嵌并居中。
+
+    为什么不用 tk.Entry 直接加边框：Entry 的 relief 只有 sunken/ridge 这些三维档，
+    没有「1px 发丝线 + 圆角」这一档，和圆角卡片放一起会明显不搭。
+    `.ent` 才是真正接收键盘的 Entry（绑定 Return / 拖拽都挂在它身上）。
+    """
+
+    def __init__(self, parent: tk.Misc, textvariable: tk.StringVar, bg: str = UI.CARD,
+                 height: int = 38, radius: int = 8, font=None) -> None:
+        super().__init__(parent, height=height, bg=bg, bd=0, highlightthickness=0)
+        self._r, self._focused = radius, False
+        self.ent = tk.Entry(self, textvariable=textvariable, bd=0, relief="flat",
+                            bg=UI.CARD, fg=UI.TEXT, font=font or UI.F_BODY,
+                            highlightthickness=0, insertbackground=UI.SKY)
+        self._win = self.create_window(12, height / 2, window=self.ent, anchor="w")
+        self.bind("<Configure>", self._resize)
+        self.bind("<Button-1>", lambda _e: self.ent.focus_set())
+        self.ent.bind("<FocusIn>", lambda _e: self._set_focus(True))
+        self.ent.bind("<FocusOut>", lambda _e: self._set_focus(False))
+
+    def _set_focus(self, on: bool) -> None:
+        self._focused = on
+        self._resize(type("E", (), {"width": self.winfo_width(),
+                                    "height": self.winfo_height()})())
+
+    def _resize(self, event) -> None:                             # noqa: ANN001
+        w, h = max(1, event.width), max(1, event.height)
+        self.delete("bd")
+        _round_rect(self, 0.5, 0.5, w - 0.5, h - 0.5, self._r, fill=UI.CARD,
+                    outline=UI.SKY if self._focused else UI.LINE, width=1, tags="bd")
+        self.tag_lower("bd")
+        self.coords(self._win, 12, h / 2)
+        self.itemconfigure(self._win, width=max(1, w - 24), height=max(1, h - 16))
+
+
+class Check(tk.Canvas):
+    """自绘勾选框：15px 圆角方框，选中时天空蓝填充 + 白勾。
+
+    原生 tk.Checkbutton 在 Windows 上是系统控件，勾选态是深色边框的黑勾，
+    和「浅灰卡片 + 单一强调色」的语汇不搭；自绘之后它成了点缀色的第三处露面。
+    """
+
+    def __init__(self, parent: tk.Misc, text: str, variable: tk.BooleanVar,
+                 bg: str = UI.CARD, size: int = 15, font=None) -> None:
+        self._size, self._text, self._font = size, text, font or UI.F_LABEL
+        self.var = variable
+        width = tkfont.Font(font=self._font).measure(text) + size + 9
+        super().__init__(parent, width=width, height=22, bg=bg, bd=0,
+                         highlightthickness=0, cursor="hand2")
+        self.bind("<Button-1>", self._toggle)
+        self.var.trace_add("write", lambda *_: self._draw())
+        self._draw()
+
+    def _toggle(self, _e=None) -> None:
+        self.var.set(not self.var.get())
+
+    def _draw(self) -> None:
+        self.delete("all")
+        s = self._size
+        y1 = (22 - s) / 2
+        on = bool(self.var.get())
+        _round_rect(self, 0.5, y1 + 0.5, s + 0.5, y1 + s + 0.5, 4,
+                    fill=UI.SKY if on else UI.CARD,
+                    outline=UI.SKY if on else "#CBD5E1", width=1)
+        if on:   # 白勾：两段折线，圆头圆角，比文字符号「✓」清晰
+            self.create_line(3.5, y1 + s / 2, s / 2 - 0.5, y1 + s - 4.5,
+                             s - 3, y1 + 4.5, fill="#FFFFFF", width=2,
+                             capstyle="round", joinstyle="round")
+        self.create_text(s + 9, 11, text=self._text, anchor="w",
+                         fill=UI.TEXT_2, font=self._font)
+
+
 class App:
     """主窗口。`poll()` 只在主线程跑（root.after 驱动），worker 只往 self.q 塞。"""
 
@@ -317,57 +603,90 @@ class App:
         self.q: queue.Queue = queue.Queue()
         self.running = False
         root.title("Galgame Unpacker")
-        root.minsize(680, 460)
+        root.configure(bg=UI.BG)
+        root.minsize(760, 560)
+        with contextlib.suppress(tk.TclError):
+            root.geometry("960x700")
+        self._init_style()
 
-        frm = ttk.Frame(root, padding=8)
-        frm.pack(fill="both", expand=True)
-        frm.columnconfigure(1, weight=1)
-        frm.rowconfigure(4, weight=1)
+        # ---- 品牌栏：靠留白分层，不加边框（Linear / Vercel 的做法）----
+        outer = tk.Frame(root, bg=UI.BG)
+        outer.pack(fill="both", expand=True, padx=24, pady=(18, 18))
+        head = tk.Frame(outer, bg=UI.BG)
+        head.pack(fill="x", pady=(0, 14))
+        brand = tk.Frame(head, bg=UI.BG)
+        brand.pack(side="left")
+        tk.Label(brand, text="Galgame Unpacker", bg=UI.BG, fg=UI.TEXT,
+                 font=UI.F_TITLE).pack(anchor="w")
+        tk.Label(brand, text=f"解包 · 验收 · 归类      v{app_version()}", bg=UI.BG,
+                 fg=UI.TEXT_3, font=UI.F_SMALL).pack(anchor="w", pady=(3, 0))
+        PillButton(head, "环境自检", command=self._doctor, kind="ghost",
+                   bg=UI.BG, height=30).pack(side="right")
 
-        ttk.Label(frm, text="游戏目录：").grid(row=0, column=0, sticky="w")
+        # ---- 输入卡片 ----
+        card = Card(outer)
+        card.pack(fill="x")
+        body = card.body
+        body.columnconfigure(1, weight=1)
         self.var_game = tk.StringVar()
-        self.ent_game = ttk.Entry(frm, textvariable=self.var_game)
-        self.ent_game.grid(row=0, column=1, sticky="ew")
-        self.ent_game.bind("<Return>", lambda _e: self._autofill_out())
-        ttk.Button(frm, text="浏览…", command=self._browse_game).grid(row=0, column=2, padx=(4, 0))
-
-        ttk.Label(frm, text="输出目录：").grid(row=1, column=0, sticky="w")
+        self.ent_game = self._field(body, 0, "游戏目录", self.var_game, self._browse_game)
+        self.ent_game.ent.bind("<Return>", lambda _e: self._autofill_out())
         self.var_out = tk.StringVar()
-        ttk.Entry(frm, textvariable=self.var_out).grid(row=1, column=1, sticky="ew")
-        ttk.Button(frm, text="浏览…", command=self._browse_out).grid(row=1, column=2, padx=(4, 0))
+        self.ent_out = self._field(body, 1, "输出目录", self.var_out, self._browse_out)
 
-        opt = ttk.Frame(frm)
-        opt.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+        bar = tk.Frame(body, bg=UI.CARD)
+        bar.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(16, 0))
         self.var_gui = tk.BooleanVar(value=False)
-        ttk.Checkbutton(opt, text="用于加密的 krkr",
-                        variable=self.var_gui).pack(side="left")
-        # 默认开：解包的终点就是「图片/音频/视频」三类，让用户少一步手动挑。
-        # 只加清单与硬链接视图，不动 raw（不占空间、不影响对账）。
         self.var_organize = tk.BooleanVar(value=True)
-        ttk.Checkbutton(opt, text="按类型整理",
-                        variable=self.var_organize).pack(side="left", padx=(10, 0))
-        self.btn_run = ttk.Button(opt, text="开始解包", command=self._start)
+        # 用 tk.Checkbutton 而不是 ttk：clam 主题把选中态画成「方框加叉」，像禁用符号；
+        # 原生勾选框虽朴素，但语义一眼可辨（勾 = 开）。
+        for text, var in (("用于加密的 krkr", self.var_gui),
+                          ("按类型整理", self.var_organize)):
+            Check(bar, text, var).pack(side="left", padx=(0, 18))
+        # 主操作只有一个实心色块 —— 天空蓝在全窗口的露面都集中在这里
+        self.btn_run = PillButton(bar, "开始解包", command=self._start, kind="primary",
+                                  bg=UI.CARD, height=38, padx=24, font=UI.F_BOLD)
         self.btn_run.pack(side="right")
-        self.btn_cancel = ttk.Button(opt, text="取消", command=self._cancel,
-                                     state="disabled")
-        self.btn_cancel.pack(side="right", padx=(0, 6))
-        self.btn_open = ttk.Button(opt, text="打开输出目录", command=self._open_out,
-                                   state="disabled")
-        self.btn_open.pack(side="right", padx=(0, 6))
-        # 自检放在左边、与「用于加密的 krkr」同一排：它是**出问题时**才点的按钮，
-        # 不该占据主操作位；但必须一眼看得到（此前只能靠命令行 --doctor）。
-        ttk.Button(opt, text="环境自检", command=self._doctor).pack(side="left", padx=(10, 0))
+        self.btn_open = PillButton(bar, "打开输出目录", command=self._open_out,
+                                   kind="secondary", bg=UI.CARD, state="disabled")
+        self.btn_open.pack(side="right", padx=(0, 8))
+        self.btn_cancel = PillButton(bar, "取消", command=self._cancel,
+                                     kind="secondary", bg=UI.CARD, state="disabled")
+        self.btn_cancel.pack(side="right", padx=(0, 8))
 
+        # ---- 日志卡片 ----
+        logcard = Card(outer)
+        logcard.pack(fill="both", expand=True, pady=(14, 0))
+        lb = logcard.body
+        top = tk.Frame(lb, bg=UI.CARD)
+        top.pack(fill="x")
+        tk.Label(top, text="运行日志", bg=UI.CARD, fg=UI.TEXT_2,
+                 font=(UI.FONT, 9, "bold")).pack(side="left")
+        self._dot = tk.Canvas(top, width=8, height=8, bg=UI.CARD,
+                              highlightthickness=0, bd=0)
+        self._dot.pack(side="right", padx=(7, 2))
+        self._dot_id = self._dot.create_oval(1, 1, 7, 7, fill=UI.DOT_IDLE, outline="")
         self.var_status = tk.StringVar(value="就绪")
-        ttk.Label(frm, textvariable=self.var_status, relief="sunken",
-                  anchor="w").grid(row=3, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+        tk.Label(top, textvariable=self.var_status, bg=UI.CARD, fg=UI.TEXT_3,
+                 font=UI.F_SMALL, anchor="e").pack(side="right")
+        self.var_status.trace_add("write", lambda *_: self._sync_dot())
+        tk.Frame(lb, bg=UI.LINE_SOFT, height=1).pack(fill="x", pady=(12, 0))
 
-        self.txt = tk.Text(frm, height=16, wrap="none", state="disabled",
-                           font=("Consolas", 9))
-        self.txt.grid(row=4, column=0, columnspan=3, sticky="nsew", pady=(6, 0))
-        sb = ttk.Scrollbar(frm, command=self.txt.yview)
-        sb.grid(row=4, column=3, sticky="ns")
-        self.txt.configure(yscrollcommand=sb.set)
+        box = tk.Frame(lb, bg=UI.CARD)
+        box.pack(fill="both", expand=True, pady=(12, 0))
+        self.txt = tk.Text(box, height=10, wrap="none", state="disabled",
+                           font=UI.F_MONO, bg=UI.CARD, fg=UI.TEXT_2, bd=0,
+                           highlightthickness=0, padx=0, pady=0,
+                           spacing1=2, spacing3=3, insertbackground=UI.SKY,
+                           selectbackground=UI.SKY_L, selectforeground=UI.TEXT)
+        self.txt.pack(side="left", fill="both", expand=True)
+        self._sb = ttk.Scrollbar(box, command=self.txt.yview,
+                                 style="Card.Vertical.TScrollbar")
+        self._sb.pack(side="right", fill="y", padx=(10, 0))
+        # 内容不满一屏时把滚动条收起来：常驻一根空槽是「网页 2003」的做法
+        self.txt.configure(yscrollcommand=self._on_scroll)
+        self.txt.tag_configure("hint", foreground=UI.TEXT_3)
+        self._hint()
 
         # 拖拽看 **root 能力** 不看模块 import：普通 tk.Tk() 根没有 drop_target_register，
         # 只有 TkinterDnD.Tk() 根有（tests 里的冒烟用的就是普通根）
@@ -395,6 +714,72 @@ class App:
 
         root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(100, self._poll)
+
+    # ---- 外观辅助 ----
+
+    def _init_style(self) -> None:
+        """把 ttk 拉平成卡片配色（clam 是唯一能改背景/边框的内置主题）。"""
+        st = ttk.Style(self.root)
+        with contextlib.suppress(tk.TclError):
+            st.theme_use("clam")
+        st.configure("Card.TCheckbutton", background=UI.CARD, foreground=UI.TEXT_2,
+                     focuscolor=UI.CARD, font=UI.F_LABEL, padding=0, borderwidth=0)
+        st.map("Card.TCheckbutton", background=[("active", UI.CARD)],
+               indicatorcolor=[("selected", UI.SKY), ("!selected", UI.CARD)])
+        st.configure("Card.Vertical.TScrollbar", background="#DCE3EC",
+                     troughcolor=UI.CARD, bordercolor=UI.CARD, arrowcolor=UI.CARD,
+                     relief="flat", borderwidth=0, arrowsize=1, width=8)
+        st.map("Card.Vertical.TScrollbar", background=[("active", "#C3CDDA")])
+        # 去掉两端的箭头：现代滚动条是「一根细条」，箭头是 90 年代的记忆
+        with contextlib.suppress(tk.TclError):
+            st.layout("Card.Vertical.TScrollbar", [
+                ("Vertical.Scrollbar.trough", {"sticky": "ns", "children": [
+                    ("Vertical.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"})]})])
+
+    def _field(self, parent: tk.Misc, row: int, label: str, var: tk.StringVar,
+               browse_cmd) -> "RoundedEntry":                          # noqa: ANN001
+        """一行表单：小标签 + 圆角输入框 + 次级按钮。"""
+        tk.Label(parent, text=label, bg=UI.CARD, fg=UI.TEXT_3, font=UI.F_LABEL,
+                 width=7, anchor="w").grid(row=row, column=0, sticky="w",
+                                           pady=(0 if row == 0 else 12, 0))
+        ent = RoundedEntry(parent, var, bg=UI.CARD)
+        ent.grid(row=row, column=1, sticky="ew", padx=(10, 10),
+                 pady=(0 if row == 0 else 12, 0))
+        PillButton(parent, "浏览", command=browse_cmd, kind="secondary",
+                   bg=UI.CARD, height=34).grid(row=row, column=2, sticky="e",
+                                               pady=(0 if row == 0 else 12, 0))
+        return ent
+
+    def _hint(self) -> None:
+        """空状态提示：日志区一打开不该是一片白。"""
+        self.txt.configure(state="normal")
+        self.txt.insert("end", "把游戏文件夹拖进窗口，或点「浏览」选择目录。\n"
+                               "解包产物默认落在 <游戏目录>\\output。\n", "hint")
+        self.txt.configure(state="disabled")
+
+    def _on_scroll(self, first: str, last: str) -> None:
+        """滚动条：**内容装得下就隐藏**，装不下才出现。"""
+        self._sb.set(first, last)
+        fits = float(first) <= 0.0 and float(last) >= 1.0
+        if fits and self._sb.winfo_ismapped():
+            self._sb.pack_forget()
+        elif not fits and not self._sb.winfo_ismapped():
+            self._sb.pack(side="right", fill="y", padx=(10, 0))
+
+    def _sync_dot(self) -> None:
+        """状态点：颜色跟状态文字走，一眼分出「在跑 / 通过 / 出错 / 受限」。"""
+        text = self.var_status.get()
+        color = UI.DOT_IDLE
+        if text.startswith("运行中") or "正在取消" in text:
+            color = UI.SKY
+        elif "完成" in text or "通过" in text:
+            color = UI.OK
+        elif "异常" in text or "失败" in text or "不可写" in text or "错误" in text:
+            color = UI.ERR
+        elif "受限" in text or "取消" in text:
+            color = UI.WARN
+        with contextlib.suppress(tk.TclError):
+            self._dot.itemconfigure(self._dot_id, fill=color)
 
     # ---- 交互回调（主线程） ----
 
