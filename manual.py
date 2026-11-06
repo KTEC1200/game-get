@@ -103,7 +103,9 @@ def plan_for(error: str, *, engine: str | None, game_dir: Path, out_dir: Path,
              raw_dir: Path, png_dir: Path, prog: str = "orchestrator.exe",
              tools: Mapping[str, str] | None = None,
              stages: list[dict] | None = None,
-             case_hint: str | None = None) -> ManualPlan | None:
+             case_hint: str | None = None,
+             allow_gui: bool = False,
+             backup_dir: Path | str | None = None) -> ManualPlan | None:
     """按失败码给一份人工方案；没有合适方案返回 None（不要硬凑）。
 
     `case_hint`：案例库证据提示（P1-① A 案，2026-11-05 用户定）——
@@ -111,6 +113,11 @@ def plan_for(error: str, *, engine: str | None, game_dir: Path, out_dir: Path,
     摆进 summary。放 summary 而不是 why：GUI 摘要只显示 summary 与前 3 步，
     放别处 GUI 用户看不见。GUI 自动化**已经跑过但失败**的分支不套用
     （那条的结论是「这条链路在你机器上没走通」，再推荐它就是误导）。
+
+    `allow_gui`：本轮是否已经用了 `--allow-gui`。是，则 GUI 链路失败时**不再**
+    把「加 --allow-gui 全自动」当备选重复推荐（2026-11-06 实跑：用户明明勾了
+    「用于加密的 krkr」，失败弹窗却还让他再加一次这个参数）。
+    `backup_dir`：`--overwrite` 把上一轮产物改名备份到的目录，写进方案让用户找得回。
     """
     tools = tools or {}
     resume = f"{prog} {_q(game_dir)} --out {_q(out_dir)} --reuse-raw {_q(raw_dir)}"
@@ -120,23 +127,79 @@ def plan_for(error: str, *, engine: str | None, game_dir: Path, out_dir: Path,
         gui_failed = "GUI 链路失败" in detail or "没有产出 KrkrExtract_Output" in detail
         code = CODE_KIRIKIRI_GUI_FAILED if gui_failed else CODE_KIRIKIRI_ENCRYPTED
         krkr = tools.get("krkr") or r"<随包目录>\bin\krkr\KrkrExtract.Lite.exe"
-        # GUI 跑过但失败 ≠ 没试过：前者要先排查环境（安全软件/远程桌面），
-        # 直接原样再跑一次 40 分钟纯属浪费。所以 why 换成排查方向。
-        why = ("上一步的 GUI 自动化跑过了但没产出。常见原因：安全软件拦了 KrkrExtract 或 "
-               "game.exe；或者不是真实桌面会话（远程桌面/多虚拟桌面会让模拟鼠标失效）。"
-               if gui_failed else
-               "GARbro 的 Console 版没有「指定游戏标题/密钥」的参数；"
+        backup_note = (f"上一轮产物已改名备份（未删除）：{backup_dir}，"
+                       f"失败时会自动回滚回 {out_dir}\\raw 与 {out_dir}\\png"
+                       if backup_dir else "")
+
+        if gui_failed:
+            # 2026-11-06 实跑：`kirikiri-gui-failed` 分支原来照抄加密分支的 summary
+            # 「GARbro 列不出目录（大概率加密/受保护）」，而真实根因是 KrkrExtract
+            # 拖拽落点扫不到 / Full Unpack 没点上 —— 用户按着错误的方向排查了 40 分钟。
+            gui_error = _gui_error_text(stages, detail)
+            summary = ("GUI 自动化链路已经跑过但失败：KrkrExtract 的拖拽/落点环节没走通"
+                       "（与引擎加密判定无关，别再往 GARbro 的方向排查）。")
+            if gui_error:
+                summary += f" 真实报错：{gui_error[:160]}"
+            why = ("上一步的 GUI 自动化跑过了但没产出。常见原因：安全软件拦了 KrkrExtract 或 "
+                   "game.exe；或者不是真实桌面会话（远程桌面/多虚拟桌面会让模拟鼠标失效）；"
+                   "本轮还可能是主窗口被遮挡/最小化/句柄重建导致拖拽落点找不到，"
+                   "或 'Full Unpack' 没点上（默认只解脚本）。"
+                   "这条链路必须**独占真实桌面**：关掉浏览器与其他置顶窗口，运行期间"
+                   "不要切换窗口、不要动鼠标、不要锁屏。")
+            if gui_error:
+                why += (f" 真实报错（摘自 _work/extract.log 与 krkr_auto_extract.log）："
+                        f"{gui_error}")
+            needs = [
+                f"KrkrExtract.Lite.exe（随包路径：{krkr}）",
+                "真实桌面会话（非远程桌面/多虚拟桌面），运行期间独占鼠标与前台",
+                f"完整日志：{Path(out_dir) / '_work' / 'extract.log'} 与 "
+                "<随包目录>/_krkr_stage/krkr_auto_extract.log（UTF-8，中文可读）",
+            ]
+            if backup_note:
+                needs.insert(0, backup_note)
+            steps = [
+                "打开 _work/extract.log 与 krkr_auto_extract.log，定位最后一条 "
+                "RuntimeError / ERROR（落点被遮挡 / 全是子控件 / 窗口不可见 / Full Unpack 没点上）",
+                "关掉浏览器、远程桌面、其他置顶窗口；确认是真实桌面且屏幕未锁定，"
+                "运行期间不切窗口、不动鼠标",
+                "若仍报落点问题，可调大 KRKR_DROP_ATTEMPTS（默认 6）与 "
+                "KRKR_WINDOW_WAIT（默认 40 秒）后重试；日志会写明是谁挡着、是不是子控件",
+                f"或直接改走人工：打开 {krkr}，先勾上 Full Unpack",
+                "把游戏目录下的所有 .xp3 拖进 KrkrExtract 窗口（先拖 data.xp3），"
+                "等界面状态回到 idle（有进度条就走完）",
+                "解出来的东西在 KrkrExtract 目录下的 KrkrExtract_Output\\data 与 ...\\png",
+                f"把 data\\ 里的全部内容拷到：{raw_dir}",
+                f"如果 ...\\png 里有东西，一并拷到：{png_dir}",
+            ]
+            if backup_note:
+                steps.insert(0, f"先确认产物安全：{backup_note}")
+            # 用户已经用过 --allow-gui 时，再把它当备选就是让他原样重跑 40 分钟。
+            alternatives: tuple[str, ...] = ()
+            if not allow_gui:
+                alternatives = (
+                    f"{prog} {_q(game_dir)} --out {_q(out_dir)} --allow-gui --overwrite"
+                    f"（全自动，约 40 分钟，期间别动鼠标、别切虚拟桌面）",
+                )
+            return ManualPlan(
+                code=code, summary=summary, why=why,
+                needs=tuple(needs), steps=tuple(steps), target=str(raw_dir),
+                then=resume, alternatives=alternatives,
+            )
+
+        # 没试过 GUI 链路：结论才是「列不出目录，需要人工或加 --allow-gui」。
+        why = ("GARbro 的 Console 版没有「指定游戏标题/密钥」的参数；"
                "KrkrExtract 的自动化要模拟鼠标拖拽，慢且挑环境。")
         summary = "这个游戏的 xp3 自动解不开：GARbro 列不出目录（大概率加密/受保护）。"
         if case_hint and not gui_failed:
             summary = f"{summary} {case_hint}"
+        needs = [f"KrkrExtract.Lite.exe（随包路径：{krkr}）"]
+        if backup_note:
+            needs.insert(0, backup_note)
         return ManualPlan(
             code=code,
             summary=summary,
             why=why,
-            needs=[
-                f"KrkrExtract.Lite.exe（随包路径：{krkr}）",
-            ],
+            needs=tuple(needs),
             steps=[
                 f"打开 {krkr}",
                 "把游戏目录下的所有 .xp3 拖进 KrkrExtract 窗口（先拖 data.xp3），"
@@ -216,11 +279,37 @@ def _stage_detail(stages: list[dict] | None, name: str) -> str:
     return ""
 
 
+def _gui_error_text(stages: list[dict] | None, detail: str = "") -> str:
+    """取 krkr 链路的**真实报错**，让人工方案引用它而不是复述错误码。
+
+    `orchestrator.stage_extract_kirikiri` 把 krkr stdout 里的关键行存进
+    `extract.data.gui_error`；但 `Stage.as_dict()` 会把 data **平铺到顶层**
+    （规范字段后盖），所以真实 manifest 里字段是 `stages[].gui_error`，
+    根本没有 `data` 这个键。2026-11-07 QA 复核：只查嵌套 data 是死路径，
+    生产上一直靠 detail 里「真实报错：」的兜底分支才碰巧能用；夹具用了
+    非真实的嵌套形状，把这条死路径测绿了。现在两种形状都读（嵌套只作
+    外部自造 dict 的兼容），老 manifest 两处都没有时再退回 detail 后缀。
+    """
+    for s in stages or []:
+        if s.get("stage") == "extract":
+            data = s.get("data")
+            nested = data.get("gui_error") if isinstance(data, dict) else None
+            value = s.get("gui_error") or nested
+            if value:
+                return str(value)
+    marker = "真实报错："
+    if marker in (detail or ""):
+        return str(detail).split(marker, 1)[1].strip()
+    return ""
+
+
 def dry_run_plan(engine: str | None, *, game_dir: Path, out_dir: Path,
                  raw_dir: Path, png_dir: Path, xp3_probe: tuple[bool, str] | None,
                  prog: str = "orchestrator.exe",
                  tools: Mapping[str, str] | None = None,
-                 case_hint: str | None = None) -> ManualPlan | None:
+                 case_hint: str | None = None,
+                 allow_gui: bool = False,
+                 backup_dir: Path | str | None = None) -> ManualPlan | None:
     """`--dry-run` 的提前预判：**别让用户跑完 40 分钟才发现要人工**。
 
     `xp3_probe` = (能否列出, 最大 xp3 的名字)；None 表示没探（非 KiriKiri）。
@@ -228,7 +317,8 @@ def dry_run_plan(engine: str | None, *, game_dir: Path, out_dir: Path,
     if engine == "KiriKiri" and xp3_probe is not None and not xp3_probe[0]:
         plan = plan_for("extract-failed", engine=engine, game_dir=game_dir,
                         out_dir=out_dir, raw_dir=raw_dir, png_dir=png_dir,
-                        prog=prog, tools=tools, stages=[], case_hint=case_hint)
+                        prog=prog, tools=tools, stages=[], case_hint=case_hint,
+                        allow_gui=allow_gui, backup_dir=backup_dir)
         if plan is None:
             return None
         summary = f"预判：{xp3_probe[1]} 用 GARbro 列不出目录，正式跑大概率要人工介入。"

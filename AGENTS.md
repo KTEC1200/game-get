@@ -21,73 +21,59 @@
 
 > **2026-11-02 测试反馈**：随包 GARbro 的 .NET 插件加载修复仅适用于可信工具目录；Unity 样本的音频收集未对账通过，KiriKiri 索引兜底已用真实注入新索引和模拟窗口缺失提取 2562 条，自然窗口缺失尚未复现。案例索引已保留旧案例并加入 Toshiue。实测和限制见 `verified-findings.md`。
 
-> **📌 当前状态（2026-11-07 00:20，v0.8.2 + 本地 dropfix1 + 未提交的 BugFix）**
+> **📌 当前状态（2026-11-07 00:47，BugFix 收口 + 用户数据已恢复 + 新包待打）**
 > - **交付**：`packaging/Output/GalgameUnpacker-0.8.2-portable.zip`（148,528,606 B / 141.7 MiB，
 >   SHA256 `687f4cd3…f26de05e983d`），已发布到 GitHub Release **`v0.8.2`**
->   <https://github.com/KTEC1200/game-get/releases/tag/v0.8.2>。Release 下**仅 1 个附件**
->   （asset `717312891`），远端 `digest` 与本地 ZIP、说明里的 SHA256 三方一致；
->   包内 `orchestrator/README.md` 是精简后的 125 行版本（与仓库同源）。
-> - **本地加固包（⚠️ 未发布，与上面 Release 附件不是同一份）**：
->   `packaging/Output/GalgameUnpacker-0.8.2-dropfix1-portable.zip`
->   （151,401,258 B / 144.4 MiB，SHA256 `9bc23bf9…64ba64514078d`），含落点遮挡加固。
->   版本常量仍是 `0.8.2`（README / `--doctor` 契约不动），靠文件名 + 包内
->   `orchestrator/BUILD_INFO.txt` 区分。已解压到 `D:\GalgameUnpacker\orchestrator`：
->   该路径下 `--doctor` **High 完整性、全部位置可写、rc=0**，`--gui-smoke` rc=0；
->   同一个 exe 放在 `D:\K` 内跑则是 Low 完整性、用户目录全不可写、rc=1
->   —— 再次实证「路径决定完整性级别」这条规避。
-> - **⚠️ 2026-11-06 23:26 真机实跑 `--allow-gui` 失败 + 数据清空事件**：
->   用户用 dropfix1 包跑 `教师催眠2`，`--overwrite` 先清空 `output/raw` 9818 +
->   `png` 2748 个文件，随后 GUI 链路 60.54s 后 rc=1 → 交付 0 文件、退出码 1、弹「需要人工介入」。
->   **`raw/`、`png/` 现已不存在，但 `output/分类` 硬链接视图 9818 文件 / 4.4 GiB 完好**，
->   数据没真丢；`tools/restore_from_view.py --dry-run` 已验 rc=0、冲突 0、不写盘。
->   详见文末「2026-11-07 真机实跑失败与 BugFix」。
-> - **源码状态**：HEAD `635549c`，工作树有 **9 个未提交改动**（5 改 + 4 增），
->   是本轮 BugFix 产物：4 项根因修复 + 44 条新测试。工程师自测
->   `tests=800 / 0 failures / 0 errors → PASS`（工程师自测 9 skipped、主理人复核 10 skipped，
->   差异只是环境用例波动）、golden 零漂移、`IS_PASS: YES`。
->   **QA 独立验证未完成**（被中断），有一处已核实的契约疑点（见待办 2）。
->   ⚠️ 修复**只在源码仓库**：用户手上的 dropfix1 包与 `D:\GalgameUnpacker` 解压目录
->   仍是旧代码，**必须重新打包才能实跑**；未提交前别 `git add -A`。
-> - **实测态**：`教师催眠2` 人工拖拽 + `--reuse-raw` 全链 rc=0（9818 文件、三媒体零失败，
->   2026-11-06 16:55）；`--allow-gui` 全自动**真机跑过且失败**，不再是「没试过」。
->   界面已按用户两轮反馈收敛；本轮截图反馈已转 BugFix，修复尚未交付验证结果。
+>   <https://github.com/KTEC1200/game-get/releases/tag/v0.8.2>（仅 1 个附件，asset `717312891`，
+>   远端 digest / 本地 ZIP / 说明三方一致；包内 README 125 行与仓库同源）。
+>   **本轮不改 Release 附件、不动 `version.py` / README。**
+> - **本地加固包 dropfix1**（`GalgameUnpacker-0.8.2-dropfix1-portable.zip`，151,401,258 B，
+>   SHA256 `9bc23bf9…64ba64514078d`，版本常量仍 `0.8.2`）：与 Release 附件**不是同一份**，
+>   已解压到 `D:\GalgameUnpacker\orchestrator`（High 完整性 / `--doctor` rc=0 / `--gui-smoke` rc=0；
+>   同一 exe 放 `D:\K` 内则 Low 完整性、rc=1，实证「路径决定完整性级别」）。
+>   ⚠️ 它是**旧代码**，不含本轮 BugFix，必须重新打包才能实跑。
+> - **✅ 用户数据已恢复（2026-11-07 00:40）**：`D:\HY\教师催眠2\output` 的 `raw/` 与 `png/`
+>   用 `tools/restore_from_view.py` 从 `分类/` 视图重建：**9818 个交付文件（raw 7070 / png 2748）**，
+>   冲突 0、失败 0；`--check --sample 8` 抽样 8/8 `samefile=True`、大小一致、缺失 0、rc=0。
+>   `分类/` 视图 9818 文件 / 4.4 GiB **原样保留**，未删、未改名、未重写；标记文件也在。
+>   ⚠️ 原 raw 里的 2748 个 `.tlg`/`.pna` 中间格式不在视图内，**无法还原**（PNG 成品完整）。
+> - **✅ QA 独立验证收口**（详见文末「2026-11-07 接手收口」）：`Stage.as_dict()` 平铺 data 造成
+>   `manual._gui_error_text` 死路径已修、夹具改成真实形状；恢复后 `--reuse-raw --organize`
+>   在**加密包（无索引地面真相）**下 rc=0 已隔离实证，同时锁住「索引可列出时数据不齐必须报错」的边界。
+> - **源码状态**：HEAD `6d96c49`（交接文档提交），工作树 **10 个改动**（5 改 + 5 增，新增
+>   `tests/test_reuse_after_restore.py`）。全量 `tests=806 / 0 failures / 0 errors / 9 skipped → PASS`，
+>   `make_golden.py --check` 零漂移。**尚未提交**，别 `git add -A`。
+> - **⚠️ 事件本身仍未闭环**：2026-11-06 23:26 真机 `--allow-gui` 失败（60.54s / rc=1 / 交付 0），
+>   4 项根因修复只在源码，**未经真机复现**：Full Unpack 能否点中、退化 rect 真实成因、
+>   改名备份/回滚在冻结 exe + 中文路径下的表现，都要下一次约 40 分钟独占桌面实跑。
+>   事故原始证据与四个真因见文末「2026-11-07 真机实跑失败与 BugFix」及 `verified-findings.md` §33。
 > - **能力面**：9 条引擎链路可用；加密 KiriKiri 需 `--allow-gui`（要真实桌面）或人工拖拽 +
 >   `--reuse-raw` 收尾。其余引擎判得出但无链路（退出码 2）。
 >
-> **📋 待办（按优先级，2026-11-07 00:20 重排）**
-> 1. **恢复 `D:\HY\教师催眠2\output` 的 `raw/` 与 `png/`**（用户数据，最急）：
->    `C:\Python314\python.exe tools\restore_from_view.py --out "D:\HY\教师催眠2\output" --dry-run`
->    → 确认无误后去掉 `--dry-run` 实跑 → 再 `--check --sample 8` 验收。
->    ⚠️ `output/分类` 是**唯一完整副本**，实跑前别删、别改名、别再点「开始解包」。
->    口径：还原的是 **9818 个交付文件 = raw 7070 + png 2748**；原 `raw/` 里那 2748 个
->    `.tlg`/`.pna` 中间格式不在视图内、无法还原（PNG 成品已完整回来）。
->    「恢复后直接 `--reuse-raw --organize` 是否 rc=0」待 QA 结论（源 tlg 缺失会不会触发
->    `_converted_fresh()` 重转 / verify 计数 / `manifest.stages[].ok` 被写成异常值）。
-> 2. **QA 独立验证收口**：唤醒 `software-qa-engineer` 出最终报告。它停在已核实的疑点：
->    `orchestrator.Stage.as_dict()`（160 行）把 `data` **平铺**到顶层，而
->    `manual._gui_error_text`（`manual.py:291`）只读 `s.get("data").get("gui_error")`，
->    生产路径永远取空，靠 detail 里「真实报错：」的兜底分支（295 行）才工作；
->    `tests/test_overwrite_backup.py` 的 `_GUI_STAGES` 夹具用了非真实的嵌套 `data` 形状，
->    把这条死路径测绿了。最小修法：同时读顶层 `s.get("gui_error")` + 把夹具改成平铺形状。
-> 3. **提交 + 重新打本地包**：QA 通过后显式 add 那 9 个文件（**不要 `git add -A`**）提交并推送；
->    打新标识包（别覆盖 dropfix1 与已发布 0.8.2），解压到 `D:\GalgameUnpacker` 再让用户实跑。
+> **📋 待办（按优先级，2026-11-07 00:47 重排）**
+> 1. **显式提交 + 重新打本地包**：数据恢复与 QA 收口均已完成。显式 add 那 10 个改动
+>    （**不要 `git add -A`**）提交并推送；打新标识包（别覆盖 dropfix1 与已发布 0.8.2），
+>    解压到 `D:\GalgameUnpacker`，`--doctor` / `--gui-smoke` 自检后交给用户实跑。
 >    `version.py` 保持 `0.8.2`（README 有契约测试），GitHub Release `v0.8.2` 附件不动。
-> 4. **`--allow-gui` 全自动闭环仍未跑到底**：dropfix1 那次失败已定位并修代码（退化 rect
->    落点诊断 / Full Unpack 硬失败 / 文案 / 改名备份回滚），但**修复未经真机复现**。
->    下一次仍需约 40 分钟独占桌面：不切窗口、不动鼠标、不锁屏、不用远程桌面。
-> 5. `Full Unpack` 是否对所有 KrkrExtract 版本/游戏都有效：目前只对 `教师催眠2` 验证过。
-> 6. 案例库仍只有 12 个 case；新变体照旧要从头逆向。
-> 7. `packaging\Output\orchestrator` 上那两条非标准 ACE（`Everyone …(DENY)(DC)`）来源未查明
+> 2. **`--allow-gui` 全自动真机闭环**：约 40 分钟独占桌面（不切窗口、不动鼠标、不锁屏、
+>    不用远程桌面）跑 `教师催眠2`；看新日志的四分类统计行 + Full Unpack 诊断，
+>    确认 4 项根因修复真生效。**修复未经真机复现，别声称闭环**。
+> 3. `Full Unpack` 是否对所有 KrkrExtract 版本/游戏都有效：目前只对 `教师催眠2` 验证过。
+> 4. 案例库仍只有 12 个 case；新变体照旧要从头逆向。
+> 5. `packaging\Output\orchestrator` 上那两条非标准 ACE（`Everyone …(DENY)(DC)`）来源未查明
 >    —— 已确认不影响规避方式（放普通目录即按 High 运行）。
-> 8. **不要加暗色模式**：用户 2026-11-06 明确说不做；界面 token 也刻意保持单套，别留半成品分支。
+> 6. **不要加暗色模式**：用户 2026-11-06 明确说不做；界面 token 也刻意保持单套，别留半成品分支。
+> 7. 用户数据现场别再动：别删/改名 `D:\HY\教师催眠2\output\分类`，别用 `--overwrite` 重跑
+>    覆盖这份恢复产物；真要重跑先在副本上试。
 
 > **🚀 接手顺序（新会话只做这四步）**
-> ① 读上面「当前状态 / 待办」+ 文末「2026-11-07 真机实跑失败与 BugFix」+「⚠️ 五个坑」；
->    先跑 `git status` —— **工作树有 9 个未提交改动是本轮修复，别当成垃圾清掉**；
+> ① 读上面「当前状态 / 待办」+ 文末「2026-11-07 真机实跑失败与 BugFix」「接手收口」+「⚠️ 五个坑」；
+>    先跑 `git status` —— **工作树若有未提交改动，先问清是不是修复产物，别当成垃圾清掉**；
 > ② 跑基线：`C:\Python314\python.exe tests\run_all.py`（**不要用裸 `python`**，它没有 pytest；
->    当前未提交态 **tests=800 / 0 failures / 0 errors**，skip 9~10 均为环境条件、随环境波动）
+>    提交后基线 **tests=806 / 0 failures / 0 errors**，skip 9~11 均为环境条件、随环境波动）
 >    + `C:\Python314\python.exe tests\make_golden.py --check`（应零漂移）；
-> ③ 按「待办」从第 1 项（恢复用户数据）开工；QA 未收口前别声称「可交付」；
+> ③ 用户数据已恢复，别再动 `D:\HY\教师催眠2\output`；优先推进待办 1、2，
+>    真机全链未复现前别声称「可交付」；
 > ④ **改完先回写本文档 + `verified-findings.md`，再清临时产物，最后显式 add 提交。**
 
 ## 文件索引（按需读，别全读）
@@ -1681,3 +1667,58 @@ C:\Python314\python.exe tools\restore_from_view.py --out "D:\HY\教师催眠2\ou
 `IsWindow`/`GetAncestor` 在 200% DPI 与真实 Z 序下的行为、`raise_ui_window` 连招在具体桌面
 能否恢复可见性、改名备份/自动回滚在冻结 exe + 中文路径 + 删除守卫下的表现，
 以及整条链路端到端能否产出含图/音频的完整产物。
+
+## 2026-11-07 00:47 接手收口（数据恢复 + QA 独立验证 + 契约修复）
+
+### 1. 用户数据恢复（已实跑，不是 dry-run 推演）
+
+现场只读复核：`output/` 只有 `_work/`、`manifest.json`、`分类/`、`类目清单.csv`；
+`raw/`、`png/` 不存在；`分类/` 9819 文件（含 `.galunpack-view` 标记）/ 4.4 GiB；
+无 `_overwrite_backup_`（旧代码根本没备份）。
+
+| 步骤 | 结果 |
+|---|---|
+| `--dry-run` | 视图条目 9818（raw 7070 / png 2748），新建硬链接 9818，冲突 0，失败 0，未写盘，rc=0 |
+| 实跑 | 新建硬链接 9818，冲突 0，失败 0，rc=0 |
+| `--check --sample 8` | raw 7070 / 1,134,518,660 B；png 2748 / 3,565,677,014 B；缺失 0；8 个抽样 `samefile=True`、大小一致 → 通过，rc=0 |
+
+`分类/` 视图未删、未改名、未重写；恢复工具只建硬链接，没用 `--force`。
+**中间格式 2748 个 `.tlg`/`.pna` 不在交付视图内，恢复不了**（PNG 成品完整）。
+用户目录此后别再点 `--overwrite` 覆盖这份恢复产物。
+
+### 2. QA 契约疑点：已核实并修复
+
+`orchestrator.Stage.as_dict()`（`orchestrator.py:160`）是 `{**self.data, "stage":…, "ok":…}`
+—— **data 平铺，结果里没有 `data` 键**。`manual._gui_error_text` 原来只读
+`s.get("data").get("gui_error")` → 生产路径永远取空，一直靠 detail 里「真实报错：」的
+兜底分支碰巧能用；`tests/test_overwrite_backup.py` 的 `_GUI_STAGES` 夹具用了非真实嵌套形状
+且 detail 带 marker，把死路径测绿了。
+
+修法：`_gui_error_text` 先读顶层 `s.get("gui_error")`，再兼容嵌套 dict，最后退回 detail 后缀；
+夹具改成 `Stage.as_dict()` 的真实平铺形状且 detail 不带 marker；新增 3 条回归
+（真实 `Stage(...).as_dict()` 形状 / 顶层优先于 detail / 嵌套与老 manifest 兼容）。
+
+### 3. 恢复后 `--reuse-raw --organize` 是否 rc=0：隔离实证
+
+新增 `tests/test_reuse_after_restore.py`（tmp_path 复刻现场：raw 只有交付文件、png 是合法 PNG
+成品、`分类/` 视图与清单已存在、假 xp3 全 `unknown format`），3 条全过：
+
+- **默认模式 rc=0**。postprocess `ok=True/skipped=True`、detail「无待转格式（.tlg/.pna），
+  无需后处理」，monkeypatch 的 `tlg2png` 一次都没被调用；verify final = raw 交付 + png 成品，
+  图片数不受源 tlg 缺失影响；`manifest.stages[].ok` 全是布尔（v0.7.1 的 `data["ok"]` 覆盖没回潮）；
+  reconcile `method=no-index-available`、`diff=None`（没验不伪装成 0 差）；
+  organize 原地重建视图，**视图条目数、raw/、png/ 文件数全部不变**（`_prune_stale` 删 0）。
+- **边界（重要）**：这只对「加密包、索引列不出」成立。若 GARbro 列得出索引，reuse 分支拿
+  索引条目数对着 raw/ 数，恢复后少了 .tlg/.pna 中间格式必然 `复用产物对账失败`
+  → rc=1 / `extract-failed`。这类样本只能重新解包，不能靠视图恢复后半路复用。
+- `--strict` 下无地面真相仍按既有契约判 rc=1 / `strict-no-ground-truth`。
+
+### 4. 测试与提交口径
+
+`tests/run_all.py` → **806 / 0 failures / 0 errors / 9 skipped → PASS**（基线 800 + 新增 6：
+manual 3 + reuse 3）；`make_golden.py --check` 零漂移。工作树 10 个改动（5 改 + 5 增，
+其中 `tests/test_reuse_after_restore.py` 与 `tools/restore_from_view.py` 是本轮/上轮新增），
+**显式 add 提交，禁用 `git add -A`**。
+
+⚠️ 真机 `--allow-gui` 全自动仍未复现：以上全是源码态 + 隔离替身验证，用户手上的
+dropfix1 与 `D:\GalgameUnpacker` 仍是旧代码。重新打包 + 40 分钟独占桌面实跑见待办 1、2。

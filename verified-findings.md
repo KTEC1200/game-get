@@ -2237,18 +2237,62 @@ organize    图片 3082 / 音频 6558 / 视频 12 / 其他 166；硬链接 9818�
 **口径**：视图是 organize 的 final 交付口径，9818 = raw 7070 + png 2748；reset 清的是
 raw 9818 + png 2748，差的 2748 个正是被后处理消费掉的 `.tlg`/`.pna` 中间格式。还原后拿回的是
 **全部 9818 个交付文件**，中间格式原件无法从视图恢复（PNG 成品完整）。
-「恢复后直接 `--reuse-raw --organize` 能否 rc=0」尚未验证（源 tlg 缺失时
-`_converted_fresh()` 是跳过/重转/报错待查）。
+「恢复后直接 `--reuse-raw --organize` 能否 rc=0」**已于 2026-11-07 00:47 隔离实证：
+加密包（无索引地面真相）下 rc=0**；源 tlg 缺失时 `stage_postprocess` 直接 skipped，
+`_converted_fresh()` 根本不会被调用。边界与凭据见 §33.5。
 
 ### 33.4 修复与状态（截至 2026-11-07 00:20）
 
-源码仓库 `D:\K\deepseek` 有 9 个未提交改动（HEAD `635549c`）：改名备份 + 失败自动回滚、
+源码仓库 `D:\K\deepseek` 交接时（HEAD `635549c`）有 9 个未提交改动：改名备份 + 失败自动回滚、
 四分类落点诊断 + 句柄重绑、Full Unpack 硬失败前置 + 日志编码、gui_failed 独立文案、
 恢复工具，以及 44 条新替身测试。工程师自测 `800 / 0 failures / 0 errors / 9 skipped → PASS`；
 主理人 00:20 复核 `790 passed / 10 skipped`、`0 failures / 0 errors`（skip 差异为环境用例波动），
-golden 零漂移。**QA 独立验证未完成**；已核实的契约疑点（`Stage.as_dict()` 平铺 data vs
-`manual._gui_error_text` 读 `s.get("data")`）见 `AGENTS.md` 文末章节。
+golden 零漂移。当时 **QA 独立验证被中断未完成**，留下已核实的契约疑点
+（`Stage.as_dict()` 平铺 data vs `manual._gui_error_text` 读 `s.get("data")`）。
+**00:47 已收口**：疑点修复 + 数据恢复 + 隔离实证，见 §33.5 与 `AGENTS.md` 文末。
 
 ⚠️ **这些修复全是源码态 + 替身测试，未真机复现**：用户手上的 dropfix1 包与
 `D:\GalgameUnpacker` 解压目录仍是旧代码，必须重新打包后再跑。`--allow-gui` 全自动闭环
 **仍未跑到底**，待办 #1 从「没试过」变成「试过、失败、代码已修、待真机复验」。
+
+### 33.5 00:47 接手收口：数据恢复实跑 + QA 独立验证（一手证据）
+
+**数据恢复（`D:\HY\教师催眠2\output`，只读复核 → dry-run → 实跑 → 验收）**
+
+- 现场：`raw/`、`png/` 不存在；`分类/` 9819 文件（含 `.galunpack-view`）/ 4.4 GiB；
+  无 `_overwrite_backup_`（旧代码没备份）；`manifest.json` 仍是失败那轮。
+- `tools/restore_from_view.py --dry-run`：条目 9818（raw 7070 / png 2748）、
+  冲突 0 / 失败 0 / 未写盘 / rc=0。实跑：新建硬链接 9818、冲突 0、失败 0、rc=0。
+- `--check --sample 8`：`raw/ 7070 个 / 1,134,518,660 B`、`png/ 2748 个 / 3,565,677,014 B`、
+  缺失 0、8 个抽样 `samefile=True` 且大小一致 → 通过、rc=0。
+- `分类/` 视图与标记**未删、未改名、未重写**；`--force` 未用。恢复的是 9818 个**交付文件**，
+  2748 个 `.tlg`/`.pna` 中间格式不在视图内、无法还原（PNG 成品完整）。
+
+**QA 契约疑点（已核实 + 已修）**
+
+`Stage.as_dict()` = `{**self.data, "stage", "ok", "skipped", "seconds", "detail"}`，
+**没有 `data` 键**；`manual._gui_error_text` 只读 `(s.get("data") or {}).get("gui_error")`
+→ 生产路径恒为空，靠 detail 里「真实报错：」的兜底碰巧能用。夹具 `_GUI_STAGES` 用了
+非真实嵌套形状且 detail 带 marker，把死路径测绿。修法：先读顶层 `s.get("gui_error")`、
+兼容嵌套 dict、最后退回 detail；夹具改成真实平铺形状且去掉 detail marker；新增 3 条回归
+（含直接用 `Stage(...).as_dict()` 生成输入的契约锁）。定向 `manual/gui/overwrite_backup` 73 passed。
+
+**恢复后 `--reuse-raw --organize` 的隔离实证（新增 `tests/test_reuse_after_restore.py`，3 条全过）**
+
+在 tmp_path 复刻现场（raw 只有交付文件 / png 合法成品 / 视图与清单已存在 / 假 xp3 全
+`unknown format`），跑 `orch.run()` 而非只看代码：
+
+| 观察点 | 实测 |
+|---|---|
+| rc / postprocess | rc=0；`ok=True, skipped=True`，detail「无待转格式（.tlg/.pna），无需后处理」；monkeypatch 的 `tlg2png` 零调用 |
+| verify | final = raw 交付 + png 成品，`image_ok=3 / image_fail=0`；图片数不因源 tlg 缺失而变 |
+| manifest | `stages[].ok` 全布尔（`data["ok"]` 覆盖没回潮）；`method=no-index-available`、`diff=None` |
+| organize | 原地重建视图，视图条目、raw/、png/ 文件数**全部不变**（`_prune_stale` 删 0） |
+| 边界 | GARbro 列得出索引时，恢复后 raw 少中间格式 → `复用产物对账失败`、rc=1 / `extract-failed`（这类样本只能重新解包） |
+| strict | 无地面真相按既有契约判 rc=1 / `strict-no-ground-truth` |
+
+**回归**：`tests/run_all.py` → `806 / 0 failures / 0 errors / 9 skipped → PASS`
+（基线 800 + 新增 6）；`make_golden.py --check` 零漂移。
+
+⚠️ 以上仍是源码态 + 隔离替身。真机 40 分钟 `--allow-gui` 闭环未复现，
+`D:\GalgameUnpacker` 里的旧包未更新，重新打包前别让用户实跑。

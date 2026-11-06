@@ -18,6 +18,7 @@ UI_HWND = 1001
 CHROME_HWND = 2002
 EXPLORER_HWND = 3003
 CHILD_HWND = 4004
+REBUILT_HWND = 5005          # 窗口重建后的新主窗口句柄（自恢复测试用）
 
 RECT = (100, 100, 500, 400)          # left, top, right, bottom（物理像素）
 CLASSES = {
@@ -40,13 +41,23 @@ class FakeUser32:
 
     overlay:
       - None               整块 KrkrExtract 可见
-      - hwnd               整块被这个窗口盖住
+      - hwnd               整块被这个窗口盖住（0 = WindowFromPoint 返回 0）
       - callable(x, y)     按坐标决定（模拟子控件、Explorer 盖住局部）
     lift_works=False 表示连 TOPMOST 都压不过遮挡者（对方也是置顶窗口）。
     foreground_lock=True 模拟 Windows 前台锁：SetForegroundWindow 静默失败。
+
+    2026-11-06 第二次实跑补的诊断维度（全部可选，缺省时行为与旧替身一致）：
+      rect             tuple 或 {hwnd: tuple}，模拟最小化/句柄失效后的退化矩形；
+      window_alive     IsWindow 的返回值（bool 或 callable(hwnd)）；
+      window_visible   IsWindowVisible 的返回值；
+      ancestors        {hwnd: GA_ROOT 结果}，用于把子控件认出来；
+      parents          {hwnd: 父窗口句柄}，GetAncestor 不可用时的回退；
+      enum_titles      {hwnd: 标题}，给了才模拟 EnumWindows（重绑主窗口）。
     """
 
-    def __init__(self, overlay=None, lift_works=True, foreground_lock=False):
+    def __init__(self, overlay=None, lift_works=True, foreground_lock=False,
+                 rect=RECT, window_alive=True, window_visible=True,
+                 ancestors=None, parents=None, enum_titles=None):
         self.overlay = overlay
         self.lift_works = lift_works
         self.foreground_lock = foreground_lock
@@ -54,6 +65,21 @@ class FakeUser32:
         self.show_calls = []
         self.foreground = CHROME_HWND if foreground_lock else None
         self._raised = overlay is None
+        self.rect = rect
+        self.window_alive = window_alive
+        self.window_visible = window_visible
+        self.ancestors = dict(ancestors or {})
+        self.parents = dict(parents or {})
+        self.enum_titles = enum_titles
+        self.titles = dict(TITLES)
+        self.classes = dict(CLASSES)
+        self.pids = dict(PIDS)
+        if enum_titles:
+            self.titles.update(enum_titles)
+
+    @staticmethod
+    def _value(value, hwnd):
+        return bool(value(hwnd)) if callable(value) else bool(value)
 
     # --- Z 序 ---
     def ShowWindow(self, hwnd, cmd):
@@ -78,10 +104,32 @@ class FakeUser32:
     def GetForegroundWindow(self):
         return self.foreground
 
+    # --- 窗口存活 / 层级 ---
+    def IsWindow(self, hwnd):
+        return self._value(self.window_alive, hwnd)
+
+    def IsWindowVisible(self, hwnd):
+        return self._value(self.window_visible, hwnd)
+
+    def GetAncestor(self, hwnd, flag):
+        return self.ancestors.get(hwnd, hwnd)
+
+    def GetParent(self, hwnd):
+        return self.parents.get(hwnd, 0)
+
+    def EnumWindows(self, cb, lp):
+        if self.enum_titles is None:
+            return 1                       # 没实现枚举 = 重绑不到新窗口
+        for hwnd in self.enum_titles:
+            if not cb(hwnd, 0):
+                break
+        return 1
+
     # --- 几何 / 命中 ---
     def GetWindowRect(self, hwnd, ptr):
         rc = ptr._obj
-        rc.left, rc.top, rc.right, rc.bottom = RECT
+        box = self.rect.get(hwnd, RECT) if isinstance(self.rect, dict) else self.rect
+        rc.left, rc.top, rc.right, rc.bottom = box
         return 1
 
     def WindowFromPoint(self, pt):
@@ -93,19 +141,19 @@ class FakeUser32:
 
     # --- 窗口信息（describe_window 用）---
     def GetClassNameW(self, hwnd, buf, n):
-        buf.value = CLASSES.get(hwnd, "Unknown")[: max(0, n - 1)]
+        buf.value = self.classes.get(hwnd, "Unknown")[: max(0, n - 1)]
         return len(buf.value)
 
     def GetWindowTextLengthW(self, hwnd):
-        return len(TITLES.get(hwnd, ""))
+        return len(self.titles.get(hwnd, ""))
 
     def GetWindowTextW(self, hwnd, buf, n):
-        buf.value = TITLES.get(hwnd, "")[: max(0, n - 1)]
+        buf.value = self.titles.get(hwnd, "")[: max(0, n - 1)]
         return len(buf.value)
 
     def GetWindowThreadProcessId(self, hwnd, ptr):
-        ptr._obj.value = PIDS.get(hwnd, 0)
-        return PIDS.get(hwnd, 0)
+        ptr._obj.value = self.pids.get(hwnd, 0)
+        return self.pids.get(hwnd, 0)
 
 
 @pytest.fixture
@@ -114,6 +162,8 @@ def fake_ui(monkeypatch):
         fake = FakeUser32(**kwargs)
         monkeypatch.setattr(kae, "user32", fake)
         monkeypatch.setattr(kae.time, "sleep", lambda *a: None)
+        # 自恢复分支会写诊断日志；测试不许往仓库里的 _krkr_stage 落文件
+        monkeypatch.setattr(kae, "log", lambda *a, **kw: None)
         return fake
     return install
 
@@ -219,15 +269,20 @@ def test_main_revalidates_drop_point_for_every_archive(tmp_path, monkeypatch, fa
 
     fake_ui(overlay=overlay)
 
-    calls = {"find": 0, "ensure": 0, "drag": []}
+    calls = {"find": 0, "ensure": 0, "drag": [], "ensure_hwnd": [], "wait_hwnd": []}
 
     def fake_find(hwnd, attempts=None):
         calls["find"] += 1
-        return (106, 106)
+        return (REBUILT_HWND, (106, 106))   # 模拟落点阶段重绑到了新主窗口
 
     def fake_ensure(hwnd, point):
         calls["ensure"] += 1
+        calls["ensure_hwnd"].append(hwnd)
         return point
+
+    def fake_wait(outdir, ui):
+        calls["wait_hwnd"].append(ui)
+        return (2, {}, 0)
 
     monkeypatch.setattr(kae, "STAGE_ROOT", str(stage.parent))
     monkeypatch.setattr(kae, "log", lambda *a: None)
@@ -242,8 +297,8 @@ def test_main_revalidates_drop_point_for_every_archive(tmp_path, monkeypatch, fa
     monkeypatch.setattr(kae, "close_all_explorers", lambda hint: None)
     monkeypatch.setattr(kae, "find_explorer_by_title_hint", lambda hint: EXPLORER_HWND)
     monkeypatch.setattr(kae, "uia_item_rect", lambda hwnd, name: (10, 10, 50, 50))
-    monkeypatch.setattr(kae, "wait_task_done", lambda outdir, ui: (2, {}, 0))
-    monkeypatch.setattr(kae, "find_drop_point", fake_find)
+    monkeypatch.setattr(kae, "wait_task_done", fake_wait)
+    monkeypatch.setattr(kae, "find_drop_point_ex", fake_find)
     monkeypatch.setattr(kae, "ensure_drop_point", fake_ensure)
     monkeypatch.setattr(kae, "drag", lambda *a: calls["drag"].append(a))
 
@@ -252,3 +307,94 @@ def test_main_revalidates_drop_point_for_every_archive(tmp_path, monkeypatch, fa
     assert len(calls["drag"]) == 2, "两个 xp3 都要拖"
     assert calls["find"] == 3, "循环外早失败检查 1 次 + 每包 1 次"
     assert calls["ensure"] == 2, "每包拖拽前都要复核终点"
+    # 重绑后的新句柄必须一路传下去：旧句柄会让 ensure / wait_task_done 全判失败
+    assert calls["ensure_hwnd"] == [REBUILT_HWND, REBUILT_HWND]
+    assert calls["wait_hwnd"] == [REBUILT_HWND, REBUILT_HWND]
+
+
+# ---------------------------------------------------------------------------
+# 2026-11-06 第二次实跑：报错必须如实反映真实情况
+#
+# 现场：`find_drop_point` 6 轮全失败，但错误里写「(无可见遮挡窗口)」——
+# blockers 统计为空 = 扫描循环一次都没跑（rect 退化 / WindowFromPoint 返回 0 /
+# 采样点全是子控件），却被统一翻译成「没人挡着」。以下用例逐一把这三种情况拆开。
+# ---------------------------------------------------------------------------
+
+def test_no_window_hits_are_not_reported_as_no_blocker(fake_ui):
+    """WindowFromPoint 全返回 0：是「窗口不可见」，不是「没有遮挡」。"""
+    fake_ui(overlay=lambda x, y: 0)
+
+    point, blockers = kae.scan_drop_point(UI_HWND, _rect())
+    assert point is None
+    assert any("WindowFromPoint 返回 0" in k for k in blockers)
+
+    with pytest.raises(RuntimeError) as exc:
+        kae.find_drop_point(UI_HWND, attempts=2)
+    msg = str(exc.value)
+    assert "窗口不可见" in msg
+    assert "重试 2 轮" in msg
+    assert "(无可见遮挡窗口)" not in msg, "空 blockers 不许再被翻译成「没人挡」"
+
+
+def test_all_child_controls_are_reported_as_such(fake_ui):
+    """采样点全是子控件：明确说「全是子控件」，不能说「被遮挡」或「没人挡」。"""
+    fake_ui(overlay=lambda x, y: CHILD_HWND,
+            ancestors={CHILD_HWND: UI_HWND})       # GetAncestor(GA_ROOT) == 主窗口
+
+    point, blockers = kae.scan_drop_point(UI_HWND, _rect())
+    assert point is None, "子控件不作落点：口径不放宽"
+    assert any("子控件" in k and "Button" in k for k in blockers)
+
+    with pytest.raises(RuntimeError) as exc:
+        kae.find_drop_point(UI_HWND, attempts=1)
+    msg = str(exc.value)
+    assert "全是子控件" in msg
+    assert "(无可见遮挡窗口)" not in msg
+
+
+def test_degenerate_rect_reports_window_invisible(fake_ui):
+    """最小化/窗口关闭导致 rect 退化（扫描循环空转）——就是现场那一句误判。"""
+    fake_ui(rect=(-32000, -32000, -31840, -31976))
+
+    with pytest.raises(RuntimeError) as exc:
+        kae.find_drop_point(UI_HWND, attempts=1)
+    msg = str(exc.value)
+    assert "不可见" in msg
+    assert "rect" in msg
+    assert "(无可见遮挡窗口)" not in msg
+
+
+def test_real_blocker_still_named_and_not_relaxed(fake_ui):
+    """真被别的窗口压住时仍要点名；且子控件依旧不能当落点。"""
+    fake_ui(overlay=CHROME_HWND, lift_works=False)
+    with pytest.raises(RuntimeError) as exc:
+        kae.find_drop_point(UI_HWND, attempts=2)
+    msg = str(exc.value)
+    assert "Chrome_RenderWidgetHostHWND" in msg
+    assert "关闭/最小化" in msg
+    assert "采样" in msg, "报错要带分类统计，方便真机定位"
+
+
+def test_find_drop_point_ex_rebinds_rebuilt_window(fake_ui):
+    """旧句柄失效 + rect 退化 → 重新枚举主窗口并刷新 rect，返回新句柄与落点。"""
+    fake = fake_ui(
+        overlay=lambda x, y: REBUILT_HWND,
+        rect={UI_HWND: (-32000, -32000, -31840, -31976), REBUILT_HWND: RECT},
+        window_alive=lambda h: h != UI_HWND,
+        enum_titles={REBUILT_HWND: "KrkrExtract(local 5.0.0.2) - rebuilt"},
+    )
+
+    hwnd, point = kae.find_drop_point_ex(UI_HWND, attempts=1)
+
+    assert hwnd == REBUILT_HWND, "必须把新句柄交还调用方，否则后续比较全失效"
+    assert _inside(point)
+    assert fake.setpos_calls, "重绑之后仍要抬窗"
+
+
+def test_ensure_drop_point_names_dead_window(fake_ui):
+    """拖拽前主窗口已关闭：明确说窗口不可见，而不是「资源管理器盖住了」。"""
+    fake_ui(window_alive=False)
+
+    with pytest.raises(RuntimeError) as exc:
+        kae.ensure_drop_point(UI_HWND, (RECT[0] + 6, RECT[1] + 6))
+    assert "已关闭/不可见" in str(exc.value)

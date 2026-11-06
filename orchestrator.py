@@ -201,6 +201,9 @@ class Ctx:
     #: `--organize`：跑完按媒体类型出一份清单 CSV + 硬链接视图（见 organize.py）。
     #: **不影响对账**：不搬 raw 里的文件，counts 与 reconcile 的口径一个字都不动。
     organize: bool = False
+    #: `--overwrite` 把上一轮 raw/ png/ **改名**到这里的备份目录（不删除任何文件）。
+    #: 失败收尾时 `_restore_overwrite_backup` 据此自动回滚；成功时保留，供用户自行取舍。
+    overwrite_backup: Path | None = None
 
     @property
     def raw_dir(self) -> Path:
@@ -242,6 +245,88 @@ def _by_ext_round(prod: tb.Products) -> dict:
 #: 抄出来的第二份一定会和第一份在「吞什么、重抛什么」上分叉
 #: （现在的契约：只重抛 KeyboardInterrupt，SystemExit 也算「没删干净 → False」）。
 drop_tree = tb.drop_tree
+
+#: `--overwrite` 的备份目录前缀。2026-11-06 实跑事故：旧实现直接
+#: `drop_tree(raw/)` + `drop_tree(png/)`，GUI 链路随后失败，9818+2748 个上一轮
+#: 人工产物被清空且无法回滚。现在改成**同盘改名**（原子、零拷贝、一字节都不删），
+#: 失败自动回滚；成功也保留备份，绝不自动删除。
+OVERWRITE_BACKUP_PREFIX = "_overwrite_backup_"
+
+
+def _new_backup_dir(out_dir: Path) -> Path:
+    """给本轮 --overwrite 生成不冲突的备份目录名（不创建目录）。"""
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    base = out_dir / f"{OVERWRITE_BACKUP_PREFIX}{stamp}"
+    if not base.exists():
+        return base
+    for i in range(2, 100):
+        cand = out_dir / f"{OVERWRITE_BACKUP_PREFIX}{stamp}_{i}"
+        if not cand.exists():
+            return cand
+    return out_dir / f"{OVERWRITE_BACKUP_PREFIX}{stamp}_{os.getpid()}"
+
+
+def _empty_dir_tree(root: Path) -> bool:
+    """只删**空**目录（自底向上 rmdir），返回是否全部清掉。
+
+    回滚时本轮可能已经建了 raw/ 的空目录骨架。这里绝不用 rmtree：
+    删除守卫会拦、也绝不能误删用户文件；`rmdir` 遇到非空目录会自己失败。
+    """
+    try:
+        for d in sorted((p for p in root.rglob("*") if p.is_dir()),
+                        key=lambda p: len(p.parts), reverse=True):
+            d.rmdir()
+        root.rmdir()
+        return True
+    except OSError:
+        return False
+
+
+def _restore_overwrite_backup(ctx: Ctx) -> Stage | None:
+    """失败收尾：把改名备份的上一轮产物回滚回 `raw/` / `png/`。
+
+    只在「本轮没有产生新文件」时覆盖目标；已经解出半成品时**绝不覆盖**，
+    原样保留备份并在 detail 里给出路径，让用户在两堆完整数据之间自己取舍。
+    这一步只读目录项 + rename，不删任何用户文件（删空目录除外）。
+    """
+    backup = ctx.overwrite_backup
+    if backup is None or not backup.is_dir():
+        return None
+    restored: list[str] = []
+    kept: list[str] = []
+    errors: list[str] = []
+    for name, dest in (("raw", ctx.raw_dir), ("png", ctx.png_dir)):
+        src = backup / name
+        if not src.is_dir():
+            continue
+        if dest.is_dir():
+            has_new = any(p.is_file() for p in dest.rglob("*"))
+            if has_new:
+                kept.append(name)
+                continue
+            if not _empty_dir_tree(dest):
+                kept.append(name)
+                continue
+        try:
+            src.rename(dest)
+            restored.append(name)
+        except OSError as exc:
+            errors.append(f"{name}: {type(exc).__name__}: {exc}")
+            kept.append(name)
+    data = {"backup": str(backup), "restored": restored, "kept": kept,
+            "errors": errors}
+    if errors and not restored:
+        return Stage("rollback", ok=False,
+                     detail=(f"自动回滚失败：上一轮产物仍完整保存在 {backup}，"
+                             f"请手工把里面的 raw/ png/ 改名回 {ctx.out_dir}。"
+                             f"错误：{'; '.join(errors)}"),
+                     data=data)
+    if kept:
+        detail = (f"已回滚 {', '.join(restored) or '（无）'}；本轮已产生新产物，"
+                  f"{', '.join(kept)} 未覆盖以免混堆。上一轮完整产物仍保存在 {backup}")
+    else:
+        detail = f"已把上一轮产物从 {backup} 自动回滚回 raw/ png/（本轮无新产物）"
+    return Stage("rollback", ok=True, detail=detail, data=data)
 
 
 def _move_dir_clean(src: Path, dst: Path) -> str | None:
@@ -624,6 +709,25 @@ def _case_krkr_hint(case_match: dict | None) -> str:
             f"全自动成功过 —— 加 --allow-gui 可自动走这条已验证的链路。")
 
 
+def _gui_error_from_output(out: str, rc: int) -> str:
+    """从 krkr stdout 里挑出人能读的那句真实报错（弃掉 traceback 框架行）。
+
+    2026-11-06 实跑：`_work/extract.log` 里只有 ``GUI 链路失败 ... (rc=1)``，
+    人工方案据此写成「GARbro 列不出目录（大概率加密）」，与真实根因
+    （拖拽落点被遮挡 / Full Unpack 没点上）完全不符。把 krkr 链路输出里的
+    关键行提到 `extract.data.gui_error`，manual 与 GUI 摘要才能引用真实原因。
+    """
+    lines = [ln.strip() for ln in (out or "").splitlines() if ln.strip()]
+    keys = ("RuntimeError:", "ERROR:", "WARNING:", "AssertionError:",
+            "拖拽落点", "Full Unpack", "窗口不可见", "子控件", "遮挡")
+    hits = [ln for ln in lines if any(k in ln for k in keys)]
+    picked = hits[-3:] if hits else [ln for ln in lines
+                                     if not ln.startswith("File ")
+                                     and not ln.startswith("^")][-3:]
+    text = " | ".join(picked)[:600]
+    return text or f"rc={rc}，krkr 链路没有输出可读报错"
+
+
 def stage_extract_kirikiri(ctx: Ctx) -> Stage:
     """KiriKiri 提取。
 
@@ -731,7 +835,10 @@ def stage_extract_kirikiri(ctx: Ctx) -> Stage:
         # krkr_auto_extract 产出 <out>/KrkrExtract_Output/{data,png}
         kout = ctx.out_dir / "KrkrExtract_Output"
         if rc != 0 or not kout.is_dir():
-            st.detail = f"GUI 链路失败或没有产出 KrkrExtract_Output (rc={rc})"
+            gui_error = _gui_error_from_output(out, rc)
+            st.data["gui_error"] = gui_error
+            st.detail = (f"GUI 链路失败或没有产出 KrkrExtract_Output (rc={rc})；"
+                         f"真实报错：{gui_error}")
             st.seconds = time.time() - t0
             return st
         data_dir = kout / "data" if (kout / "data").is_dir() else kout
@@ -2475,6 +2582,13 @@ def _finish_failure(ctx: Ctx, stages: list[Stage], engine: str | None,
     （`manual` 块），明确告诉用户做什么能把这一轮救回来 —— 有些障碍人工 3 分钟，
     自动绕 40 分钟还不一定成（见 manual.py 的模块说明）。
     """
+    # `--overwrite` 把上一轮产物改名备份了：本轮失败就在这里自动还回去。
+    # 放在 build_manifest 之前，回滚这条 stage 才会出现在落盘的 stages 里。
+    rollback = _restore_overwrite_backup(ctx)
+    if rollback is not None:
+        stages.append(rollback)
+        ctx.log("rollback", rollback.detail)
+
     man = build_manifest(ctx, stages, engine)
     man["ok"] = False
     man["error"] = error
@@ -2485,7 +2599,9 @@ def _finish_failure(ctx: Ctx, stages: list[Stage], engine: str | None,
                            out_dir=ctx.out_dir, raw_dir=ctx.raw_dir,
                            png_dir=ctx.png_dir, prog=_prog_name(),
                            tools=_manual_tools(), stages=man["stages"],
-                           case_hint=_case_krkr_hint(ctx.case_match))
+                           case_hint=_case_krkr_hint(ctx.case_match),
+                           allow_gui=ctx.allow_gui,
+                           backup_dir=ctx.overwrite_backup)
     if plan is not None:
         man["manual"] = plan.as_dict()
         # 终端区块 GUI 用户看不到（worker 的 stdout 不进日志面板），
@@ -2571,24 +2687,53 @@ def run(ctx: Ctx) -> tuple[int, dict]:
         return _finish_failure(ctx, stages, engine, 1, "preflight-failed", t_all)
 
     # 1.9 清场（--overwrite）：preflight 已经拦过「raw 非空又没说要覆盖」的情况，
-    #     走到这里只可能是用户明确要求覆盖。png/ 一起清——只清 raw 会让上一轮的
+    #     走到这里只可能是用户明确要求覆盖。png/ 一起让位——只动 raw 会让上一轮的
     #     转换成品混进本轮交付（final 口径直接多出一批不该有的图）。
+    #
+    #     2026-11-06 实跑事故：旧实现 drop_tree() 直接删，GUI 链路随后失败，
+    #     9818 + 2748 个上一轮人工产物没了、没有备份也没回滚。现在改成同盘改名：
+    #     · 原子、零拷贝、不触发安全删除守卫、一字节都不删；
+    #     · `分类/` 里的硬链接仍指向同一份数据，视图标记 .galunpack-view 不受影响；
+    #     · 失败由 `_finish_failure` 自动回滚，成功也保留备份供用户取舍。
     if ctx.overwrite and not ctx.reuse_raw:
-        cleared: dict[str, int] = {}
-        for name, d in (("raw", ctx.raw_dir), ("png", ctx.png_dir)):
-            if not d.is_dir():
-                continue
-            n = sum(1 for p in d.rglob("*") if p.is_file())
-            if not drop_tree(d):
+        targets = [(name, d) for name, d in (("raw", ctx.raw_dir), ("png", ctx.png_dir))
+                   if d.is_dir()]
+        if targets:
+            backup = _new_backup_dir(ctx.out_dir)
+            moved: dict[str, int] = {}
+            try:
+                backup.mkdir(parents=True, exist_ok=False)
+            except OSError as exc:
                 stages.append(Stage("reset", ok=False,
-                                    detail=f"--overwrite 清空 {name}/ 失败：{d}（受保护目录或"
-                                           f"安全删除守卫拦住）"))
+                                    detail=f"--overwrite 建备份目录失败：{backup}（{exc}）",
+                                    data={"backup": str(backup)}))
                 return _finish_failure(ctx, stages, engine, 1, "reset-failed", t_all)
-            cleared[name] = n
-        if cleared:
-            detail = "、".join(f"{k}/ {v} 个文件" for k, v in cleared.items())
-            stages.append(Stage("reset", ok=True, detail=f"--overwrite 已清空 {detail}"))
-            ctx.log("reset", f"--overwrite 清空 {cleared}")
+            for name, d in targets:
+                n = sum(1 for p in d.rglob("*") if p.is_file())
+                try:
+                    d.rename(backup / name)
+                except OSError as exc:
+                    # 已经改名的先还回去：绝不能停在「一半旧产物躺在备份里」的状态
+                    for done in moved:
+                        try:
+                            (backup / done).rename(ctx.out_dir / done)
+                        except OSError:
+                            pass
+                    stages.append(Stage(
+                        "reset", ok=False,
+                        detail=(f"--overwrite 备份 {name}/ 失败：{exc}。未删除任何文件，"
+                                f"请把 {backup} 内的目录改名回原处"),
+                        data={"backup": str(backup)}))
+                    return _finish_failure(ctx, stages, engine, 1, "reset-failed", t_all)
+                moved[name] = n
+            ctx.overwrite_backup = backup
+            detail = "、".join(f"{k}/ {v} 个文件" for k, v in moved.items())
+            stages.append(Stage(
+                "reset", ok=True,
+                detail=(f"--overwrite 已把旧产物改名备份到 {backup}（{detail}），"
+                        f"未删除任何文件；失败会自动回滚，成功后备份仍保留"),
+                data={"backup": str(backup), "moved": moved, "method": "rename"}))
+            ctx.log("reset", f"--overwrite 备份目录：{backup}；已改名：{moved}（未删除）")
 
     def cancel_now(next_stage: str) -> tuple[int, dict] | None:
         """阶段边界检查取消；命中就收尾（manifest 照写，`error="cancelled"`）。
@@ -2763,7 +2908,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--reuse-raw", default=None,
                     help="跳过 extract，直接复用已有 raw 产物（断点续传）")
     ap.add_argument("--overwrite", action="store_true",
-                    help="输出目录已有上一轮产物时先清空 raw/ 与 png/ 再跑"
+                    help="输出目录已有上一轮产物时，先把 raw/ 与 png/ 改名备份再跑"
+                         "（不删除任何文件；失败自动回滚）"
                          "（默认遇到残留直接失败，避免新旧产物混成假数字）")
     ap.add_argument("--allow-gui", action="store_true",
                     help="允许 GUI 自动化链路（加密 KiriKiri，慢）")

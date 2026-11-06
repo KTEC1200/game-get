@@ -184,11 +184,18 @@ def has_stale_products(out_dir: Path) -> bool:
     """输出目录里是否已有上一轮产物（判据与 orchestrator 的 preflight 一致：数文件）。
 
     有残留就必须问用户：静默叠跑的产物数照样能自洽，但数字是假的。
+    2026-11-06 实跑现场：`raw/` 与 `png/` 被清空后，`分类/` 硬链接视图还在
+    （9818 个文件、4.4 GiB）。只看 raw/png 会判成「空目录」从而**跳过二次确认**，
+    所以带 `.galunpack-view` 标记的视图也算残留（名字与 organize.py 保持一致）。
     """
     for sub in ("raw", "png"):
         d = out_dir / sub
         if d.is_dir() and any(p.is_file() for p in d.rglob("*")):
             return True
+    view = out_dir / "分类"                       # organize.VIEW_NAME
+    if (view / ".galunpack-view").is_file():      # organize.VIEW_MARK
+        return any(p.is_file() and p.name != ".galunpack-view"
+                   for p in view.rglob("*"))
     return False
 
 
@@ -237,6 +244,23 @@ def should_confirm_close(running: bool) -> bool:
     return bool(running)
 
 
+def _failure_reason(man: dict) -> str:
+    """从本轮 manifest 里挑一句人能读的失败原因，给弹窗摘要用。
+
+    2026-11-06 实跑：摘要只显示 ``失败原因：extract-failed``，而人工方案又写成
+    「GARbro 列不出目录（大概率加密）」，与真实根因（KrkrExtract 拖拽落点失败）
+    完全不符。`manual.summary` 与失败阶段的 detail 才是本轮事实，优先贴出来。
+    """
+    plan = man.get("manual") or {}
+    summary = str(plan.get("summary") or "").strip()
+    if summary:
+        return summary.splitlines()[0][:180]
+    for stage in reversed(man.get("stages") or []):
+        if isinstance(stage, dict) and stage.get("ok") is False and stage.get("detail"):
+            return str(stage["detail"]).splitlines()[0][:180]
+    return ""
+
+
 def summarize_text(rc: int, man: dict) -> str | None:
     """把一轮结果拼成「交付了多少 / 对账有没有差 / 验收结果」的人话摘要。
 
@@ -267,9 +291,14 @@ def summarize_text(rc: int, man: dict) -> str | None:
         f"交付（final）：{final.get('total', '?')} 个文件",
     ]
     if man.get("error"):
-        # 失败原因排在对账/验收之前：用户第一眼要知道「为什么红」
-        why = {"cancelled": "用户取消"}.get(man.get("error"), man.get("error"))
-        lines.append(f"失败原因：{why}（详见日志与 manifest 的 stages）")
+        # 失败原因排在对账/验收之前：用户第一眼要知道「为什么红」。
+        # 光给错误码不够（extract-failed 会被读成「加密解不开」），
+        # 把本轮 manual.summary / 失败阶段 detail 一并贴出来。
+        code = man.get("error")
+        why = {"cancelled": "用户取消"}.get(code, code)
+        reason = _failure_reason(man)
+        suffix = f" · {reason}" if reason else ""
+        lines.append(f"失败原因：{why}{suffix}（详见日志与 manifest 的 stages）")
     org = man.get("organize") or {}
     if org:
         # 归档是附加产物：用户最想知道「三类各多少、在哪」，一句话带过
@@ -1128,7 +1157,8 @@ class App:
             if not messagebox.askyesno(
                     "输出目录已有产物",
                     f"{out}\n\n里面已经有上一轮的产物。\n\n"
-                    f"是：清空 raw/ 与 png/ 后重新解包（旧产物会删除）\n"
+                    f"是：把 raw/ 与 png/ 改名备份到 {out}\\_overwrite_backup_<时间戳> 后重新解包\n"
+                    f"    （旧产物一字节都不删；失败自动回滚，跑完备份仍会保留）\n"
                     f"否：取消本次运行，请换一个输出目录",
                     icon="warning"):
                 return
