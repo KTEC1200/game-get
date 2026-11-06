@@ -152,3 +152,37 @@ def test_icon_file_returns_none_without_pillow(tmp_path, monkeypatch):
     monkeypatch.setattr(be, "SPEC", tmp_path)
     monkeypatch.setitem(sys.modules, "PIL", None)
     assert be.icon_file() is None
+
+
+# ---------------------------------------------------------------------------
+# 本地加固包标识（2026-11-07）：新 tag 出包，绝不覆盖已发布对照样本
+# ---------------------------------------------------------------------------
+
+def test_portable_refuses_to_overwrite_existing_zip(tmp_path, monkeypatch):
+    """已发布的 0.8.2 / dropfix1 是对照样本，误覆盖就再也比不了新旧差异。"""
+    dist = tmp_path / "dist" / "orchestrator"
+    dist.mkdir(parents=True)
+    (dist / "orchestrator.exe").write_bytes(b"fake-exe")
+    out_root = tmp_path / "Output"
+    out_root.mkdir()
+    published = out_root / f"GalgameUnpacker-{be.APP_VERSION}-portable.zip"
+    published.write_bytes(b"published")
+
+    monkeypatch.setattr(be, "REPO", tmp_path)          # 没有 README，跳过复制
+    monkeypatch.setattr(be, "DIST", tmp_path / "dist")
+    monkeypatch.setattr(be, "EXE", dist / "orchestrator.exe")
+    monkeypatch.setattr(be, "PACKAGING", tmp_path)
+
+    def boom(*_a, **_kw):
+        raise AssertionError("拒绝覆盖时不许触发压缩/子进程")
+
+    monkeypatch.setattr(be.subprocess, "run", boom)
+    assert be.portable() == 1
+    assert published.read_bytes() == b"published"
+
+
+def test_portable_rejects_unsafe_tag(tmp_path, monkeypatch):
+    """tag 会进文件名，路径分隔符/空格一律挡在构建之前。"""
+    monkeypatch.setattr(be, "EXE", tmp_path / "orchestrator.exe")
+    assert be.portable("../evil") == 1
+    assert be.portable("a b") == 1

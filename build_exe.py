@@ -22,12 +22,15 @@
   python build_exe.py                 # 冻结 + 出便携 zip（唯一交付形态，2026-11-04 定）
   python build_exe.py --check         # 只校验清单文件是否齐全，不构建
   python build_exe.py --portable      # 跳过冻结，用现有 dist 重新出便携 zip
+  python build_exe.py --tag bugfix1    # 本地加固包：文件名加标识 + 包内 BUILD_INFO.txt
+                                      # （APP_VERSION / README 契约不动；同名 zip 拒绝覆盖）
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -228,22 +231,97 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def portable() -> int:
+def _git_head() -> str:
+    """把源码提交号写进 BUILD_INFO，让「这个包是哪份代码」可追溯。"""
+    try:
+        r = subprocess.run(["git", "-C", str(REPO), "rev-parse", "HEAD"],
+                           capture_output=True, text=True, timeout=10)
+        return r.stdout.strip() if r.returncode == 0 else "(未取得)"
+    except (OSError, subprocess.SubprocessError):
+        return "(未取得)"
+
+
+def write_build_info(dist_root: Path, tag: str) -> Path:
+    """本地加固包的身份说明：靠文件名 + 这份文件区分，**不改 APP_VERSION**。
+
+    2026-11-07：BUILD_INFO 上一轮是手工塞进 dist 的，换个 tag 就容易漏。
+    现在由 portable(--tag) 自动生成；显式 newline="\\n" —— Windows 文本模式
+    会把 \\n 写成 CRLF，逐字校验会跟构建日志对不上。
+    """
+    from datetime import datetime
+
+    exe = dist_root / "orchestrator.exe"
+    readme = dist_root / "README.md"
+    lines = [
+        "Galgame Unpacker — 本地加固构建（不是 GitHub Release 附件）",
+        "==============================================================",
+        f"基础版本   : {APP_VERSION}",
+        f"构建标识   : {tag}",
+        f"构建时间   : {datetime.now().astimezone().isoformat(timespec='seconds')}",
+        f"源码提交   : {_git_head()}",
+        "",
+        "用途       : 仅用于在你自己的电脑上验证 --allow-gui 全自动链路。",
+        "             GitHub Release v0.8.2 的附件仍是未加固的原始包，",
+        "             两者内容不同，请勿混用、回传或当作同一版本交付。",
+        "",
+        "本轮内容   : 真机 --allow-gui 失败后的 4 项根因修复 + QA 契约收口",
+        "             * --overwrite 改同盘改名备份 + 失败自动回滚（不再删除）",
+        "             * 落点四分类诊断 + 句柄重绑 + 退化 rect 识别",
+        "             * Full Unpack 未点中硬失败前置 + 中文日志不再打成问号",
+        "             * gui_failed 独立人工文案 / GUI 摘要引用真实报错",
+        "             * Stage.as_dict 平铺后 _gui_error_text 改读顶层 gui_error",
+        "             * tools/restore_from_view.py（从分类视图恢复 raw/png）",
+        "",
+        "验证状态   : 全量 806 / 0 failures / 0 errors；golden 零漂移。",
+        "             真机 --allow-gui 全自动闭环【仍未复现】，这次实跑就是验它。",
+        "",
+        f"校验       : orchestrator.exe sha256 = {sha256(exe) if exe.is_file() else '(缺失)'}",
+        f"             README.md {len(readme.read_text(encoding='utf-8').splitlines()) if readme.is_file() else 0} 行，与仓库同源",
+        "             便携 zip 的 SHA256 见打包日志（包内不自指）",
+        "",
+        r"使用       : 解压到 D:\GalgameUnpacker 这类普通目录，先跑「环境自检」。",
+        "             不要放在 D:\\K 等受管控目录（会被降成 Low 完整性，写不进去）。",
+        "             --allow-gui 约 40 分钟独占桌面：不切窗口、不动鼠标、",
+        "             不锁屏/远程桌面，关掉浏览器与悬浮窗。",
+        "",
+    ]
+    p = dist_root / "BUILD_INFO.txt"
+    with p.open("w", encoding="utf-8", newline="\n") as fh:
+        fh.write("\n".join(lines))
+    return p
+
+
+def portable(tag: str | None = None) -> int:
     """便携版 zip（**唯一交付形态**，2026-11-04 用户定：不做安装器）。
 
     为什么放弃安装器：安装器在本机被火绒 + 深信服 EDR 按进程信誉拦截
     （%TEMP%\\is-*.tmp 写不进去，证据见 antivirus-false-positives.md §5），
     而它的价值只有「卸载键 + 开始菜单快捷方式」——对一个私人工具毫无必要。
     便携 zip 解压即用、不写注册表、不碰敏感目录，杀软拦截面小得多。
+
+    `--tag` 给本地加固包加文件名后缀（不改 APP_VERSION，README 契约不动）。
+    **目标 zip 已存在一律拒绝覆盖**：已发布的 0.8.2 与 dropfix1 是本机的
+    对照样本，误覆盖就再也比不了新旧差异。
     """
+    if tag is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", tag):
+        print(f"--tag 只能含字母数字 . _ -：{tag!r}", file=sys.stderr)
+        return 1
     if not EXE.is_file():
         print(f"冻结包不存在：{EXE}\n先跑 python build_exe.py", file=sys.stderr)
         return 1
     readme = REPO / "README.md"
     if readme.is_file():
         shutil.copy2(readme, DIST / "orchestrator" / "README.md")
-    out = PACKAGING / "Output" / f"GalgameUnpacker-{APP_VERSION}-portable.zip"
+    suffix = f"-{tag}" if tag else ""
+    out = PACKAGING / "Output" / f"GalgameUnpacker-{APP_VERSION}{suffix}-portable.zip"
+    if out.is_file():
+        print(f"目标包已存在，拒绝覆盖：{out}\n换一个 --tag（例如 --tag bugfix2）",
+              file=sys.stderr)
+        return 1
     out.parent.mkdir(parents=True, exist_ok=True)
+    if tag:
+        info = write_build_info(DIST / "orchestrator", tag)
+        print(f"包内标识：{info.name}（tag={tag}）", flush=True)
     cmd = ["powershell", "-NoProfile", "-Command",
            f"Compress-Archive -Path '{(DIST / 'orchestrator')}' "
            f"-DestinationPath '{out}' -Force"]
@@ -383,16 +461,19 @@ def main(argv: list[str] | None = None) -> int:
                     help="跳过冻结构建，用现有 dist 重新出便携 zip")
     ap.add_argument("--no-bundle-tools", action="store_true",
                     help="跳过外部工具随包（默认按 BUNDLE_TOOLS 尽力打包，缺来源只警告）")
+    ap.add_argument("--tag", default=None, metavar="NAME",
+                    help="本地加固包标识（文件名后缀 + 包内 BUILD_INFO.txt），"
+                         "不改 APP_VERSION；同名 zip 一律拒绝覆盖")
     a = ap.parse_args(argv)
     if a.check:
         return check()
     if a.portable:
-        return portable()
+        return portable(a.tag)
     # 默认 = 冻结 + 便携 zip：2026-11-04 用户定「只保留便携版」，安装器已删除。
     rc = build(no_bundle_tools=a.no_bundle_tools)
     if rc != 0:
         return rc
-    return portable()
+    return portable(a.tag)
 
 
 if __name__ == "__main__":
