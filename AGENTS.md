@@ -1365,4 +1365,12 @@ Low 令牌被强制「禁止向上写」，所以 Medium 标签的桌面/文档/
   `orchestrator … --reuse-raw D:/HY/教师催眠2/output/raw` 走验收与对账。
 
 交付：`packaging/Output/GalgameUnpacker-0.7.0-portable.zip`
-（141.6 MiB，SHA256 `59e76e7b…644b5f190`；解压后 1485 文件 / 354.1 MiB；`--doctor` 报 0.7.0、`--gui-smoke` rc=0）。
+（141.6 MiB，SHA256 `cbe4d8f8…0b9c25faa`；解压后 1484 文件 / 354.0 MiB；`--doctor` 报 0.7.0、`--gui-smoke` rc=0）。
+
+> **README 滞后修正（2026-11-06，用户发现）**：`README.md` 还停在 **v0.4.2**（连
+> `GalgameUnpacker-0.4.2-portable.zip` 的包名都没改），而这份 README 是**原样打进便携包**的
+> —— 用户解压后第一眼看到的就是旧版本号。已把版本块、包名、GUI/CLI 用法、产物清单、
+> 工作流表（加 `organize` 阶段）全部同步到 0.7.0，并把「加信任区能解决」的旧建议
+> 改成 §8 的实测结论。
+> 新护栏：`tests/test_docs_contract.py::test_readme_shows_current_version`
+> 比对 README 的「当前版本 vX.Y.Z」与包名是否等于 `version.APP_VERSION`，再漂移即红。

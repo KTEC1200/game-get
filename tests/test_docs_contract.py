@@ -91,3 +91,24 @@ def test_readme_no_chain_engines_are_not_implemented():
     """反向保护：写进「无链路」集合的引擎不许悄悄出现在 IMPLEMENTED 里。"""
     assert not (NO_CHAIN_ENGINES & set(orch.IMPLEMENTED)), \
         "有引擎同时被标成「已实现」和「无链路」，两者只能取其一"
+
+
+def test_readme_shows_current_version():
+    """README 的「当前版本」和便携包名必须与 `version.APP_VERSION` 一致。
+
+    2026-11-06 实测踩过：程序已经到 0.7.0，README 却停在 **v0.4.2**，
+    而 README 是**原样打进便携包**的 —— 用户解压后第一眼看到的就是「v0.4.2」，
+    等于交付了一份写着旧版本的说明书。版本号只有 `version.py` 一个出处，
+    这里只是把「文档也得跟上」钉住。
+    """
+    import version
+
+    text = README.read_text(encoding="utf-8")
+    m = re.search(r"当前版本 \*\*v([\d.]+)\*\*", text)
+    assert m, "README 开头必须写「当前版本 **vX.Y.Z**」，否则这条契约根本测不到"
+    assert m.group(1) == version.APP_VERSION, (
+        f"README 写的是 v{m.group(1)}，代码是 v{version.APP_VERSION}"
+    )
+    assert f"GalgameUnpacker-{version.APP_VERSION}-portable.zip" in text, (
+        "README 里的便携包名必须与 APP_VERSION 同步"
+    )
