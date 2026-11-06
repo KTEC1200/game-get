@@ -612,3 +612,23 @@ def test_rounded_entry_exposes_inner_entry(tk_root):
 
     assert ent.ent.get() == r"D:/HY/x"
     assert isinstance(ent.ent, tk.Entry)
+
+
+# ---- v0.8.1：进度线与拖拽高亮 ----
+
+def test_stage_fraction_is_monotonic_and_normalised():
+    """进度只能往前走：表必须严格递增且落在 (0, 1] 内，否则线会倒退或越界。"""
+    vals = list(gui._STAGE_FRACTION.values())
+    assert vals == sorted(vals), "阶段顺序必须与进度递增一致"
+    assert all(0 < v <= 1.0 for v in vals)
+
+
+def test_rounded_entry_highlight_toggles_background(tk_root):
+    """拖拽悬停换成浅蓝底，离开必须还原 —— 否则输入框会一直「亮着」。"""
+    ent = gui.RoundedEntry(tk_root, tk.StringVar())
+
+    ent.set_highlight(True)
+    assert ent.ent.cget("bg") != gui.UI.CARD
+
+    ent.set_highlight(False)
+    assert ent.ent.cget("bg") == gui.UI.CARD
