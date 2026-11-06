@@ -344,6 +344,16 @@ class UI:
     F_SMALL = (FONT, 8)
     F_MONO = ("Consolas", 9)
 
+    #: 当前显示缩放的倍数（96dpi = 1.0，200% = 2.0）。
+    #: 为什么要它：字体是**点**为单位、由 Tk 自动缩放，而 Canvas 自绘控件用的是**像素**——
+    #: 高 DPI 下文字翻倍、框还是原尺寸，看起来就又小又挤（2026-11-06 用户实测反馈）。
+    S = 1.0
+
+    @classmethod
+    def px(cls, n: float) -> int:
+        """把设计稿里的逻辑像素换算成当前缩放下的物理像素。"""
+        return max(1, int(round(n * cls.S)))
+
 
 #: 按钮三态色板：常态 / hover / 禁用。（主按钮是唯一实心色块）
 _BTN_STYLE = {
@@ -353,9 +363,9 @@ _BTN_STYLE = {
     "secondary": dict(bg=UI.CARD, bd=UI.LINE, fg=UI.TEXT_2,
                       hbg="#F1F5F9", hbd="#CBD5E1",
                       dbg="#FBFCFE", dbd="#EDF1F6", dfg="#A6B1C2"),
-    "ghost": dict(bg=None, bd=None, fg=UI.TEXT_3,
+    "ghost": dict(bg=None, bd=None, fg=UI.TEXT_2,
                   hbg="#EDF2F7", hbd="#EDF2F7",
-                  dbg=None, dbd=None, dfg="#94A3B8"),
+                  dbg=None, dbd=None, dfg="#A6B1C2"),
 }
 
 
@@ -408,14 +418,15 @@ class Card(tk.Frame):
     现在 body 走 pack，卡片高度由内容决定；canvas 用 place 跟随，纯做圆角背景。
     """
 
-    def __init__(self, parent: tk.Misc, pad: int = 18, radius: int = 12,
+    def __init__(self, parent: tk.Misc, pad: int = 20, radius: int = 13,
                  bg: str = UI.BG, fill: str = UI.CARD) -> None:
         super().__init__(parent, bg=bg, bd=0, highlightthickness=0)
-        self._fill, self._r = fill, radius
+        pad, radius = UI.px(pad), UI.px(radius)
+        self._fill, self._r, self._pad = fill, radius, pad
         self.cv = tk.Canvas(self, bg=bg, bd=0, highlightthickness=0)
         self.cv.place(x=0, y=0, relwidth=1, relheight=1)
         self.body = tk.Frame(self, bg=fill)
-        self.body.pack(fill="both", expand=True, padx=pad, pady=pad)
+        self.body.pack(fill="both", expand=True, padx=self._pad, pady=self._pad)
         self.cv.bind("<Configure>", self._resize)
 
     def _resize(self, event) -> None:                             # noqa: ANN001
@@ -437,6 +448,7 @@ class PillButton(tk.Canvas):
     def __init__(self, parent: tk.Misc, text: str, command=None, kind: str = "secondary",
                  bg: str = UI.CARD, height: int = 34, padx: int = 16, radius: int = 9,
                  font=None, state: str = "normal") -> None:
+        padx, radius, height = UI.px(padx), UI.px(radius), UI.px(height)
         self._kind, self._bg, self._h, self._padx, self._r = kind, bg, height, padx, radius
         self._font = font or UI.F_BODY
         self._text, self._cmd, self._state = text, command, state
@@ -548,6 +560,7 @@ class RoundedEntry(tk.Canvas):
     def __init__(self, parent: tk.Misc, textvariable: tk.StringVar, bg: str = UI.CARD,
                  height: int = 38, radius: int = 8, font=None) -> None:
         super().__init__(parent, height=height, bg=bg, bd=0, highlightthickness=0)
+        height, radius = UI.px(height), UI.px(radius)
         self._r, self._focused, self._drag = radius, False, False
         self.ent = tk.Entry(self, textvariable=textvariable, bd=0, relief="flat",
                             bg=UI.CARD, fg=UI.TEXT, font=font or UI.F_BODY,
@@ -605,10 +618,12 @@ class Check(tk.Canvas):
 
     def __init__(self, parent: tk.Misc, text: str, variable: tk.BooleanVar,
                  bg: str = UI.CARD, size: int = 15, font=None) -> None:
+        size = UI.px(size)
         self._size, self._text, self._font = size, text, font or UI.F_LABEL
         self.var = variable
-        width = tkfont.Font(font=self._font).measure(text) + size + 9
-        super().__init__(parent, width=width, height=22, bg=bg, bd=0,
+        self._h = UI.px(26)
+        width = tkfont.Font(font=self._font).measure(text) + size + UI.px(10)
+        super().__init__(parent, width=width, height=self._h, bg=bg, bd=0,
                          highlightthickness=0, cursor="hand2")
         self.bind("<Button-1>", self._toggle)
         self.var.trace_add("write", lambda *_: self._draw())
@@ -620,16 +635,17 @@ class Check(tk.Canvas):
     def _draw(self) -> None:
         self.delete("all")
         s = self._size
-        y1 = (22 - s) / 2
+        y1 = (self._h - s) / 2
         on = bool(self.var.get())
-        _round_rect(self, 0.5, y1 + 0.5, s + 0.5, y1 + s + 0.5, 4,
+        _round_rect(self, 0.5, y1 + 0.5, s + 0.5, y1 + s + 0.5, max(2, UI.px(4)),
                     fill=UI.SKY if on else UI.CARD,
                     outline=UI.SKY if on else "#CBD5E1", width=1)
         if on:   # 白勾：两段折线，圆头圆角，比文字符号「✓」清晰
-            self.create_line(3.5, y1 + s / 2, s / 2 - 0.5, y1 + s - 4.5,
-                             s - 3, y1 + 4.5, fill="#FFFFFF", width=2,
+            self.create_line(UI.px(3.5), y1 + s / 2, s / 2 - 0.5, y1 + s - UI.px(4.5),
+                             s - UI.px(3), y1 + UI.px(4.5), fill="#FFFFFF",
+                             width=max(2, UI.px(2)),
                              capstyle="round", joinstyle="round")
-        self.create_text(s + 9, 11, text=self._text, anchor="w",
+        self.create_text(s + UI.px(10), self._h / 2, text=self._text, anchor="w",
                          fill=UI.TEXT_2, font=self._font)
 
 
@@ -642,24 +658,31 @@ class App:
         self.running = False
         root.title("Galgame Unpacker")
         root.configure(bg=UI.BG)
-        root.minsize(760, 560)
-        with contextlib.suppress(tk.TclError):
-            root.geometry("960x700")
+        # 自绘控件是像素单位，必须跟着系统缩放走（字体是点单位，Tk 自己会缩放）
+        # `GALUNPACK_UI_SCALE` 可强制覆盖：缩放检测失灵时用户能自救，截图核对也靠它
+        with contextlib.suppress(tk.TclError, ValueError):
+            UI.S = float(os.environ.get("GALUNPACK_UI_SCALE") or 0) or max(
+                1.0, root.winfo_fpixels("1i") / 96.0)
+        # 窗口尺寸也跟着缩放，但要夹在屏幕内 —— 200% 缩放下 960×2 会超出笔记本屏
+        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+        win_w, win_h = min(UI.px(980), int(sw * 0.92)), min(UI.px(730), int(sh * 0.92))
+        root.geometry(f"{win_w}x{win_h}")
+        root.minsize(min(UI.px(760), win_w), min(UI.px(560), win_h))
         self._init_style()
 
         # ---- 品牌栏：靠留白分层，不加边框（Linear / Vercel 的做法）----
         outer = tk.Frame(root, bg=UI.BG)
-        outer.pack(fill="both", expand=True, padx=24, pady=(18, 18))
+        outer.pack(fill="both", expand=True, padx=UI.px(26), pady=(UI.px(20), UI.px(20)))
         head = tk.Frame(outer, bg=UI.BG)
-        head.pack(fill="x", pady=(0, 14))
+        head.pack(fill="x", pady=(0, UI.px(16)))
         brand = tk.Frame(head, bg=UI.BG)
         brand.pack(side="left")
         tk.Label(brand, text="Galgame Unpacker", bg=UI.BG, fg=UI.TEXT,
                  font=UI.F_TITLE).pack(anchor="w")
         tk.Label(brand, text=f"解包 · 验收 · 归类      v{app_version()}", bg=UI.BG,
-                 fg=UI.TEXT_3, font=UI.F_SMALL).pack(anchor="w", pady=(3, 0))
+                 fg=UI.TEXT_3, font=UI.F_SMALL).pack(anchor="w", pady=(UI.px(4), 0))
         PillButton(head, "环境自检", command=self._doctor, kind="ghost",
-                   bg=UI.BG, height=30).pack(side="right")
+                   bg=UI.BG, height=32).pack(side="right")
 
         # ---- 输入卡片 ----
         card = Card(outer)
@@ -673,43 +696,49 @@ class App:
         self.ent_out = self._field(body, 1, "输出目录", self.var_out, self._browse_out)
 
         bar = tk.Frame(body, bg=UI.CARD)
-        bar.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(16, 0))
+        bar.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(UI.px(22), 0))
         self.var_gui = tk.BooleanVar(value=False)
         self.var_organize = tk.BooleanVar(value=True)
         # 用 tk.Checkbutton 而不是 ttk：clam 主题把选中态画成「方框加叉」，像禁用符号；
         # 原生勾选框虽朴素，但语义一眼可辨（勾 = 开）。
         for text, var in (("用于加密的 krkr", self.var_gui),
                           ("按类型整理", self.var_organize)):
-            Check(bar, text, var).pack(side="left", padx=(0, 18))
+            Check(bar, text, var, size=18).pack(side="left", padx=(0, UI.px(22)))
         # 主操作只有一个实心色块 —— 天空蓝在全窗口的露面都集中在这里
         self.btn_run = PillButton(bar, "开始解包", command=self._start, kind="primary",
-                                  bg=UI.CARD, height=38, padx=24, font=UI.F_BOLD)
+                                  bg=UI.CARD, height=40, padx=24, font=UI.F_BOLD)
         self.btn_run.pack(side="right")
         self.btn_open = PillButton(bar, "打开输出目录", command=self._open_out,
-                                   kind="secondary", bg=UI.CARD, state="disabled")
+                                   kind="secondary", bg=UI.CARD, state="disabled",
+                                   height=36)
         self.btn_open.pack(side="right", padx=(0, 8))
         self.btn_cancel = PillButton(bar, "取消", command=self._cancel,
-                                     kind="secondary", bg=UI.CARD, state="disabled")
+                                     kind="secondary", bg=UI.CARD, state="disabled",
+                                     height=36)
         self.btn_cancel.pack(side="right", padx=(0, 8))
 
         # ---- 日志卡片 ----
-        logcard = Card(outer)
-        logcard.pack(fill="both", expand=True, pady=(14, 0))
+        # 日志卡片的内边距比输入卡片小一档：它要装的是「越长越好」的文本，
+        # 边框留白吃掉的行数在高 DPI 下很不划算
+        logcard = Card(outer, pad=16)
+        logcard.pack(fill="both", expand=True, pady=(UI.px(18), 0))
         lb = logcard.body
         top = tk.Frame(lb, bg=UI.CARD)
         top.pack(fill="x")
         tk.Label(top, text="运行日志", bg=UI.CARD, fg=UI.TEXT_2,
                  font=(UI.FONT, 9, "bold")).pack(side="left")
-        self._dot = tk.Canvas(top, width=8, height=8, bg=UI.CARD,
+        dot = UI.px(8)
+        self._dot = tk.Canvas(top, width=dot, height=dot, bg=UI.CARD,
                               highlightthickness=0, bd=0)
-        self._dot.pack(side="right", padx=(7, 2))
-        self._dot_id = self._dot.create_oval(1, 1, 7, 7, fill=UI.DOT_IDLE, outline="")
+        self._dot.pack(side="right", padx=(UI.px(7), UI.px(2)))
+        self._dot_id = self._dot.create_oval(1, 1, dot - 1, dot - 1,
+                                             fill=UI.DOT_IDLE, outline="")
         self.var_status = tk.StringVar(value="就绪")
         tk.Label(top, textvariable=self.var_status, bg=UI.CARD, fg=UI.TEXT_3,
                  font=UI.F_SMALL, anchor="e").pack(side="right")
         self.var_status.trace_add("write", lambda *_: self._sync_dot())
         self._divider = tk.Frame(lb, bg=UI.LINE_SOFT, height=1)
-        self._divider.pack(fill="x", pady=(12, 0))
+        self._divider.pack(fill="x", pady=(UI.px(14), 0))
 
         # 进度线：4px 细条，默认不占位；运行时插在分隔线下面，跑到 100% 再收起。
         # 为什么不做成进度条控件：这里只有「在动/大概到哪」这一个语义，
@@ -721,11 +750,14 @@ class App:
 
         self._logbox = tk.Frame(lb, bg=UI.CARD)
         box = self._logbox
-        box.pack(fill="both", expand=True, pady=(12, 0))
-        self.txt = tk.Text(box, height=10, wrap="none", state="disabled",
+        box.pack(fill="both", expand=True, pady=(UI.px(14), 0))
+        # height 只给一个**很小**的请求值：Text 的请求高度按行数算，高 DPI 下 10 行
+        # 会超过卡片可用空间，pack 直接把日志压成 0 行 —— 界面看着就是一块空白
+        # （2026-11-06 在 200% 缩放下实测到）。给 4 行，剩下的由 expand 撑满。
+        self.txt = tk.Text(box, height=3, wrap="none", state="disabled",
                            font=UI.F_MONO, bg=UI.CARD, fg=UI.TEXT_2, bd=0,
                            highlightthickness=0, padx=0, pady=0,
-                           spacing1=2, spacing3=3, insertbackground=UI.SKY,
+                           spacing1=UI.px(2), spacing3=UI.px(3), insertbackground=UI.SKY,
                            selectbackground=UI.SKY_L, selectforeground=UI.TEXT)
         self.txt.pack(side="left", fill="both", expand=True)
         self._sb = ttk.Scrollbar(box, command=self.txt.yview,
@@ -760,7 +792,8 @@ class App:
         # 启动守卫：被降权时先把话说清楚（不阻断，降级路径仍能跑）。
         warn = restricted_environment()
         if warn:
-            self.var_status.set("受限环境：只能写入程序目录（建议整体移到 D:\\GalgameUnpacker）")
+            # 完整建议已经逐行写进日志，状态条只留一句 —— 否则会把日志卡片标题挤满
+            self.var_status.set("受限环境：只能写入程序目录")
             self._log(f"[warn] {warn}")
             for line in restricted_tip().splitlines():
                 self._log(f"[warn] {line}")
@@ -794,13 +827,13 @@ class App:
         """一行表单：小标签 + 圆角输入框 + 次级按钮。"""
         tk.Label(parent, text=label, bg=UI.CARD, fg=UI.TEXT_3, font=UI.F_LABEL,
                  width=7, anchor="w").grid(row=row, column=0, sticky="w",
-                                           pady=(0 if row == 0 else 12, 0))
-        ent = RoundedEntry(parent, var, bg=UI.CARD)
-        ent.grid(row=row, column=1, sticky="ew", padx=(10, 10),
-                 pady=(0 if row == 0 else 12, 0))
+                                           pady=(0 if row == 0 else UI.px(16), 0))
+        ent = RoundedEntry(parent, var, bg=UI.CARD, height=40)
+        ent.grid(row=row, column=1, sticky="ew", padx=(UI.px(10), UI.px(10)),
+                 pady=(0 if row == 0 else UI.px(16), 0))
         PillButton(parent, "浏览", command=browse_cmd, kind="secondary",
-                   bg=UI.CARD, height=34).grid(row=row, column=2, sticky="e",
-                                               pady=(0 if row == 0 else 12, 0))
+                   bg=UI.CARD, height=38).grid(row=row, column=2, sticky="e",
+                                               pady=(0 if row == 0 else UI.px(16), 0))
         return ent
 
     def _hint(self) -> None:
