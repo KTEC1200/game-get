@@ -1444,3 +1444,6 @@ Low 令牌被强制「禁止向上写」，所以 Medium 标签的桌面/文档/
 
 交付：`packaging/Output/GalgameUnpacker-0.7.1-portable.zip`
 （141.6 MiB，SHA256 `7e2e72a0…455f654f2`；`--doctor` 报 0.7.1、`--gui-smoke` rc=0）。
+
+> 本轮全部实测证据（含「三层假阴性」「代理会话的假复现判据」「同一 exe 三处路径的对照表」）
+> 已归档到 `verified-findings.md` **§32**，排查同类问题时先读那一节。

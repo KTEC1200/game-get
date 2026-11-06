@@ -2086,3 +2086,91 @@ raw 3500 文件（png 2059 + wav 1441）、对账 -1（explained_by 附解释）
   1.99×，3 workers 按内存自动放开），音频段可再省一半以上；
 - 当天串行全链 ≈ 8.2 min，对比历史「十几分钟」（58 次调用的年代）方向一致；
 - 消耗大头已经是 Convert 导图片（不可省）与减半长尾（收敛必需）。
+
+## 32. 「输出目录不可写」的真因是**程序所在路径**，不是 ACL / 杀软 / 提权（2026-11-06，v0.6.0→v0.7.1）
+
+这一轮从「加信任区无效」开始，中间我自己造过两次假复现，最后靠**同一 shell 内的并排对照**
+才定案。结论只有一句：**同一个 exe，放在某些目录下会被系统以 Low 完整性创建**，
+而 Low 令牌被 Windows 强制「禁止向上写」——所有 Medium 标签的用户目录全部 `WinError 5`。
+
+### 32.1 用户「都试过了」的三条，一条都没真正改变变量
+
+| 用户的动作 | 为什么无效 | 证据 |
+|---|---|---|
+| 右键「以管理员身份运行」 | 本机 **UAC 已关闭**（`EnableLUA=0`）：不弹授权框，双击与右键是**同一个 High 令牌** | `HKLM\…\Policies\System\EnableLUA=0`；`IsUserAnAdmin=True` 且 IL=High |
+| 退出火绒 | 托盘「退出」只结束 `HipsTray`，**`HipsDaemon`（PID 4216）全程未变**，驱动 `sysdiag` 仍 Running | `tasklist` / `fltmc filters` |
+| 卸载 EasyConnect | `SangforPWEx` / `SangforUDProtectEx` 是**服务**，卸载后仍运行；虚拟网卡仍在 | 卸载后的进程列表 |
+
+**教训**：验证「是不是 X 拦的」，要停 X 的**执行体**（服务/驱动），不是停它的界面；
+验证「提权有没有用」，得先确认这台机器上提权真的会换令牌。
+
+### 32.2 我造过的两次假复现（比不做实验更危险）
+
+`runas /trustlevel:0x20000`（受限令牌）与某次工具调用（进程被降到 Low）**都稳定复现**
+`WinError 5`，`cmd` 在同一令牌下却能写桌面 —— 当时以为找到了根因。但同一份 exe 在正常会话里
+写程序目录、桌面、游戏目录**全部成功**。
+
+**判据（写下来防止再犯）**：只有「**在我自己的正常会话里也能写的位置上失败**」才算复现；
+否则只是「另一种拦截」，现象相同、成因不同，照它开药方会开出「加白程序目录就好了」这种错药。
+
+### 32.3 决定性对照（同一台机器、同一个 shell、同一份 exe）
+
+| 程序所在位置 | 进程完整性 | 六个写探针 |
+|---|---|---|
+| `D:/K/deepseek/packaging/Output/orchestrator` | **Low** | 只有「程序目录 output」可写；桌面/文档/游戏目录/%TEMP%/%LOCALAPPDATA% 全 `WinError 5` |
+| 复制到 `%TEMP%\iltest` | **High** | 六处全可写 |
+| 复制到 `D:/gtool` | **High** | 程序目录可写 |
+| 同一 shell 里的 `python.exe` | **High** | —（排除账户 / 父进程令牌 / ACL / UAC 降权） |
+
+**规避（已验证）**：便携包解到 `D:/K` 之外（如 `D:/GalgameUnpacker/`）即按 High 运行。
+`packaging\Output\orchestrator` 上有两条非标准 ACE（`Everyone:(I)(CI)(DENY)(DC)`、
+`S-1-4-…:(W,D,DC)`），`D:/K` 本身干净 —— **谁写的尚未查明**，但不影响规避方式。
+
+### 32.4 教师催眠2 闭环：手动拖拽 + `--reuse-raw` 全链通过
+
+11 个 xp3 全是 krkrZ（`garbro -l` 全 `unknown format`），目录带 `Mai@KF.dll` + `katei2.exe.org`。
+用户手动把 11 个包拖进 KrkrExtract（先点 **Full Unpack**），产出 **9818 文件 / 3.0 GB**。
+移进 `output/raw` 后 `--reuse-raw` 走完剩余阶段：**rc=0 / 135.6s**。
+
+```
+postprocess 2748 .tlg → 2748 PNG（复用上一轮，1.4s）
+verify      图片 3082/3082、音频 6558/6558、视频 12/12，失败 0，媒体 907.1 分钟
+organize    图片 3082 / 音频 6558 / 视频 12 / 其他 166；硬链接 9818，失败 0
+对账        diff=None（method=no-index-available）
+案例库      命中 3 个（兼职人妻 / 教师催眠1 xp3-encrypted-krkrZ / 高慢妻陥落！！）
+```
+
+### 32.5 加密 krkr 的 `--allow-gui`：三处缺陷，以及「以前为什么能跑」
+
+1. **窗口只等 5 秒判一次** → 把「还没建好」当「注入失败」（23 秒即退出）。
+   改 40s 轮询（`KRKR_WINDOW_WAIT`），失败时打印该 pid 的全部窗口标题。
+2. **模态提示没人关**：注入后游戏自弹 `Information / 正常に起動できませんでした`，
+   盖住拖拽落点、也让完成判定永远不成立。关掉它，data.xp3 **立刻 +57 个文件**。
+3. **解包模式从来没设过**：KrkrExtract 的模式是开关式，默认只开 `Decompile Script` →
+   data.xp3 只出 46 `.tjs` + 11 `.ks`（**一张图都没有**），image00 拖进去 57→57
+   **0 新增还判「完成」**。补 `click_button(pid, "Full Unpack")`。
+
+**教师催眠1 当年能出 2009 张图，是因为那个 stage 带着上一次手工操作留下的配置** ——
+这条链路一直是「碰巧能跑」，换机器/重建就退化成只解脚本。这是本轮最值得记住的一条：
+**GUI 自动化里「继承状态」= 不可复现的运气**。
+
+### 32.6 实跑 9818 个文件暴露的四个 bug（v0.7.1 全修）
+
+| # | 现象 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | `--reuse-raw` 重跑白转 2748 张图（1229s） | 后处理不认已转产物 | `_converted_fresh()`：产物非空且 mtime ≥ 源则复用 → 1.4s |
+| 2 | `manifest.stages[].ok` 变成 **2748** | `as_dict()` 把 `**self.data` 放在规范字段之后，data 里的 `ok`（转换数）盖掉了阶段结论 | data 先铺、规范字段后盖 |
+| 3 | 归档阶段「硬链接 9818、失败 0」却显示 `[FAIL]` | `Stage.ok` 默认 **False**，`stage_organize` 漏赋值 | 成功路径显式 `st.ok = True` |
+| 4 | 分类统计比验收多 1 个音频（6559 vs 6558） | `voice01/*.soc` 扩展名认不出，按目录兜底算成音频 | 新增 `EXT_OTHER` 优先于目录兜底；`.dat`/`.at`/`.bin` **明确不进**（AdvHD 视频就是 `.dat`） |
+
+视图重建另修三处：加 `.galunpack-view` 标记（自己的视图原地重建、别人的同名目录顺延
+`分类-2` 绝不覆盖）；重建时清理过期链接（分类规则变过会留下旧类目里的链接）；
+已链同一文件时跳过（原先「先 unlink 再 link」＝ 9818 次删除）。
+
+### 32.7 遗留
+
+- **`--allow-gui` 在本机没跑到底**：第四轮卡在 `assert drop, "no blank spot on KrkrExtract UI"`，
+  日志 `blockers={'Chrome_RenderWidgetHostHWND':…}` —— KrkrExtract 窗口被别的窗口压住时
+  找不到空白落点。这类链路只适合「人在电脑前、别切窗口」。要确认全自动可用，需在
+  另一个人加密 krkr 样本上重跑一次。
+- `packaging\Output\orchestrator` 那两条非标准 ACE 的来源仍未查明。
