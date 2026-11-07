@@ -815,7 +815,7 @@ class App:
             root.dnd_bind("<<DropLeave>>",                      # type: ignore[attr-defined]
                           lambda _e: self._drag_over(False))
         if not hasattr(root, "drop_target_register") and not HAS_DND:
-            self.var_status.set("就绪（未装 tkinterdnd2，拖拽不可用：浏览或粘贴路径）")
+            self.var_status.set("就绪（tkinterdnd2 未启用，拖拽不可用：浏览或粘贴路径）")
 
         self._last_out: Path | None = None
         #: 取消位（每次运行换一个新的 Event；传给 run 的是 is_set 而不是 Event 本身，
@@ -1341,11 +1341,33 @@ class App:
                                         "stages": []}))
 
 
+def _make_root():
+    """建 Tk 根：**tkinterdnd2 是增强，不是依赖**。
+
+    2026-11-07 16:0x 实测（用户关掉旧 GUI 窗口后的非交互会话）：
+    ``TkinterDnD.Tk()`` 抛 ``_tkinter.TclError: unable to initialize OLE2``
+    → ``RuntimeError: Unable to load tkdnd library.``，``--gui-smoke`` rc=1。
+    旧实现只在 **import** 层探测（装了就 HAS_DND=True），把「包装了但初始化不了」
+    当成「可用」，于是可选依赖一失败，整个 GUI 连普通窗口都起不来 —— 双击 exe
+    直接闪退。这里把初始化也纳入探测：失败就退回 ``tk.Tk()``（浏览 + 粘贴路径），
+    功能少一点，程序必须能起来。
+    """
+    global HAS_DND
+    if HAS_DND:
+        try:
+            return TkinterDnD.Tk()
+        except Exception as exc:                             # noqa: BLE001
+            HAS_DND = False
+            print(f"[WARN] tkinterdnd2 初始化失败，退化成普通 Tk："
+                  f"{type(exc).__name__}: {exc}", file=sys.stderr)
+    return tk.Tk()
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     smoke = "--gui-smoke" in argv
 
-    root = TkinterDnD.Tk() if HAS_DND else tk.Tk()          # noqa: F841 (root 被窗口持有)
+    root = _make_root()                                     # noqa: F841 (root 被窗口持有)
     app = App(root)
     if smoke:
         root.after(600, root.destroy)                       # 冻结包 Tk 冒烟：能建窗即过

@@ -3,6 +3,7 @@
 """GUI 最小壳的测试：纯逻辑全锁，Tk 部分只做构造冒烟（交互不进测试）。"""
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -66,8 +67,31 @@ def _fake_manifest() -> dict:
 # Tk 构造冒烟（无显示环境自动跳过；交互不测）
 # ---------------------------------------------------------------------------
 
+def _tk_available() -> bool:
+    """在**子进程**里探测能否建 Tk 窗口。
+
+    2026-11-07 实测：用户关掉 GUI 窗口后，工具会话里 `tk.Tk()` 触发
+    Windows fatal exception 0x80000003 —— 进程级崩溃，Python 的
+    `except tk.TclError` 根本接不住，pytest 整个会话被打断（不是某条用例失败）。
+    放进子进程探测：崩也只崩子进程，主进程按「无可用显示」跳过这些构造冒烟。
+    """
+    try:
+        r = subprocess.run(
+            [sys.executable, "-c",
+             "import tkinter; r = tkinter.Tk(); r.withdraw(); r.destroy()"],
+            capture_output=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0
+
+
+TK_AVAILABLE = _tk_available()
+
+
 @pytest.fixture
 def tk_root():
+    if not TK_AVAILABLE:
+        pytest.skip("当前会话无法创建 Tk 窗口（子进程探测失败）")
     try:
         root = tk.Tk()
     except tk.TclError:
@@ -632,3 +656,40 @@ def test_rounded_entry_highlight_toggles_background(tk_root):
 
     ent.set_highlight(False)
     assert ent.ent.cget("bg") == gui.UI.CARD
+
+
+# ---- 2026-11-07：可选依赖初始化失败不能打挂 GUI ----
+
+def test_make_root_falls_back_when_tkdnd_init_fails(monkeypatch):
+    """★真机★ `TkinterDnD.Tk()` 抛 OLE2 初始化失败时，GUI 仍要用普通 Tk 起来。"""
+    class Boom:
+        @staticmethod
+        def Tk():
+            raise RuntimeError("Unable to load tkdnd library.")
+
+    sentinel = object()
+    monkeypatch.setattr(gui, "HAS_DND", True)
+    monkeypatch.setattr(gui, "TkinterDnD", Boom, raising=False)
+    monkeypatch.setattr(gui.tk, "Tk", lambda: sentinel)
+
+    assert gui._make_root() is sentinel
+    assert gui.HAS_DND is False, "退化后必须回落，状态栏才不会谎报拖拽可用"
+
+
+def test_make_root_uses_dnd_when_available(monkeypatch):
+    class FakeDnD:
+        @staticmethod
+        def Tk():
+            return "dnd-root"
+
+    monkeypatch.setattr(gui, "HAS_DND", True)
+    monkeypatch.setattr(gui, "TkinterDnD", FakeDnD, raising=False)
+    assert gui._make_root() == "dnd-root"
+    assert gui.HAS_DND is True
+
+
+def test_make_root_without_dnd_uses_plain_tk(monkeypatch):
+    sentinel = object()
+    monkeypatch.setattr(gui, "HAS_DND", False)
+    monkeypatch.setattr(gui.tk, "Tk", lambda: sentinel)
+    assert gui._make_root() is sentinel
