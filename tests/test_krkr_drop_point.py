@@ -293,7 +293,7 @@ def test_main_revalidates_drop_point_for_every_archive(tmp_path, monkeypatch, fa
     monkeypatch.setattr(kae, "WINDOW_WAIT", 0)
     monkeypatch.setattr(kae, "wait_ui_window", lambda pid: (UI_HWND, 0.0))
     monkeypatch.setattr(kae, "dismiss_dialogs", lambda pid: [])
-    monkeypatch.setattr(kae, "click_button", lambda pid, label: True)
+    monkeypatch.setattr(kae, "click_button_ex", lambda pid, label: (True, "替身：已开启"))
     monkeypatch.setattr(kae, "close_all_explorers", lambda hint: None)
     monkeypatch.setattr(kae, "find_explorer_by_title_hint", lambda hint: EXPLORER_HWND)
     monkeypatch.setattr(kae, "uia_item_rect", lambda hwnd, name: (10, 10, 50, 50))

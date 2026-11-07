@@ -277,3 +277,53 @@ def test_has_stale_products_ignores_unmarked_directory(tmp_path):
     (tmp_path / "分类" / "其他").mkdir(parents=True)
     (tmp_path / "分类" / "其他" / "a.ks").write_bytes(b"x")
     assert gui.has_stale_products(tmp_path) is False
+
+
+# ---------------------------------------------------------------------------
+# 6) 2026-11-07 真机日志可读性：报错去重 / 未验收说人话 / 步骤对症
+# ---------------------------------------------------------------------------
+
+def test_gui_error_from_output_dedups_repeated_diagnostic_lines():
+    """现场：同一句诊断行出现 3 次还被 GUI 摘要腰斩，用户完全看不懂。"""
+    out = (
+        "主窗口=[]；Button 文本=[]；全部子控件=[]；诊断异常=None\n"
+        "ERROR: 没点上 'Full Unpack'：按钮枚举失败。\n"
+        "主窗口=[]；Button 文本=[]；全部子控件=[]；诊断异常=None\n"
+        "RuntimeError: 没点上 'Full Unpack'：按钮枚举失败。\n"
+        "主窗口=[]；Button 文本=[]；全部子控件=[]；诊断异常=None\n"
+        "该进程顶层窗口(hwnd,类名,标题)=[(8101, 'WindowsForms10.Window.8.app', "
+        "'KrkrExtract(local 5.0.0.2)')]\n"
+    )
+    err = orch._gui_error_from_output(out, 1)
+    assert err.count("主窗口=[]") == 1, "诊断行不许重复"
+    assert "RuntimeError:" in err
+    assert "该进程顶层窗口" in err
+
+
+def test_summarize_skipped_verify_is_plain_language():
+    man = {
+        "manifest_version": 1, "engine": "KiriKiri",
+        "counts": {"final": {"total": 0}},
+        "reconcile": {"method": "no-index-available", "diff": None},
+        "verify": {"status": "skipped"},
+        "error": "extract-failed",
+        "manual": {"summary": "GUI 自动化链路已经跑过但失败", "steps": [], "then": None},
+    }
+    text = gui.summarize_text(1, man)
+    assert "验收：未执行" in text
+    assert "None/None" not in text, "没验成不该显示成图片 None/None失败"
+
+
+def test_manual_steps_target_full_unpack_instead_of_drop_point():
+    stages = [{"stage": "extract", "ok": False,
+               "detail": "GUI 链路失败或没有产出 KrkrExtract_Output (rc=1)",
+               "gui_error": "RuntimeError: 没点上 'Full Unpack'：按钮枚举失败"}]
+    plan = manual.plan_for(
+        "extract-failed", engine="KiriKiri",
+        game_dir=Path(r"D:\HY\G"), out_dir=Path(r"D:\HY\G\output"),
+        raw_dir=Path(r"D:\HY\G\output\raw"), png_dir=Path(r"D:\HY\G\output\png"),
+        stages=stages, allow_gui=True)
+    text = " ".join(plan.steps)
+    assert "Full Unpack 按钮没点上" in text
+    assert "先勾上 Full Unpack" in text
+    assert "KRKR_DROP_ATTEMPTS" not in text, "落点步骤与本次真因无关，别再让用户照着做"

@@ -94,6 +94,8 @@ class DialogUser32:
     def SendMessageW(self, hwnd, msg, wparam, lparam):
         if self.send_raises:
             raise OSError("BM_CLICK 目标窗口已无响应")
+        if msg == 0x00F0:        # BM_GETCHECK：点击后的状态复核是查询，不算一次点击
+            return 0
         self.sent.append((hwnd, msg, wparam, lparam))
         return 1
 
@@ -118,6 +120,16 @@ def dialogs(monkeypatch):
         monkeypatch.setattr(kae, "user32", fake)
         return fake
     return install
+
+
+@pytest.fixture(autouse=True)
+def _no_real_uia(monkeypatch):
+    """替身测试不许真的拉起 PowerShell / UIA（会拖 30 秒且依赖桌面）。
+
+    专门测 UIA 的用例在同文件里显式 monkeypatch 覆盖这个桩。
+    """
+    monkeypatch.setattr(kae, "uia_click_button",
+                        lambda hwnd, label: (False, "替身：UIA 未启用"))
 
 
 def _main_windows():
@@ -251,7 +263,8 @@ def _prepare_main(tmp_path, monkeypatch, *, click_ok: bool, allow_no: bool,
     monkeypatch.setattr(kae.time, "sleep", lambda *a: None)
     monkeypatch.setattr(kae, "wait_ui_window", lambda pid: (UI_HWND, 0.0))
     monkeypatch.setattr(kae, "dismiss_dialogs", lambda pid: [])
-    monkeypatch.setattr(kae, "click_button", lambda pid, label: click_ok)
+    monkeypatch.setattr(kae, "click_button_ex",
+                        lambda pid, label: (click_ok, "替身：Win32 点击结果"))
     monkeypatch.setattr(kae, "close_all_explorers", lambda hint: None)
     monkeypatch.setattr(kae, "find_explorer_by_title_hint", lambda hint: EXPLORER_HWND)
     monkeypatch.setattr(kae, "uia_item_rect", lambda hwnd, name: (10, 10, 50, 50))

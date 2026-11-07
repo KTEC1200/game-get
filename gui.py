@@ -312,13 +312,19 @@ def summarize_text(rc: int, man: dict) -> str | None:
         lines.append("对账：无索引地面真相，未对账")
     # media_minutes 为 None（没验成）时显示「未统计」而不是 0.0：
     # 0.0 分钟会被读成「验了、真的 0 分钟」，与「没验」是两种事实。
-    minutes = ver.get("media_minutes")
-    media = (f"{minutes:.1f} 分钟" if isinstance(minutes, (int, float)) and not isinstance(minutes, bool)
-             else "媒体未统计")
-    lines.append(f"验收[{ver.get('status') or 'unknown'}]："
-                 f"图片 {ver.get('image_ok')}/{ver.get('image_fail')}失败 · "
-                 f"音频 {ver.get('audio_ok')}/{ver.get('audio_fail')}失败 · "
-                 f"视频 {ver.get('video_ok')}/{ver.get('video_fail')}失败 · {media}")
+    # 2026-11-07 实跑：本轮在 extract 就失败时 verify.status=skipped，
+    # 各计数还是 None，旧版打成「图片 None/None失败 · 音频 None/None失败」，
+    # 看着像产物全坏了，其实只是压根没验。跳过时直接说清楚。
+    if ver.get("status") == "skipped":
+        lines.append("验收：未执行（这轮在验收前就失败了，不是产物损坏）")
+    else:
+        minutes = ver.get("media_minutes")
+        media = (f"{minutes:.1f} 分钟" if isinstance(minutes, (int, float)) and not isinstance(minutes, bool)
+                 else "媒体未统计")
+        lines.append(f"验收[{ver.get('status') or 'unknown'}]："
+                     f"图片 {ver.get('image_ok')}/{ver.get('image_fail')}失败 · "
+                     f"音频 {ver.get('audio_ok')}/{ver.get('audio_fail')}失败 · "
+                     f"视频 {ver.get('video_ok')}/{ver.get('video_fail')}失败 · {media}")
     if ver.get("nonmedia"):
         # 「没验」也是信息：非媒体文件不计失败，但要让用户知道有多少没看
         lines.append(f"另有 {ver.get('nonmedia')} 个非媒体文件未验收"

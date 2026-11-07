@@ -75,6 +75,14 @@ GA_ROOT = 2
 #: 只有在用户确认界面确实没有该按钮、并已手工开启全解包模式时才允许跳过。
 ALLOW_NO_FULL_UNPACK = os.environ.get("KRKR_ALLOW_NO_FULL_UNPACK", "0") == "1"
 
+#: KrkrExtract 注入后主界面的标题前缀（跨版本一致，实测 `KrkrExtract(local 5.0.0.2) - built on …`）。
+MAIN_TITLE_PREFIX = "KrkrExtract(local"
+#: 模态提示框标题里会出现这些词；它们不是主界面，`dismiss_dialogs` 负责关掉。
+MODAL_TITLE_HINTS = ("information", "error", "エラー", "警告", "warning")
+BM_CLICK = 0x00F5
+BM_GETCHECK = 0x00F0
+BST_CHECKED = 1
+
 
 def _print_log(msg: str) -> None:
     """把日志原样打到 stdout，**中文必须保留**。
@@ -212,7 +220,7 @@ def find_ui_window(pid):
     def cb(h, lp):
         p = wintypes.DWORD()
         user32.GetWindowThreadProcessId(h, ctypes.byref(p))
-        if p.value == pid and wnd_text(h).startswith("KrkrExtract(local"):
+        if p.value == pid and wnd_text(h).startswith(MAIN_TITLE_PREFIX):
             res[0] = h
         return True
     user32.EnumWindows(cb, 0)
@@ -308,30 +316,94 @@ def mouse(flags):
     i = INP(); i.type = 0; i.u.mi.dwFlags = flags
     user32.SendInput(1, (INP * 1)(i), ctypes.sizeof(INP))
 
+def _uia_ps(hwnd, item_name, *, invoke=False, fuzzy=False, retries=1):
+    """调一次 UIA 脚本，返回 ``(stdout 行, 换算成物理坐标的矩形或 None)``。
+
+    `_uia_item_rect.ps1` 同时服务两件事：拖拽时拿 Explorer 条目的矩形（原行为），
+    和 2026-11-07 新增的「找 Full Unpack 按钮并触发」。`-Invoke` / `-Fuzzy`
+    是可选开关，不传时脚本输出与旧版逐字一致，拖拽链路不受影响。
+    """
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_uia_item_rect.ps1")
+    argv = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", script, "-ItemName", item_name, "-Hwnd", str(hwnd)]
+    if invoke:
+        argv.append("-Invoke")
+    if fuzzy:
+        argv.append("-Fuzzy")
+    for _ in range(max(1, retries)):
+        try:
+            ps = subprocess.run(argv, capture_output=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        lines = ps.stdout.decode("utf-8", errors="replace").strip().splitlines()
+        scr = None
+        for ln in lines:
+            if ln.startswith("SCR "):
+                try:
+                    _, sw, sh = ln.split()
+                    scr = (int(sw), int(sh))
+                except ValueError:
+                    pass
+                break
+        rect = None
+        for ln in lines:
+            if ln.startswith("RECT "):
+                try:
+                    _, l, t, r, b = ln.split()
+                    l, t, r, b = int(l), int(t), int(r), int(b)
+                    scale = user32.GetSystemMetrics(0) // max(scr[0], 1) if scr else 1
+                    if scale != 1:
+                        l, t, r, b = l * scale, t * scale, r * scale, b * scale
+                    rect = (l, t, r, b)
+                except (ValueError, IndexError):
+                    pass
+                break
+        return lines, rect
+    return [], None
+
+
 def uia_item_rect(exp_hwnd, item_name):
     """UIA item rect; returns physical (l,t,r,b) or None. Retries; follows hwnd recreation."""
-    for attempt in range(15):
-        ps = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                             "-File", os.path.join(os.path.dirname(os.path.abspath(__file__)), "_uia_item_rect.ps1"),
-                             "-ItemName", item_name, "-Hwnd", str(exp_hwnd)],
-                            capture_output=True)
-        so = ps.stdout.decode("utf-8", errors="replace").strip()
-        scr, rline = None, None
-        for ln in so.splitlines():
-            if ln.startswith("SCR"):
-                _, sw, sh = ln.split()
-                scr = (int(sw), int(sh))
-            elif ln.startswith("RECT"):
-                rline = ln
-        if scr and rline:
-            _, l, t, r, b = rline.split()
-            l, t, r, b = int(l), int(t), int(r), int(b)
-            scale = user32.GetSystemMetrics(0) // max(scr[0], 1)
-            if scale != 1:
-                l, t, r, b = l * scale, t * scale, r * scale, b * scale
-            return (l, t, r, b)
+    for _attempt in range(15):
+        _lines, rect = _uia_ps(exp_hwnd, item_name)
+        if rect:
+            return rect
         time.sleep(1.2)
     return None
+
+
+def uia_click_button(hwnd, label):
+    """UIA 兜底：按名字找按钮 → Invoke / Toggle / 鼠标点击（中心点）。
+
+    2026-11-07 真机：`KrkrExtract.Lite.exe` 是 .NET WinForms，主窗口类名不是
+    `#32770`、按钮也不是标准 `Button` 类，纯 Win32 子控件枚举会一无所获。
+    UIA 能穿透 WinForms 的控件树，所以作为第二道保险；三条触发路径任一成功
+    都算点上，并把控件类型/名字/触发方式写进状态供日志复核。
+    """
+    lines, rect = _uia_ps(hwnd, label, invoke=True, fuzzy=True, retries=2)
+    tag = next((ln for ln in lines if ln.startswith(
+        ("INVOKED", "TOGGLED", "NO_PATTERN", "NOITEM", "NOWINDOW"))), "")
+    item = next((ln[5:] for ln in lines if ln.startswith("ITEM ")), "")
+    ctrls = [ln[5:] for ln in lines if ln.startswith("CTRL ")][:12]
+    if tag == "INVOKED":
+        return True, f"InvokePattern 已触发（{item}）"
+    if tag == "TOGGLED":
+        state = next((ln for ln in lines if ln.startswith("TOGGLESTATE ")), "状态未知")
+        return True, f"TogglePattern 已切换（{item}；{state}）"
+    if tag == "NO_PATTERN" and rect:
+        x, y = (rect[0] + rect[2]) // 2, (rect[1] + rect[3]) // 2
+        try:
+            user32.SetCursorPos(int(x), int(y))
+            time.sleep(0.2)
+            mouse(0x0002)                       # left down
+            time.sleep(0.1)
+            mouse(0x0004)                       # left up
+        except Exception as exc:                 # noqa: BLE001
+            return False, f"UIA 找到控件但鼠标点击失败：{type(exc).__name__}: {exc}"
+        return True, (f"无 Invoke/Toggle，已按 BoundingRectangle 中心鼠标点击"
+                      f"（{item}；({x},{y})，勾选状态无法复核）")
+    hint = ("；可见控件：" + " / ".join(ctrls)) if ctrls else ""
+    return False, f"UIA 未找到 {label!r}（{tag or '脚本无有效输出'}；{item}）{hint}"
 
 def find_explorer_by_title_hint(hint):
     """标题含 hint 的资源管理器窗口；多个时取最后一个（与历史行为一致）。"""
@@ -392,12 +464,13 @@ def dismiss_dialogs(pid):
     data.xp3 立刻 +57 个文件（46 .tjs + 11 .ks）—— 但它会
     ① 盖住拖拽落点、② 让完成判定一直看到「还有对话框」，整轮卡在 0 files 到超时。
 
-    主界面标题形如 `KrkrExtract(local 5.0.0.2) - built on …`，同属 `#32770`，
-    必须按标题前缀排除，否则会把工具自己的窗口关掉。
+    主界面标题形如 `KrkrExtract(local 5.0.0.2) - built on …`，实为 .NET WinForms
+    窗口（类名 `WindowsForms10.Window.8.app...`，2026-11-07 实证）；这里只处理
+    标准 `#32770` 消息框，再按标题前缀兜底排除主界面，绝不把工具自己的窗口关掉。
     """
     closed = []
     for h, cls, title in top_windows(pid):
-        if cls != "#32770" or title.startswith("KrkrExtract(local"):
+        if cls != "#32770" or title.startswith(MAIN_TITLE_PREFIX):
             continue
         if not any(k.lower() in title.lower() for k in
                    ("information", "error", "エラー", "警告", "warning", "krkrextract")):
@@ -442,84 +515,126 @@ def _child_controls(hwnd) -> list[tuple[int, str, str]]:
     return res
 
 
+def _is_modal_title(title: str) -> bool:
+    """注入时游戏自己弹的 Information / Error 提示框（不是主界面）。"""
+    t = (title or "").lower()
+    return any(k in t for k in MODAL_TITLE_HINTS) and not t.startswith(MAIN_TITLE_PREFIX.lower())
+
+
 def _main_dialogs(pid) -> list[tuple[int, str, str]]:
-    """该进程里 KrkrExtract 主界面（排除 Information/Error 之类的模态提示）。"""
+    """该进程里 KrkrExtract 主界面：按 **pid + 标题** 认，不再要求窗口类名。
+
+    2026-11-07 真机（教师催眠2，15:07 与 15:22 两轮）实证：旧实现硬要求
+    `cls == "#32770"`，但 `KrkrExtract.Lite.exe` 是 .NET WinForms（PE 里有
+    `System.Windows.Forms`），主窗口类名形如 `WindowsForms10.Window.8.app...`；
+    只有注入时弹出的 Information 消息框才是 `#32770`。结果 `wait_ui_window`
+    按 pid+标题找得到窗口（rect 有效），按钮枚举却恒为空：
+    `主窗口=[]；Button 文本=[]；全部子控件=[]；诊断异常=None`。
+    类名现在只用于诊断，不参与「是不是主界面」的判定。
+    """
     return [(h, c, t) for h, c, t in top_windows(pid)
-            if c == "#32770" and t.startswith("KrkrExtract(local")]
+            if t.startswith(MAIN_TITLE_PREFIX) and not _is_modal_title(t)]
 
 
-def click_button(pid, label):
-    """按文本点主界面上的按钮，返回是否点到。
+def _button_candidates(controls, want):
+    """挑目标按钮：类名含 BUTTON 优先，其次任何文本精确匹配的控件。
 
-    2026-11-06 实测 `教师催眠2` 才发现的坑：KrkrExtract 的解包模式是**开关式**的，
-    而本脚本从来没设过 —— 默认只开了「Decompile Script」。后果：
-      · data.xp3 拖进去 → 46 个 `.tjs` + 11 个 `.ks`（**纯脚本**，一张图都没有）
-      · image00.xp3 拖进去 → 57 → 57，**0 新增**，而且判定为「任务完成」
-    教师催眠1 当年能出 2009 张图，是因为那个 stage 里带着上一次手工操作留下的配置 ——
-    换句话说，这条链路一直是「碰巧能跑」，换台机器/换次重建就退化成只解脚本。
+    WinForms 按钮类名是 `WindowsForms10.BUTTON.app.0.xxx`，不是标准 `Button`；
+    旧实现 `cls == "Button"` 会把它们全漏掉。仍要求**文本归一化精确相等**，
+    不会把同名的静态标签当成按钮去点。
+    """
+    hits = [(ch, cls, text) for ch, cls, text in controls
+            if _norm_button_label(text) == want]
+    buttonish = [h for h in hits if "button" in (h[1] or "").lower()]
+    return buttonish or hits
 
-    2026-11-06 第二次实跑：日志里出现 ``WARNING: ??? 'Full Unpack' ?????``。
-    旧实现还有两个具体缺陷：
-      ① 在**第一个**主窗口处就 ``return bool(hit)``，那个窗口没有按钮就再也不看后面的；
-      ② 文本只做 ``== label`` 精确比较，带 ``&`` / 大小写不同 / 尾随空格一律漏掉。
-    这里改成遍历全部主窗口 + 归一化比较；区分「枚举失败」还是「点击失败」交给
-    ``describe_unpack_controls``（失败时 main 会带上它的诊断一起报错）。
+
+def _bm_getcheck(hwnd):
+    """点击后复核复选框状态；不是复选框 / 取不到时返回 None（无法复核）。"""
+    try:
+        rc = user32.SendMessageW(hwnd, BM_GETCHECK, 0, 0)
+    except Exception:                                       # noqa: BLE001
+        return None
+    return rc if rc in (0, 1, 2) else None                  # UNCHECKED / CHECKED / INDETERMINATE
+
+
+def click_button_ex(pid, label) -> tuple[bool, str]:
+    """点主界面按钮，返回 ``(是否点到, 复核状态)``。
+
+    Win32 子控件枚举拿不到按钮时（WPF / 自绘控件），退回 UIA 按名字找并
+    Invoke / Toggle / 鼠标点击（``uia_click_button``）。只要有一条路径成功
+    并且能复核到「已勾选」，就认为 Full Unpack 真的开了。
     """
     want = _norm_button_label(label)
     if not want:
-        return False
-    clicked = False
-    for h, _cls, _title in _main_dialogs(pid):
+        return False, "标签为空"
+    dialogs = _main_dialogs(pid)
+    for h, _cls, _title in dialogs:
         try:
             controls = _child_controls(h)
         except Exception:                                   # noqa: BLE001
-            continue                                       # 某个窗口正销毁：看下一个
-        hits = [ch for ch, _c, text in controls if _norm_button_label(text) == want]
-        for ch in hits:
+            continue                                       # 窗口正销毁：看下一个
+        for ch, cls, _text in _button_candidates(controls, want):
             try:
-                user32.SendMessageW(ch, 0x00F5, 0, 0)      # BM_CLICK
-                clicked = True
+                user32.SendMessageW(ch, BM_CLICK, 0, 0)
             except Exception:                               # noqa: BLE001
                 continue
-        if clicked:
-            return True
-    return False
+            rc = _bm_getcheck(ch)
+            if rc == BST_CHECKED:
+                state = "BM_CLICK 已发送，BM_GETCHECK 复核=已勾选"
+            elif rc is not None:
+                state = f"BM_CLICK 已发送，BM_GETCHECK 复核=未勾选({rc})"
+            else:
+                state = f"BM_CLICK 已发送（{cls or '未知类名'}，控件不暴露勾选状态，无法复核）"
+            return True, state
+    for h, _cls, _title in dialogs:
+        ok, state = uia_click_button(h, label)
+        if ok:
+            return True, "UIA 兜底：" + state
+    return False, (f"主界面 {len(dialogs)} 个，Win32 与 UIA 都没找到文本为 {label!r} 的控件")
+
+
+def click_button(pid, label) -> bool:
+    """兼容旧调用与既有测试：只关心点到没点到。"""
+    return click_button_ex(pid, label)[0]
 
 
 def describe_unpack_controls(pid) -> dict:
     """**只读诊断**：主界面上到底有哪些控件，'Full Unpack' 有没有被枚举到。
 
-    用来把「没点上 Full Unpack」拆成两种完全不同的处置：
-      · ``matched`` 为空  → 按钮枚举失败（界面版本不同 / 标签文本不同 / 根本没建好）
-      · ``matched`` 非空  → 枚举到了但 BM_CLICK 没生效（窗口无响应 / 被模态框挡住）
-    它不点任何东西，也不抛异常：诊断失败绝不能把失败路径再炸一次。
+    2026-11-07 补 ``raw_windows`` / ``global_title_matches``：旧版只打印
+    「过滤后的空列表」，主窗口到底在不在、类名是什么一概看不到，真因只能靠猜。
+    现在失败日志会带上该 pid 的**全部顶层窗口**（hwnd / 类名 / 标题）与
+    全局标题命中清单，能直接区分「类名判据过严」和「窗口已消失」。
     """
     diag: dict = {"dialogs": [], "controls": [], "buttons": [],
-                  "matched": [], "error": None}
+                  "matched": [], "raw_windows": [], "global_title_matches": [],
+                  "error": None}
     try:
+        diag["raw_windows"] = list(top_windows(pid))
         dialogs = _main_dialogs(pid)
         if not dialogs:
-            # 注入进程 pid 变了 / 主界面重建后，按 pid 过滤会一无所获，
-            # 诊断就退化成「主窗口=[]、按钮=[]」——分不清枚举失败和点击失败。
-            # 这里**只读**地按标题全局再找一次（不点击、不抬窗），绝不猜按钮。
+            # 注入进程 pid 变了 / 主界面重建后，按 pid 过滤会一无所获。
+            # 只读地按标题全局再找一次（不点击、不抬窗、不猜按钮），且不再过滤类名。
             found: list[tuple[int, str, str]] = []
 
             @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
             def cb(h, lp):
                 title = wnd_text(h)
-                if title.startswith("KrkrExtract(local"):
+                if title.startswith(MAIN_TITLE_PREFIX):
                     c = ctypes.create_unicode_buffer(64)
                     user32.GetClassNameW(h, c, 64)
                     found.append((h, c.value, title))
                 return True
 
             user32.EnumWindows(cb, 0)
-            dialogs = [(h, c, t) for h, c, t in found if c == "#32770"]
+            diag["global_title_matches"] = found[:20]
+            dialogs = [(h, c, t) for h, c, t in found if not _is_modal_title(t)]
         diag["dialogs"] = [(h, t) for h, _c, t in dialogs]
         for h, _c, _t in dialogs:
             for _ch, cls, text in _child_controls(h):
                 diag["controls"].append((cls, text))
-                if cls == "Button":
+                if "button" in (cls or "").lower():
                     diag["buttons"].append(text)
                 if _norm_button_label(text) == "full unpack":
                     diag["matched"].append(text)
@@ -638,7 +753,7 @@ def _rebind_ui_window(hwnd, pid=None):
 
         @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
         def cb(h, lp):
-            if wnd_text(h).startswith("KrkrExtract(local") and _is_window_alive(h):
+            if wnd_text(h).startswith(MAIN_TITLE_PREFIX) and _is_window_alive(h):
                 res.append(h)
             return True
 
@@ -987,21 +1102,29 @@ def main(argv: list[str] | None = None) -> int:
     # 2026-11-06 第二次实跑：日志里 `WARNING: ??? 'Full Unpack' ?????` 说明按钮没点上，
     # 旧代码只警告一声就继续拖 11 个包 —— 产物缺图缺音频，而完成判定照样「通过」。
     # **没点上 Full Unpack 必须是明确的失败前置条件**，不能带病继续。
-    if click_button(pid, "Full Unpack"):
-        log("unpack mode: Full Unpack 已开启")
+    clicked, click_state = click_button_ex(pid, "Full Unpack")
+    if clicked:
+        log("unpack mode: Full Unpack 已开启（%s）" % click_state)
     else:
         diag = describe_unpack_controls(pid)
         if diag["matched"]:
             reason = ("按钮文本已枚举到 %r，但 BM_CLICK 没生效（窗口无响应 / 被模态框挡住）"
                       % (diag["matched"],))
         else:
-            reason = ("按钮枚举失败：主界面上找不到文本为 'Full Unpack' 的控件"
-                      "（界面版本/语言不同，或窗口还没建好）")
+            reason = ("按钮枚举失败：Win32 子控件与 UIA 都没找到文本为 'Full Unpack' 的控件"
+                      "（主窗口类名/控件类型与判据不匹配，或主窗口已经消失）")
+        # 原始窗口清单必须进日志：15:07/15:22 两轮只打印「过滤后的空列表」，
+        # 分不清「类名被过滤」和「窗口真没了」，这次不许再靠猜。
         msg = ("没点上 'Full Unpack'：%s。\n"
                "主窗口=%r；Button 文本=%r；全部子控件=%r；诊断异常=%s\n"
+               "该进程顶层窗口(hwnd,类名,标题)=%r\n"
+               "全局标题命中=%r\n"
+               "点击诊断=%s\n"
                "KrkrExtract 默认只解脚本，继续拖包会交付缺图/缺音频的半份产物，故在此明确失败。"
                % (reason, diag["dialogs"], diag["buttons"],
-                  diag["controls"][:20], diag["error"]))
+                  diag["controls"][:20], diag["error"],
+                  diag["raw_windows"][:20], diag["global_title_matches"][:20],
+                  click_state[:400]))
         log("ERROR: " + msg)
         if ALLOW_NO_FULL_UNPACK:
             log("WARNING: KRKR_ALLOW_NO_FULL_UNPACK=1，跳过该前置检查；产物可能只有脚本（风险自负）")

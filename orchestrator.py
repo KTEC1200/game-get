@@ -720,11 +720,19 @@ def _gui_error_from_output(out: str, rc: int) -> str:
     lines = [ln.strip() for ln in (out or "").splitlines() if ln.strip()]
     keys = ("RuntimeError:", "ERROR:", "WARNING:", "AssertionError:",
             "拖拽落点", "Full Unpack", "窗口不可见", "子控件", "遮挡")
-    hits = [ln for ln in lines if any(k in ln for k in keys)]
-    picked = hits[-3:] if hits else [ln for ln in lines
-                                     if not ln.startswith("File ")
-                                     and not ln.startswith("^")][-3:]
-    text = " | ".join(picked)[:600]
+    # 2026-11-07 实跑日志复盘：旧版取 stdout 最后 3 行命中，把「诊断行 + 报错首行
+    # + 同一诊断行」拼成一句，manual 又在 summary/why 各贴一遍、GUI 摘要再截 160 字
+    # → 同一句话重复三四次还被腰斩。现在只取 1 条主报错 + 最多 2 条原始诊断，
+    # 去重保序，谁都能一眼看懂卡在哪。
+    fatal = [ln for ln in lines if ln.startswith(("RuntimeError:", "ERROR:", "AssertionError:"))]
+    main_line = fatal[-1] if fatal else next(
+        (ln for ln in reversed(lines) if any(k in ln for k in keys)), "")
+    diag_lines = [ln for ln in lines if ln.startswith(
+        ("主窗口=", "该进程顶层窗口", "全局标题命中", "点击诊断"))]
+    # 先去重再截断：重复的诊断行不能把「原始窗口清单」这类关键信息挤掉。
+    diag_unique = list(dict.fromkeys(diag_lines))
+    picked = list(dict.fromkeys([main_line] + diag_unique[:2]))[:3]
+    text = " | ".join(p for p in picked if p)[:400]
     return text or f"rc={rc}，krkr 链路没有输出可读报错"
 
 

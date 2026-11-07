@@ -157,20 +157,33 @@ def plan_for(error: str, *, engine: str | None, game_dir: Path, out_dir: Path,
             ]
             if backup_note:
                 needs.insert(0, backup_note)
-            steps = [
-                "打开 _work/extract.log 与 krkr_auto_extract.log，定位最后一条 "
-                "RuntimeError / ERROR（落点被遮挡 / 全是子控件 / 窗口不可见 / Full Unpack 没点上）",
-                "关掉浏览器、远程桌面、其他置顶窗口；确认是真实桌面且屏幕未锁定，"
-                "运行期间不切窗口、不动鼠标",
-                "若仍报落点问题，可调大 KRKR_DROP_ATTEMPTS（默认 6）与 "
-                "KRKR_WINDOW_WAIT（默认 40 秒）后重试；日志会写明是谁挡着、是不是子控件",
-                f"或直接改走人工：打开 {krkr}，先勾上 Full Unpack",
+            manual_steps = [
                 "把游戏目录下的所有 .xp3 拖进 KrkrExtract 窗口（先拖 data.xp3），"
                 "等界面状态回到 idle（有进度条就走完）",
                 "解出来的东西在 KrkrExtract 目录下的 KrkrExtract_Output\\data 与 ...\\png",
                 f"把 data\\ 里的全部内容拷到：{raw_dir}",
                 f"如果 ...\\png 里有东西，一并拷到：{png_dir}",
             ]
+            # 2026-11-07 实跑：真因是 Full Unpack 按钮没点上，而旧模板前 3 步
+            # 全在讲落点遮挡，用户照着做完全没用。按真实报错分派步骤。
+            if "Full Unpack" in gui_error or "按钮枚举" in gui_error:
+                steps = [
+                    "本次是 Full Unpack 按钮没点上（与落点遮挡无关）：看 extract.log 的"
+                    "「该进程顶层窗口(hwnd,类名,标题)」与「点击诊断」，确认主窗口类名和控件类型",
+                    f"要立刻拿到资源就改走人工：打开 {krkr}，先勾上 Full Unpack",
+                    *manual_steps,
+                ]
+            else:
+                steps = [
+                    "打开 _work/extract.log 与 krkr_auto_extract.log，定位最后一条 "
+                    "RuntimeError / ERROR（落点被遮挡 / 全是子控件 / 窗口不可见）",
+                    "关掉浏览器、远程桌面、其他置顶窗口；确认是真实桌面且屏幕未锁定，"
+                    "运行期间不切窗口、不动鼠标",
+                    "若仍报落点问题，可调大 KRKR_DROP_ATTEMPTS（默认 6）与 "
+                    "KRKR_WINDOW_WAIT（默认 40 秒）后重试；日志会写明是谁挡着、是不是子控件",
+                    f"或直接改走人工：打开 {krkr}，先勾上 Full Unpack",
+                    *manual_steps,
+                ]
             if backup_note:
                 steps.insert(0, f"先确认产物安全：{backup_note}")
             # 用户已经用过 --allow-gui 时，再把它当备选就是让他原样重跑 40 分钟。
