@@ -2398,3 +2398,54 @@ CArchiveReader 实证 `uia_click_button` / `click_button_ex` / `_uia_ps` /
 **当前交付仍是 bugfix2**（标准路径），`2001f62` 只在源码、未进任何包。
 用户在交互桌面双击能打开 GUI 就不必再打包；打不开就等会话恢复后补打 bugfix3。
 别为了「自检全绿」掩盖这个环境限制。
+
+## 34. 2026-11-07 21:2x 健康会话复测：17:55 的失败全是会话环境，bugfix3 一次过（一手证据）
+
+### 34.1 环境变量被换掉之后，同一批操作全部恢复正常
+
+18:0x 用户整机因火绒 HipsDaemon 卡死出现「ShellExecute 全拦 + 窗口站瘫痪」
+（表现为打不开任何文件夹/软件/任务管理器），18:36 重启恢复。对比：
+
+| 操作 | 17:55 旧会话 | 21:0x 重启后会话 |
+|---|---|---|
+| `import tkinter` / `tk.Tk()` | fatal `0x80000003`（进程崩） | 正常（`--gui-smoke` rc=0） |
+| PyInstaller `hook-tkinter` 隔离子进程 | `Unable to register TclNotifier window class` → 判 tkinter 损坏 | 正常，构建一次过 |
+| 全量 `tests/run_all.py` | 收集阶段主进程崩（rc=2147483651） | **822 / 0 / 0 / 11 skipped → PASS** |
+| `make_golden.py --check` | 跑不了 | 零漂移 |
+| 用户双击 orchestrator.exe | 18:06 两次崩（tcl86t.dll `0x80000003`） | 正常打开（见 34.2） |
+
+**结论**：17:55 记录的「PyInstaller 判 tkinter installation is broken」「连 import tkinter 都崩」
+与用户 18:06 的双击闪退**同根**——都是所在会话的 COM/窗口站不可用，代码与包无责。
+另：18:06 两次崩溃之间 18:06:42 还成功跑过一次 detect（faillog 在案），说明当时 GUI
+并非完全起不来，是环境抖动下的偶发——与「窗口类注册失败」的偶发性一致。
+
+### 34.2 GUI 真机启动验证（待办 1 闭环的口径）
+
+`--gui-smoke` rc=0 之外，按「交互桌面双击」口径做了等价验证：ShellExecute 拉起
+`D:\GalgameUnpacker\orchestrator\orchestrator.exe`（bugfix2）→ 进程存活、
+`TkTopLevel` 主窗口（标题 `Galgame Unpacker`）出现、`Responding=True`、
+截图确认 v0.8.2 界面全要素渲染（目录输入/浏览/勾选框/开始按钮/日志区）。
+
+### 34.3 bugfix3：构建、校验、部署
+
+- 构建 `build_exe.py --tag bugfix3` **一次过**（旧 `build/orchestrator` 先改名
+  `build_prev_bugfix3_partial` 避开删除守卫，未删任何文件）。
+- zip `GalgameUnpacker-0.8.2-bugfix3-portable.zip`，141.7 MiB，
+  SHA256 `660456864f4faab112a591266232f9b7318f2a9625c18b61e134c03ca308b39e`。
+- 校验全过：`testzip()` 1514 项无损坏；README 125 行逐字相同；
+  zip 内 exe = dist exe = 部署后 exe（SHA `fdd45581…56e0eaa`）；
+  **CArchiveReader → `PYZ.pyz` → `extract("gui")` → `marshal.loads` → 递归
+  `co_names` 含 `_make_root`**（2001f62 确在包内——比「重新冻结过」硬一档的证据）。
+- 部署：旧标准路径（bugfix2）改名 `orchestrator_prev_bugfix2` 保留未删，
+  新包解压回 `D:\GalgameUnpacker\orchestrator`。
+- 部署自检：`--doctor` rc=0、`--gui-smoke` rc=0、冻结 exe 对 `教师催眠2` 只读
+  `--dry-run` rc=0（`engine=KiriKiri score=90`、案例库命中）。
+
+### 34.4 本会话新增的两个工具坑
+
+- 本环境 `cmd /c start` 偶发挂死（120s 无输出、无错误、非每次复现）；
+  拉起 GUI 类程序用 PowerShell `Start-Process` 稳定。报错会误导成「程序没起来」，
+  先分清是 start 层还是程序层（直接调 exe 对照即可）。
+- 校验 stdout 里的 JSON 别用 `s[index("{"):rindex("}")+1]` 截取再 `json.loads`
+  —— dry-run 输出有多个 JSON 块时会报 `Extra data`；用
+  `json.JSONDecoder().raw_decode` 逐块取。
