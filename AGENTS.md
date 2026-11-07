@@ -21,69 +21,67 @@
 
 > **2026-11-02 测试反馈**：随包 GARbro 的 .NET 插件加载修复仅适用于可信工具目录；Unity 样本的音频收集未对账通过，KiriKiri 索引兜底已用真实注入新索引和模拟窗口缺失提取 2562 条，自然窗口缺失尚未复现。案例索引已保留旧案例并加入 Toshiue。实测和限制见 `verified-findings.md`。
 
-> **📌 当前状态（2026-11-07 01:02，BugFix 已提交 + 数据已恢复 + bugfix1 包已部署，待真机实跑）**
+> **📌 当前状态（2026-11-07 16:01，WinForms 根因已修 + bugfix2 包已部署，待真机实跑）**
 > - **交付**：`packaging/Output/GalgameUnpacker-0.8.2-portable.zip`（148,528,606 B / 141.7 MiB，
 >   SHA256 `687f4cd3…f26de05e983d`），已发布到 GitHub Release **`v0.8.2`**
->   <https://github.com/KTEC1200/game-get/releases/tag/v0.8.2>（仅 1 个附件，asset `717312891`，
->   远端 digest / 本地 ZIP / 说明三方一致；包内 README 125 行与仓库同源）。
+>   <https://github.com/KTEC1200/game-get/releases/tag/v0.8.2>（仅 1 个附件，asset `717312891`）。
 >   **本轮不改 Release 附件、不动 `version.py` / README。**
-> - **✅ 新本地包 bugfix1（已打、已部署，待真机实跑）**：
->   `packaging/Output/GalgameUnpacker-0.8.2-bugfix1-portable.zip`
->   （148,556,732 B / 141.7 MiB，SHA256 `29f35cf5…006a0ee7c`），包内 `BUILD_INFO.txt`
->   标 `bugfix1` / 源码提交 `22495fd`；README 125 行与仓库逐字相同、包内 exe 与 dist 同 SHA
->   `d00b1665…87b5`、`testzip()` 无损坏条目（1514 项）。
->   **CArchiveReader 比对实证新代码进包**：新 exe 含 `_scan_drop_point` /
->   `describe_unpack_controls` / `_norm_button_label`，旧 dropfix1 exe 没有；
->   `manual._gui_error_text` 的平铺读取也在包里。
->   已解压到 `D:\GalgameUnpacker\orchestrator`（旧部署改名 `orchestrator_prev_dropfix1` **保留未删**）：
->   `--doctor` **High 完整性、全部位置可写、rc=0**、`--gui-smoke` rc=0、
->   冻结 exe 对 `教师催眠2` 只读 `--dry-run` rc=0（detect / case-lookup / 随包 garbro 全通）。
-> - **历史包 dropfix1**（151,401,258 B，SHA256 `9bc23bf9…64ba64514078d`）与已发布 0.8.2
->   **均未改动、未覆盖**，留作新旧对照；`build_exe.py --tag` 现在对同名 zip 一律拒绝覆盖。
-> - **✅ 用户数据已恢复（2026-11-07 00:40）**：`D:\HY\教师催眠2\output` 的 `raw/` 与 `png/`
->   用 `tools/restore_from_view.py` 从 `分类/` 视图重建：**9818 个交付文件（raw 7070 / png 2748）**，
->   冲突 0、失败 0；`--check --sample 8` 抽样 8/8 `samefile=True`、大小一致、缺失 0、rc=0。
->   `分类/` 视图 9818 文件 / 4.4 GiB **原样保留**，未删、未改名、未重写；标记文件也在。
->   ⚠️ 原 raw 里的 2748 个 `.tlg`/`.pna` 中间格式不在视图内，**无法还原**（PNG 成品完整）。
-> - **✅ QA 独立验证收口**（详见文末「2026-11-07 接手收口」）：`Stage.as_dict()` 平铺 data 造成
->   `manual._gui_error_text` 死路径已修、夹具改成真实形状；恢复后 `--reuse-raw --organize`
->   在**加密包（无索引地面真相）**下 rc=0 已隔离实证，同时锁住「索引可列出时数据不齐必须报错」的边界。
-> - **源码状态**：本轮代码提交 3 次（`9aabbca` 修复与文档 → `3ca1045` 打包护栏 →
->   `22495fd` BUILD_INFO 口径）+ 文档回写提交，全部已推送 `game-get/master`；
->   最新提交号以 `git log -1` 为准。包内 BUILD_INFO 记的 `22495fd` 是**打包那一刻**的 HEAD。
->   工作树干净。全量 `tests=808 / 0 failures / 0 errors / 10 skipped → PASS`，`make_golden.py --check` 零漂移。
+> - **✅ 当前本地包 bugfix2（用这个）**：
+>   `packaging/Output/GalgameUnpacker-0.8.2-bugfix2-portable.zip`
+>   （148,560,766 B / 141.7 MiB，SHA256 `931c6c44…1eb41cdb2`），包内 `BUILD_INFO.txt`
+>   标 `bugfix2` / 源码提交 `b22174a`；README 125 行逐字相同、包内 exe 与 dist 同 SHA、
+>   `testzip()` 无损坏（1514 项）；CArchiveReader 实证 `uia_click_button` / `click_button_ex` /
+>   `_uia_ps` / `MAIN_TITLE_PREFIX` 与更新后的 `_uia_item_rect.ps1` 都在包里。
+>   部署在 **`D:\GalgameUnpacker\orchestrator_bugfix2`**：`--doctor` High 完整性 / rc=0、
+>   `--gui-smoke` rc=0、冻结 exe 只读 `--dry-run` rc=0。
+>   ⚠️ 旧的 `D:\GalgameUnpacker\orchestrator` 仍被用户开着的 GUI 进程占用（pid 30452），
+>   **没强杀、没删、没改名**，里面还是 bugfix1 旧代码 —— 别在那个窗口点「开始解包」。
+>   关掉旧 GUI 后把 `orchestrator` 改名 `orchestrator_prev_bugfix1`、把 `orchestrator_bugfix2`
+>   改名 `orchestrator` 即可切回标准路径（路径本身不影响完整性级别）。
+> - **历史包**：已发布 0.8.2 / dropfix1 / bugfix1 三个 zip 均**未改动、未覆盖**，留作对照；
+>   `build_exe.py --tag` 对同名 zip 一律拒绝覆盖。
+> - **✅ 用户数据已恢复（00:40）**：`D:\HY\教师催眠2\output` 的 `raw/`(7070) 与 `png/`(2748)
+>   共 **9818 个交付文件**由 `分类/` 视图硬链接重建，`--check --sample 8` 8/8 通过、rc=0；
+>   视图 9818 文件 / 4.4 GiB 原样保留。2748 个 `.tlg`/`.pna` 中间格式**无法还原**（PNG 成品完整）。
+> - **✅ 15:07 / 15:22 两轮真机失败已定位并修复**（详见文末「16:01 WinForms 根因与 bugfix2」）：
+>   不是落点遮挡/加密/桌面独占问题，是 `KrkrExtract.Lite.exe` 为 .NET WinForms，主窗口类名
+>   不是 `#32770`、按钮不是标准 `Button`，旧判据把控件全过滤空。已改按 pid+标题认主窗口、
+>   按文本归一化认按钮、点击后 `BM_GETCHECK` 复核、UIA Invoke/Toggle/鼠标点击兜底、
+>   失败日志带原始顶层窗口清单；顺带修报错重复拼贴与 `验收[skipped] None/None失败` 显示。
+> - **源码状态**：代码提交 `b22174a` 已推 `game-get/master`，其后是文档回写提交；
+>   最新提交号以 `git log -1` 为准，包内 BUILD_INFO 记 `b22174a` 是**打包那一刻**的 HEAD。
+>   工作树干净。全量 `tests=819 / 0 failures / 0 errors / 9 skipped → PASS`，golden 零漂移。
 >   **提交一律显式 add，禁用 `git add -A`。**
-> - **⚠️ 唯一未闭环项：真机 `--allow-gui` 全自动**。2026-11-06 23:26 的失败（60.54s /
->   rc=1 / 交付 0）已定位并修代码、已打进 bugfix1 包，但**未经真机复现**：Full Unpack
->   能否点中、退化 rect 真实成因、改名备份/回滚在冻结 exe + 中文路径下的表现，
->   都要下一次约 40 分钟独占桌面实跑。事故原始证据与四个真因见文末
->   「2026-11-07 真机实跑失败与 BugFix」及 `verified-findings.md` §33。
+> - **⚠️ 唯一未闭环项：真机 `--allow-gui` 全自动**。原 4 项修复 + 本轮 WinForms 修复都只在
+>   源码 / 冻结包自检 / 替身测试里验过，**未经真机复现**；下一次约 40 分钟独占桌面实跑。
 > - **能力面**：9 条引擎链路可用；加密 KiriKiri 需 `--allow-gui`（要真实桌面）或人工拖拽 +
 >   `--reuse-raw` 收尾。其余引擎判得出但无链路（退出码 2）。
 >
-> **📋 待办（按优先级，2026-11-07 01:02 重排）**
-> 1. **`--allow-gui` 全自动真机闭环**（唯一硬骨头）：用 `D:\GalgameUnpacker\orchestrator`
->    的 bugfix1 包跑 `教师催眠2`，约 40 分钟独占桌面（不切窗口、不动鼠标、不锁屏、
->    不用远程桌面）；看新日志的四分类统计行 + Full Unpack 诊断，确认 4 项根因修复真生效。
->    **修复未经真机复现，别声称闭环**。⚠️ 别对 `D:\HY\教师催眠2\output` 直接 `--overwrite`：
->    恢复产物只此一份，先在副本上试或另指定输出目录。
-> 2. `Full Unpack` 是否对所有 KrkrExtract 版本/游戏都有效：目前只对 `教师催眠2` 验证过。
-> 3. 案例库仍只有 12 个 case；新变体照旧要从头逆向。
-> 4. `packaging\Output\orchestrator` 上那两条非标准 ACE（`Everyone …(DENY)(DC)`）来源未查明
+> **📋 待办（按优先级，2026-11-07 16:01 重排）**
+> 1. **关掉旧 GUI 窗口（pid 30452）**，从 `D:\GalgameUnpacker\orchestrator_bugfix2` 启动；
+>    别在旧 `orchestrator` 目录的窗口里点「开始解包」。需要标准路径就按上段改名切换。
+> 2. **`--allow-gui` 全自动真机闭环**：约 40 分钟独占桌面（不切窗口、不动鼠标、不锁屏、
+>    不用远程桌面）跑 `教师催眠2`；看新日志的「unpack mode: Full Unpack 已开启（…）」与
+>    四分类落点统计。若仍失败，日志会带原始顶层窗口清单（hwnd/类名/标题）与 UIA 控件清单，
+>    能直接定位，不用再猜。**rc=0 且三媒体零失败之前别声称闭环**。
+>    ⚠️ 别对 `D:\HY\教师催眠2\output` 直接 `--overwrite`，先在副本上试或另指定输出目录。
+> 3. `Full Unpack` 是否对所有 KrkrExtract 版本/游戏都有效：目前只对 `教师催眠2` 验证过。
+> 4. 案例库仍只有 12 个 case；新变体照旧要从头逆向。
+> 5. `packaging\Output\orchestrator` 上那两条非标准 ACE（`Everyone …(DENY)(DC)`）来源未查明
 >    —— 已确认不影响规避方式（放普通目录即按 High 运行）。
-> 5. **不要加暗色模式**：用户 2026-11-06 明确说不做；界面 token 也刻意保持单套，别留半成品分支。
-> 6. 用户数据现场别再动：别删/改名 `D:\HY\教师催眠2\output\分类`；真要重跑先在副本上试。
+> 6. **不要加暗色模式**：用户 2026-11-06 明确说不做；界面 token 也刻意保持单套，别留半成品分支。
+> 7. 用户数据现场别再动：别删/改名 `D:\HY\教师催眠2\output\分类`；真要重跑先在副本上试。
 >
-> **已完成（01:02）**：数据恢复、QA 收口与契约修复、3 次提交推送、bugfix1 新包与部署自检。
+> **已完成（16:01）**：数据恢复、QA 收口、WinForms 根因修复、819 项回归、bugfix2 新包与部署自检。
 
 > **🚀 接手顺序（新会话只做这四步）**
 > ① 读上面「当前状态 / 待办」+ 文末「2026-11-07 真机实跑失败与 BugFix」「接手收口」+「⚠️ 五个坑」；
 >    先跑 `git status` —— **工作树若有未提交改动，先问清是不是修复产物，别当成垃圾清掉**；
 > ② 跑基线：`C:\Python314\python.exe tests\run_all.py`（**不要用裸 `python`**，它没有 pytest；
->    提交后基线 **tests=808 / 0 failures / 0 errors**，skip 9~11 均为环境条件、随环境波动）
+>    提交后基线 **tests=819 / 0 failures / 0 errors**，skip 9~11 均为环境条件、随环境波动）
 >    + `C:\Python314\python.exe tests\make_golden.py --check`（应零漂移）；
-> ③ 用户数据已恢复，别再动 `D:\HY\教师催眠2\output`；直接推进待办 1（真机实跑），
->    真机全链未复现前别声称「可交付」；
+> ③ 用户数据已恢复，别再动 `D:\HY\教师催眠2\output`；用 `orchestrator_bugfix2` 目录推进
+>    待办 1、2，真机全链未复现前别声称「可交付」；
 > ④ **改完先回写本文档 + `verified-findings.md`，再清临时产物，最后显式 add 提交。**
 
 ## 文件索引（按需读，别全读）
@@ -1759,4 +1757,66 @@ manual 3 + reuse 3 + build_exe 2）；`make_golden.py --check` 零漂移。3 次
 - **已发布 0.8.2 与 dropfix1 的 zip 字节、mtime 均未变**（148,528,606 B / 151,401,258 B）。
 
 ⚠️ 真机 `--allow-gui` 全自动仍未复现：以上全是源码态 + 冻结包自检 + 隔离替身验证。
-下一次用 bugfix1 包、约 40 分钟独占桌面跑 `教师催眠2`，见待办 1。
+当时计划用 bugfix1 包、约 40 分钟独占桌面跑 `教师催眠2`（实际两轮失败，见下一节）。
+
+## 2026-11-07 16:01 WinForms 根因与 bugfix2（15:07 / 15:22 两轮真机失败复盘）
+
+### 1. 现场（两轮，同一处失败）
+
+用户用 bugfix1 包在 `D:\HY\教师催眠2\output11`（**新目录**，没碰恢复好的 `output`）跑
+`--allow-gui`。`_work/extract.log` 追加了两轮（15:07 pid=29884、15:22 pid=8884），
+两轮都在 `dismissed dialog(s): ['Information']` 后 1 秒报：
+
+```
+ERROR: 没点上 'Full Unpack'：按钮枚举失败。
+主窗口=[]；Button 文本=[]；全部子控件=[]；诊断异常=None
+```
+
+注入成功（`ui=0x120752 rect=(812,282,2068,1422)`）、11 个 xp3 全 `unknown format`
+（整包 krkrZ，预期内）、预检与案例库全通过。**不是落点遮挡、不是加密判定、
+不是安全软件、不是桌面没独占**；是「点 Full Unpack」前置检查主动刹车（防半份交付）。
+
+### 2. 根因（二进制证据 + 源码对读）
+
+- `KrkrExtract.Lite.exe` PE 里有 CLI header（`BSJB`）与 `System.Windows.Forms`
+  → .NET WinForms；`KrkrExtract.Core.dll` / `KrkrExtract.UI.Lite.dll` 的 UTF-16
+  字符串表里有 `Full Unpack` / `Text Decryption`（界面选项）。
+- `find_ui_window(pid)` 按「pid + 标题 `KrkrExtract(local`」找到窗口（所以 rect 有效）；
+  但 `_main_dialogs(pid)` 额外要求 `cls == "#32770"`，`describe_unpack_controls`
+  的全局标题兜底也过滤 `#32770`，`click_button` 又要求子控件 `cls == "Button"`。
+  WinForms 主窗口类名是 `WindowsForms10.Window.8.app...`、按钮是
+  `WindowsForms10.BUTTON.app...`，三条全不匹配 → 枚举恒空。
+- 日志里能关掉 `Information` 弹窗，正因为它才是标准 `#32770` 消息框。
+- 旧版诊断只打印「过滤后的空列表」，没打原始窗口清单，所以分不清「类名被过滤」
+  和「窗口真消失了」。
+
+### 3. 修法（`b22174a`，11 条新替身测试）
+
+| 层 | 改动 |
+|---|---|
+| 判据 | `_main_dialogs` 只按 pid + 标题认主窗口、按标题排除模态框；按钮候选按文本归一化精确匹配，类名含 `BUTTON` 优先，不再要求 `Button` |
+| 复核 | `click_button_ex` 返回 `(是否点到, 复核状态)`；点击后 `BM_GETCHECK` 读勾选状态，日志写明「已勾选 / 未勾选 / 无法复核」 |
+| 兜底 | Win32 枚举不到时走 UIA：`_uia_item_rect.ps1` 新增 `-Invoke` / `-Fuzzy`，InvokePattern → TogglePattern → BoundingRectangle 中心鼠标点击；带回控件清单诊断 |
+| 诊断 | `describe_unpack_controls` 新增 `raw_windows`（该 pid 全部顶层窗口 hwnd/类名/标题）与 `global_title_matches`，失败日志全部带上 |
+| 可读性 | `_gui_error_from_output` 去重、只取 1 条主报错 + 2 条原始诊断；`验收[skipped]` 改显示「未执行」而非 `None/None失败`；manual 按真因给步骤，不再让用户照着落点模板做 |
+
+全量 `tests=819 / 0 failures / 0 errors / 9 skipped`，golden 零漂移；
+`_uia_item_rect.ps1` 经 PowerShell Parser 语法校验通过，`build_exe.py --check` 清单齐全。
+
+### 4. bugfix2 包与部署
+
+`GalgameUnpacker-0.8.2-bugfix2-portable.zip`（148,560,766 B，
+SHA256 `931c6c44…1eb41cdb2`），包内 BUILD_INFO 记 `源码提交 = b22174a`；
+`testzip()` 无损坏（1514 项）、README 逐字相同、exe 与 dist 同 SHA。
+CArchiveReader 实证 `uia_click_button` / `click_button_ex` / `_uia_ps` /
+`MAIN_TITLE_PREFIX` 与新版 ps1 都进包；`manual` / `gui` 的新文案也在。
+旧 dist/build 目录改名 `orchestrator_prev_bugfix1` / `build_prev_bugfix1` **保留未删**。
+
+部署时旧 `D:\GalgameUnpacker\orchestrator` 被用户仍开着的 GUI 进程（pid 30452）占用，
+改名失败 → **不强杀、不删、不覆盖**，新包解压到并列目录
+`D:\GalgameUnpacker\orchestrator_bugfix2`：`--doctor` High 完整性 / rc=0、
+`--gui-smoke` rc=0、冻结 exe 只读 `--dry-run` rc=0。
+关掉旧 GUI 后可把两目录改名切回标准路径；**别在旧窗口里点开始**。
+
+⚠️ **真机 `--allow-gui` 全自动仍未复现**。以上全是源码 + 替身 + 冻结包自检；
+下一次约 40 分钟独占桌面用 bugfix2 跑 `教师催眠2`，见待办 1、2。

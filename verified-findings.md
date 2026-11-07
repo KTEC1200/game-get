@@ -2316,4 +2316,56 @@ golden 零漂移。当时 **QA 独立验证被中断未完成**，留下已核�
 包内 BUILD_INFO 记的 `22495fd` 是打包那一刻的 HEAD，不是文档提交号。
 
 ⚠️ **真机 40 分钟 `--allow-gui` 闭环仍未复现**。以上全是源码态 + 冻结包自检 +
-隔离替身验证；下一次用 bugfix1 包独占桌面跑 `教师催眠2`，才算端到端闭环。
+隔离替身验证；当时计划用 bugfix1 包独占桌面跑 `教师催眠2`，才算端到端闭环
+（实际两轮失败，见 §33.7）。
+
+### 33.7 15:07 / 15:22 两轮真机：WinForms 类名才是 Full Unpack 的真因
+
+**一手日志**（`D:\HY\教师催眠2\output11\_work\extract.log`，两轮追加在同一文件；
+`D:\GalgameUnpacker\orchestrator\_internal\_krkr_stage\krkr_auto_extract.log` 同）：
+
+| 时间 | 证据 |
+|---|---|
+| 15:07:31 / 15:24:24 | `injected pid=29884 / 8884 ui=… rect=(812,282,2068,1422)`，`dismissed dialog(s) after inject: ['Information']` |
+| +1 秒 | `ERROR: 没点上 'Full Unpack'：按钮枚举失败。` + `主窗口=[]；Button 文本=[]；全部子控件=[]；诊断异常=None` |
+| 收尾 | `krkr_auto_extract.py rc=1` → 交付 0 文件，`manual.code=kirikiri-gui-failed` |
+
+注入成功、窗口可见、11 个 xp3 全 `unknown format`（整包 krkrZ，预期内）、
+detect / case-lookup / preflight 全通过。**排除**落点遮挡、加密判定、安全软件、
+桌面未独占；失败点是「必须点上 Full Unpack」这条防半份交付的前置检查。
+输出用了新目录 `output11`，00:40 恢复好的 `output` 未被触碰。
+
+**二进制证据**（只读扫 `D:\K\galgame\krkr\krkr\*`）：`KrkrExtract.Lite.exe` 是 PE +
+CLI header `BSJB` + 字符串 `System.Windows.Forms` → .NET WinForms；
+`KrkrExtract.Core.dll` / `UI.Lite.dll` 的 UTF-16 表里含 `Full Unpack` /
+`Text Decryption`。`find_ui_window(pid)` 只按 pid + 标题 `KrkrExtract(local`
+就能找到窗口，而 `_main_dialogs` 额外要求 `#32770`、按钮要求 `cls == "Button"`，
+`describe_unpack_controls` 的标题兜底也过滤 `#32770`。WinForms 主窗口类名是
+`WindowsForms10.Window.8.app...`、按钮是 `WindowsForms10.BUTTON.app...`
+→ 全被过滤，枚举恒空。`Information` 弹窗能被关掉，正因它是标准 `#32770`。
+
+**修复（`b22174a`，11 条替身测试）**：主窗口按 pid+标题认（类名只进诊断、不参与判定）；
+按钮按文本归一化精确匹配 + 类名含 BUTTON 优先；`click_button_ex` 点击后
+`BM_GETCHECK` 复核勾选状态；Win32 找不到时走 UIA（`-Invoke` / `-Fuzzy`，
+InvokePattern → TogglePattern → 中心鼠标点击，带回控件清单）；诊断新增
+`raw_windows` / `global_title_matches`，失败日志带原始顶层窗口清单。
+同时修 `_gui_error_from_output` 的重复拼贴、`验收[skipped] None/None失败`
+显示、manual 落点模板不对症。全量 `819 / 0 failures / 0 errors / 9 skipped`，
+golden 零漂移，PowerShell Parser 校验 ps1 语法通过。
+
+**bugfix2 包**：`GalgameUnpacker-0.8.2-bugfix2-portable.zip`，148,560,766 B，
+SHA256 `931c6c44…1eb41cdb2`，BUILD_INFO 记 `源码提交 = b22174a`；
+`testzip()` 无损坏（1514 项）、README 逐字相同、exe 与 dist 同 SHA；
+CArchiveReader 实证 `uia_click_button` / `click_button_ex` / `_uia_ps` /
+`MAIN_TITLE_PREFIX` 与新版 `_uia_item_rect.ps1` 都在包里。
+旧 dist/build 目录改名保留，未删。
+
+**部署**：旧 `D:\GalgameUnpacker\orchestrator` 被用户仍开着的 GUI 进程（pid 30452）
+占用，改名报 `Device or resource busy` → 不强杀、不删、不覆盖，新包解压到并列目录
+`D:\GalgameUnpacker\orchestrator_bugfix2`，`--doctor` High 完整性 / rc=0、
+`--gui-smoke` rc=0、冻结 exe 只读 `--dry-run` rc=0。旧目录仍是 bugfix1 代码，
+**别在那个窗口点开始**；关掉后按 AGENTS.md 顶部的改名步骤切回标准路径。
+
+⚠️ 真机全自动闭环**仍未复现**：以上均为源码 + 替身 + 冻结包自检。
+下一次用 bugfix2、约 40 分钟独占桌面跑 `教师催眠2`；若仍失败，新日志里的
+原始窗口清单与 UIA 控件清单能直接定位，不必再靠猜。
