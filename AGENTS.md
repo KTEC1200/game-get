@@ -32,12 +32,13 @@
 >   标 `bugfix2` / 源码提交 `b22174a`；README 125 行逐字相同、包内 exe 与 dist 同 SHA、
 >   `testzip()` 无损坏（1514 项）；CArchiveReader 实证 `uia_click_button` / `click_button_ex` /
 >   `_uia_ps` / `MAIN_TITLE_PREFIX` 与更新后的 `_uia_item_rect.ps1` 都在包里。
->   部署在 **`D:\GalgameUnpacker\orchestrator_bugfix2`**：`--doctor` High 完整性 / rc=0、
->   `--gui-smoke` rc=0、冻结 exe 只读 `--dry-run` rc=0。
->   ⚠️ 旧的 `D:\GalgameUnpacker\orchestrator` 仍被用户开着的 GUI 进程占用（pid 30452），
->   **没强杀、没删、没改名**，里面还是 bugfix1 旧代码 —— 别在那个窗口点「开始解包」。
->   关掉旧 GUI 后把 `orchestrator` 改名 `orchestrator_prev_bugfix1`、把 `orchestrator_bugfix2`
->   改名 `orchestrator` 即可切回标准路径（路径本身不影响完整性级别）。
+>   **已切回标准路径 `D:\GalgameUnpacker\orchestrator`**（17:4x 用户关掉旧 GUI 后，
+>   旧目录改名 `orchestrator_prev_bugfix1` 保留未删、新目录改名 `orchestrator`；
+>   首次改名报 Permission denied 是瞬时句柄，改用 `Move-Item` 成功，全程未删文件）。
+>   部署自检：`--doctor` High 完整性 / 全部位置可写 / rc=0、冻结 exe 只读 `--dry-run` rc=0。
+>   ⚠️ `--gui-smoke` 在当前**后台工具会话** rc=1（`unable to initialize OLE2` /
+>   TclNotifier 窗口类注册失败），是会话环境，不是包的问题：同一机制此前成功过，
+>   用户也用它打开过旧 GUI 窗口。最终以交互桌面双击能起来为准。
 > - **历史包**：已发布 0.8.2 / dropfix1 / bugfix1 三个 zip 均**未改动、未覆盖**，留作对照；
 >   `build_exe.py --tag` 对同名 zip 一律拒绝覆盖。
 > - **✅ 用户数据已恢复（00:40）**：`D:\HY\教师催眠2\output` 的 `raw/`(7070) 与 `png/`(2748)
@@ -48,37 +49,47 @@
 >   不是 `#32770`、按钮不是标准 `Button`，旧判据把控件全过滤空。已改按 pid+标题认主窗口、
 >   按文本归一化认按钮、点击后 `BM_GETCHECK` 复核、UIA Invoke/Toggle/鼠标点击兜底、
 >   失败日志带原始顶层窗口清单；顺带修报错重复拼贴与 `验收[skipped] None/None失败` 显示。
-> - **源码状态**：代码提交 `b22174a` 已推 `game-get/master`，其后是文档回写提交；
->   最新提交号以 `git log -1` 为准，包内 BUILD_INFO 记 `b22174a` 是**打包那一刻**的 HEAD。
->   工作树干净。全量 `tests=819 / 0 failures / 0 errors / 9 skipped → PASS`，golden 零漂移。
+> - **源码状态**：`b22174a`（WinForms 修复，已打进 bugfix2）→ `1d9be66`（文档）→
+>   `2001f62`（GUI 启动兜底 + Tk 测试子进程探测），全部已推 `game-get/master`。
+>   ⚠️ **`2001f62` 没进任何已部署包**：当前后台会话里 PyInstaller 的 Tcl/Tk 隔离子进程
+>   崩溃（退出码 `0x80000003`，两次 `build_exe.py --tag bugfix3` 均失败），bugfix3 未产出、
+>   无半截 dist 残留。交互桌面会话恢复后再补打包。
+>   全量 `tests=822 / 0 failures / 0 errors / 20 skipped → PASS`（skip 增多是会话无 COM，
+>   Tk 构造冒烟被子进程探测跳过），golden 零漂移，工作树干净。
+>   包内 BUILD_INFO 记 `b22174a` 是**打包那一刻**的 HEAD；最新提交号以 `git log -1` 为准。
 >   **提交一律显式 add，禁用 `git add -A`。**
 > - **⚠️ 唯一未闭环项：真机 `--allow-gui` 全自动**。原 4 项修复 + 本轮 WinForms 修复都只在
 >   源码 / 冻结包自检 / 替身测试里验过，**未经真机复现**；下一次约 40 分钟独占桌面实跑。
 > - **能力面**：9 条引擎链路可用；加密 KiriKiri 需 `--allow-gui`（要真实桌面）或人工拖拽 +
 >   `--reuse-raw` 收尾。其余引擎判得出但无链路（退出码 2）。
 >
-> **📋 待办（按优先级，2026-11-07 16:01 重排）**
-> 1. **关掉旧 GUI 窗口（pid 30452）**，从 `D:\GalgameUnpacker\orchestrator_bugfix2` 启动；
->    别在旧 `orchestrator` 目录的窗口里点「开始解包」。需要标准路径就按上段改名切换。
-> 2. **`--allow-gui` 全自动真机闭环**：约 40 分钟独占桌面（不切窗口、不动鼠标、不锁屏、
+> **📋 待办（按优先级，2026-11-07 17:55 重排）**
+> 1. **双击 `D:\GalgameUnpacker\orchestrator\orchestrator.exe` 确认 GUI 能起来**。
+>    当前后台会话的 `--gui-smoke` 因 OLE2 初始化失败 rc=1，只能靠交互桌面验证；
+>    起得来就不必再打包，起不来再看 `_make_root` 的退化日志（修复在源码 `2001f62`）。
+> 2. **交互桌面会话恢复后打 bugfix3**：`python build_exe.py --tag bugfix3`，把 `2001f62`
+>    的 GUI 兜底打进包；当前会话 PyInstaller 的 Tcl/Tk 隔离子进程崩溃（`0x80000003`），
+>    两次尝试都失败、未产出 zip。起得来 GUI 的话这项可以一直不做。
+> 3. **`--allow-gui` 全自动真机闭环**：约 40 分钟独占桌面（不切窗口、不动鼠标、不锁屏、
 >    不用远程桌面）跑 `教师催眠2`；看新日志的「unpack mode: Full Unpack 已开启（…）」与
 >    四分类落点统计。若仍失败，日志会带原始顶层窗口清单（hwnd/类名/标题）与 UIA 控件清单，
 >    能直接定位，不用再猜。**rc=0 且三媒体零失败之前别声称闭环**。
 >    ⚠️ 别对 `D:\HY\教师催眠2\output` 直接 `--overwrite`，先在副本上试或另指定输出目录。
-> 3. `Full Unpack` 是否对所有 KrkrExtract 版本/游戏都有效：目前只对 `教师催眠2` 验证过。
-> 4. 案例库仍只有 12 个 case；新变体照旧要从头逆向。
-> 5. `packaging\Output\orchestrator` 上那两条非标准 ACE（`Everyone …(DENY)(DC)`）来源未查明
+> 4. `Full Unpack` 是否对所有 KrkrExtract 版本/游戏都有效：目前只对 `教师催眠2` 验证过。
+> 5. 案例库仍只有 12 个 case；新变体照旧要从头逆向。
+> 6. `packaging\Output\orchestrator` 上那两条非标准 ACE（`Everyone …(DENY)(DC)`）来源未查明
 >    —— 已确认不影响规避方式（放普通目录即按 High 运行）。
-> 6. **不要加暗色模式**：用户 2026-11-06 明确说不做；界面 token 也刻意保持单套，别留半成品分支。
-> 7. 用户数据现场别再动：别删/改名 `D:\HY\教师催眠2\output\分类`；真要重跑先在副本上试。
+> 7. **不要加暗色模式**：用户 2026-11-06 明确说不做；界面 token 也刻意保持单套，别留半成品分支。
+> 8. 用户数据现场别再动：别删/改名 `D:\HY\教师催眠2\output\分类`；真要重跑先在副本上试。
 >
-> **已完成（16:01）**：数据恢复、QA 收口、WinForms 根因修复、819 项回归、bugfix2 新包与部署自检。
+> **已完成（17:55）**：数据恢复、QA 收口、WinForms 根因修复、bugfix2 新包、
+> 标准路径切换、GUI 启动兜底源码修复、822 项回归。
 
 > **🚀 接手顺序（新会话只做这四步）**
 > ① 读上面「当前状态 / 待办」+ 文末「2026-11-07 真机实跑失败与 BugFix」「接手收口」+「⚠️ 五个坑」；
 >    先跑 `git status` —— **工作树若有未提交改动，先问清是不是修复产物，别当成垃圾清掉**；
 > ② 跑基线：`C:\Python314\python.exe tests\run_all.py`（**不要用裸 `python`**，它没有 pytest；
->    提交后基线 **tests=819 / 0 failures / 0 errors**，skip 9~11 均为环境条件、随环境波动）
+>    提交后基线 **tests=822 / 0 failures / 0 errors**，skip 9~20 均为环境条件、随环境波动）
 >    + `C:\Python314\python.exe tests\make_golden.py --check`（应零漂移）；
 > ③ 用户数据已恢复，别再动 `D:\HY\教师催眠2\output`；用 `orchestrator_bugfix2` 目录推进
 >    待办 1、2，真机全链未复现前别声称「可交付」；
@@ -1819,4 +1830,62 @@ CArchiveReader 实证 `uia_click_button` / `click_button_ex` / `_uia_ps` /
 关掉旧 GUI 后可把两目录改名切回标准路径；**别在旧窗口里点开始**。
 
 ⚠️ **真机 `--allow-gui` 全自动仍未复现**。以上全是源码 + 替身 + 冻结包自检；
-下一次约 40 分钟独占桌面用 bugfix2 跑 `教师催眠2`，见待办 1、2。
+下一次约 40 分钟独占桌面用 bugfix2 跑 `教师催眠2`（17:55 后编号顺延为待办 3）。
+
+## 2026-11-07 17:55 切换标准路径 + GUI 兜底修复 + 冻结受阻
+
+### 1. 切换完成（用户关掉旧窗口后）
+
+`Get-Process` 确认 pid 30452 已退出、无进程占用 `D:\GalgameUnpacker`。
+首次 `mv` / `Rename-Item` 报 `Permission denied`（刚关窗口，句柄未释放的瞬时状态），
+改用 `Move-Item` 成功：
+
+- `orchestrator`（bugfix1 旧包）→ `orchestrator_prev_bugfix1` **保留未删**
+- `orchestrator_bugfix2` → `orchestrator`（现为 bugfix2，BUILD_INFO 标 `bugfix2` / `b22174a`）
+
+标准路径自检：`--doctor` High 完整性 / 全部位置可写 / rc=0、
+冻结 exe 只读 `--dry-run` rc=0。`--gui-smoke` rc=1，见下节。
+
+### 2. `--gui-smoke` 不是包坏了，但暴露了一个真缺陷
+
+```
+_tkinter.TclError: unable to initialize OLE2
+RuntimeError: Unable to load tkdnd library.
+```
+
+连跑三次均失败；`pytest tests/test_gui.py` 里 `tk.Tk()` 更触发 Windows
+fatal exception `0x80000003`（进程级崩溃，Python 的 `except TclError` 接不住），
+pytest 整个会话被打断。同会话里 `trash` 的 `CoInitializeEx` 也报
+`HRESULT 0x80070008` / `0x80070583` —— 指向**当前后台工具会话的 COM/窗口站不可用**，
+不是新包引入的（15:55 同一会话还能跑 Tk 冒烟，用户也用它打开过旧 GUI）。
+
+但真缺陷坐实：`gui.py` 只在 **import** 层探测 tkinterdnd2，
+`TkinterDnD.Tk()` 初始化失败会把整个 GUI 打挂 —— 「可选增强」变成硬依赖。
+`2001f62` 修法：新增 `_make_root()`，初始化失败打 WARN 并退回 `tk.Tk()`
+（浏览 + 粘贴路径），`HAS_DND` 同步回落；`tests/test_gui.py` 的 Tk 构造冒烟改成
+**子进程探测**，崩也只崩子进程，主会话按 skip 处理。
+全量 `822 / 0 failures / 0 errors / 20 skipped → PASS`，golden 零漂移。
+
+补充（17:55 后会话进一步退化）：连 `import tkinter` 都触发 `0x80000003`，
+`pytest tests` 在收集 `tests/test_gui.py`（`import gui`）时主进程崩溃
+（rc=`2147483651`），`tests/run_all.py` 因此报 FAIL —— **是会话环境，不是用例失败**。
+17:4x 同一份代码已跑出 822/0/0；当下补跑不依赖 Tk 的核心子集
+（krkr WinForms / Full Unpack / build_exe / docs / restore / reuse）**63 passed**，
+`make_golden.py --check` 零漂移、文档契约 4 passed。交互会话恢复后再跑全量。
+
+### 3. bugfix3 没打出来（构建环境限制，不是代码）
+
+两次 `build_exe.py --tag bugfix3` 都失败：
+
+1. `hook-tkinter.py` 的隔离子进程 `_get_tcl_tk_info()` 崩
+   （`Unable to register TclNotifier window class`，退出码 `2147483651` = `0x80000003`），
+   PyInstaller 判 `tkinter installation is broken` 并排除 tkinter；
+2. `collect_all('tkinterdnd2')` 的隔离子进程同样崩溃。
+
+只要子进程 import 到 Tcl/Tk 就崩，与 §2 同源。**没有产出 bugfix3 zip，
+`dist/orchestrator` 也没有半截产物**（失败在 spec 阶段）；旧 dist/build 目录
+已改名 `orchestrator_prev_bugfix2` / `build_prev_bugfix2` 保留未删。
+
+**处置**：当前交付仍是 `bugfix2`（标准路径），`2001f62` 只在源码、未进任何包。
+用户在交互桌面双击能打开 GUI 就不必再打包；打不开就等会话恢复后重跑
+`--tag bugfix3` 并按同样方式切换部署。别为了「自检全绿」掩盖这个环境限制。

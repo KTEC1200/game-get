@@ -2369,3 +2369,32 @@ CArchiveReader 实证 `uia_click_button` / `click_button_ex` / `_uia_ps` /
 ⚠️ 真机全自动闭环**仍未复现**：以上均为源码 + 替身 + 冻结包自检。
 下一次用 bugfix2、约 40 分钟独占桌面跑 `教师催眠2`；若仍失败，新日志里的
 原始窗口清单与 UIA 控件清单能直接定位，不必再靠猜。
+
+### 33.8 17:55 切换标准路径、GUI 兜底与冻结受阻（一手证据）
+
+- 用户关掉旧 GUI（pid 30452）后无进程占用 `D:\GalgameUnpacker`；首次 `mv` /
+  `Rename-Item` 报 `Permission denied`（刚关窗口的瞬时句柄），`Move-Item` 成功：
+  旧 `orchestrator` → `orchestrator_prev_bugfix1` **保留未删**，
+  `orchestrator_bugfix2` → `orchestrator`。标准路径 `--doctor` High 完整性 /
+  全位置可写 / rc=0，冻结 exe 只读 `--dry-run` rc=0。
+- `--gui-smoke` rc=1（`_tkinter.TclError: unable to initialize OLE2` →
+  `RuntimeError: Unable to load tkdnd library`），连跑三次稳定；
+  `pytest tests/test_gui.py` 里 `tk.Tk()` 触发 Windows fatal exception `0x80000003`
+  （进程级崩溃，`except TclError` 接不住），同会话 `trash` 的 `CoInitializeEx`
+  报 `0x80070008` / `0x80070583` → **后台工具会话 COM/窗口站不可用**，不是包坏了。
+  但暴露真缺陷：tkinterdnd2 只在 import 层探测，初始化失败会打挂整个 GUI。
+- `2001f62`：新增 `_make_root()`，初始化失败打 WARN 并退回 `tk.Tk()`，
+  `HAS_DND` 同步回落、状态栏改「未启用」；Tk 构造冒烟改**子进程探测**。
+  全量 `822 / 0 failures / 0 errors / 20 skipped`，golden 零漂移。
+  17:55 后会话退化到「连 `import tkinter` 都触发 `0x80000003`」，`pytest tests`
+  在收集阶段主进程崩溃（rc=`2147483651`），`run_all.py` 报 FAIL 属环境而非用例失败；
+  同一份代码 17:4x 已全绿，当下不依赖 Tk 的核心子集 63 passed、golden 零漂移。
+- **bugfix3 未产出**：两次 `build_exe.py --tag bugfix3` 均因 PyInstaller 隔离子进程
+  （`hook-tkinter.py` 的 `_get_tcl_tk_info()` / `collect_all('tkinterdnd2')`）崩溃、
+  退出码 `2147483651`（`0x80000003`，`Unable to register TclNotifier window class`）而失败；
+  没有 zip、`dist/orchestrator` 无半截产物，旧 dist/build 改名
+  `orchestrator_prev_bugfix2` / `build_prev_bugfix2` 保留未删。
+
+**当前交付仍是 bugfix2**（标准路径），`2001f62` 只在源码、未进任何包。
+用户在交互桌面双击能打开 GUI 就不必再打包；打不开就等会话恢复后补打 bugfix3。
+别为了「自检全绿」掩盖这个环境限制。
